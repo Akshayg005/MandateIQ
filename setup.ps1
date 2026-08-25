@@ -7,7 +7,7 @@
   scaffolds both Vite workspaces, copies .env.example to .env, and
   self-tests the invariant guards.
 
-  Assumes already installed: Python 3.11, Node 20+, Docker Desktop, git,
+  Assumes already installed: Python 3.13, Node 20+, Docker Desktop, git,
   and the Claude Code CLI.
 
 .EXAMPLE
@@ -27,16 +27,21 @@ function Die($msg) { Write-Host "    $msg" -ForegroundColor Red; exit 1 }
 # ---------------------------------------------------------------- prereqs --
 Say "checking prerequisites"
 
+$PyTarget = "3.13"
 $pyExe = $null
-foreach ($cand in @("py -3.11", "python3.11", "python")) {
+foreach ($cand in @("py -3.13", "python3.13", "python")) {
     try {
-        $parts = $cand.Split(" ")
-        $v = & $parts[0] $parts[1..($parts.Length-1)] --version 2>&1
-        if ($v -match "3\.11") { $pyExe = $cand; break }
+        # Split into exe + args explicitly. Indexing $cand as an array yields
+        # characters, and $parts[1..0] on a single-word candidate reverses the
+        # range into a bogus argument -- both silently pick the wrong python.
+        $parts = @($cand.Split(" "))
+        if ($parts.Count -gt 1) { $v = & $parts[0] $parts[1] --version 2>&1 }
+        else                    { $v = & $parts[0] --version 2>&1 }
+        if ("$v" -match ([regex]::Escape($PyTarget))) { $pyExe = $cand; break }
     } catch { }
 }
 if (-not $pyExe) {
-    Die "Python 3.11 not found. Install from python.org and tick 'Add to PATH'. Then reopen PowerShell."
+    Die "Python $PyTarget not found. Install from python.org and tick 'Add to PATH'. Then reopen PowerShell."
 }
 Ok "python: $pyExe"
 
@@ -53,6 +58,18 @@ Ok "docker daemon running"
 
 # ------------------------------------------------------------------- venv --
 Say "creating virtual environment"
+
+# An existing .venv built on a different Python is the failure that wastes an
+# afternoon: it is reused silently and every version-specific wheel is wrong.
+# Check what is in there and rebuild if it does not match $PyTarget.
+if (Test-Path ".venv\Scripts\python.exe") {
+    $have = & ".venv\Scripts\python.exe" -c "import sys; print('%d.%d' % sys.version_info[:2])"
+    if ($have -ne $PyTarget) {
+        Warn "existing .venv is Python $have, target is $PyTarget -- rebuilding"
+        Remove-Item .venv -Recurse -Force
+    }
+}
+
 if (-not (Test-Path ".venv")) {
     $pyParts = @($pyExe.Split(" "))
     if ($pyParts.Count -gt 1) {
@@ -76,7 +93,7 @@ Say "installing dependencies (2-4 minutes)"
     pytest pytest-cov httpx freezegun pyyaml
 if ($LASTEXITCODE -ne 0) {
     Write-Host ""
-    Die "pip install failed on Python $pyVer. Read the error above for which package. If it is a missing wheel, install Python 3.11 from python.org, delete the .venv folder, and re-run -- everything here is known to build on 3.11."
+    Die "pip install failed on Python $PyTarget. Read the error above for which package. If it is a missing wheel, that package has no Python $PyTarget build yet: pin an older version, or set `$PyTarget to 3.12 at the top of this script, delete the .venv folder, and re-run."
 }
 & $Py -m pip freeze | Out-File -Encoding utf8 requirements.txt
 Ok "dependencies installed"
