@@ -1,0 +1,508 @@
+===============================================================================
+  MANDATE RECOVERY ENGINE
+  A complete explanation of the project
+===============================================================================
+
+  Built for : Razorpay AI Buildathon, Track 03 - AI Revenue Recovery
+  Timeline  : 12 days
+  Stack     : Python 3.11, FastAPI, Postgres, statsmodels, lifelines,
+              React + Vite, React Three Fiber, Razorpay test-mode APIs
+  Deliverable: public repo + 5-minute pitch video + architecture diagram
+
+
+-------------------------------------------------------------------------------
+ 1. THE ONE-PARAGRAPH VERSION
+-------------------------------------------------------------------------------
+
+When a subscription payment fails, every system in the world asks the same
+question: "will a retry succeed?" It then retries on a fixed calendar and
+gives up after three tries. This project asks a different question - "which
+of three things actually went wrong?" - and picks a different action for
+each. Sometimes that action is to stop trying and offer the customer a clean
+way out. It is the only recovery engine we know of whose recommended action
+is sometimes "let them go," and it can prove with numbers that doing so
+makes more money over time than grinding.
+
+
+-------------------------------------------------------------------------------
+ 2. THE PROBLEM, IN PLAIN WORDS
+-------------------------------------------------------------------------------
+
+A customer subscribes to something and gives their bank standing permission
+to debit them every month. That permission is called a MANDATE. Most months
+the debit works. Some months it doesn't - the balance is short, the card
+expired, the bank timed out.
+
+When that debit fails, the merchant has not lost a customer who wanted to
+leave. They have lost a customer who wanted to stay and whose bank said no.
+That is called INVOLUNTARY CHURN, and across subscription businesses it
+accounts for somewhere between 20% and 40% of all churn. It is the largest
+silent leak in the business model.
+
+What everyone does about it is retry on a fixed schedule. Razorpay's own
+documented behaviour: when a subscription payment fails, it retries once a
+day for three days, and if all three fail the subscription is halted.
+
+That schedule is a guess. It does not know why the debit failed. It knows
+nothing about that customer's money rhythm. And it treats a Rs 199 music
+subscription exactly like a Rs 40,000 software mandate.
+
+Worse, that single rule collapses two completely different people into one
+outcome:
+
+  Person A was Rs 300 short on the 2nd, 3rd and 4th of the month.
+            -> The system just killed a paying customer who wanted to stay.
+
+  Person B wants to cancel but can't be bothered to figure out how, so
+            they are letting the debit bounce on purpose.
+            -> The system just spent four attempts and three notifications
+               harassing someone who was trying to leave.
+
+Both get retried three times. Both get halted. Neither gets the right
+treatment.
+
+
+-------------------------------------------------------------------------------
+ 3. WHY NOW - THE THING THAT CHANGED FOUR MONTHS AGO
+-------------------------------------------------------------------------------
+
+On 21 April 2026 the Reserve Bank of India issued the "Digital Payments -
+E-mandate Framework, 2026" (circular RBI/DPSS/2026-27/396). It consolidated
+every previous recurring-payment rule into one framework, and it changed the
+economics of retrying.
+
+The clauses that matter:
+
+  Clause 6(a)  The issuer must send the customer a notification at least
+               24 HOURS BEFORE every debit.
+
+  Clause 6(c)  That notification must carry an opt-out - and the customer
+               can opt out of THAT TRANSACTION, or of THE ENTIRE MANDATE.
+               The opt-out is authenticated, so it is a real, final action.
+
+  Clause 8(a)  Debits up to Rs 15,000 can go through without the customer
+               authenticating. Above that, they must authenticate every time.
+
+  Clause 8(b)  The limit rises to Rs 1,00,000 for insurance premiums,
+               mutual fund subscriptions, and credit card bill payments.
+
+  Clause 4(c)  On variable mandates, the customer sets a maximum amount per
+               transaction. You may never attempt above it.
+
+  Clause 10(c) Acquirers - payment aggregators like Razorpay - are
+               responsible for ensuring the merchants they onboard comply.
+
+Now follow the consequence, because it is the whole reason this project
+exists:
+
+  A RETRY IS A DEBIT. A DEBIT REQUIRES 24 HOURS' NOTICE. EVERY NOTICE
+  IS A CANCEL BUTTON PLACED IN THE CUSTOMER'S HAND.
+
+Retries used to be free. Worst case, nothing happened. Now every retry
+attempt is also a reminder that this subscription exists, delivered with a
+one-tap way to end it. A three-day retry ladder sends three cancellation
+invitations in three days to a customer who is already annoyed.
+
+There is a second consequence, and it is even sharper:
+
+  YOU CANNOT RETRY REACTIVELY ANY MORE.
+
+Because the issuer needs 24 hours to notify, the merchant must COMMIT to a
+retry time a full day before it fires. Anything you learn in that 24-hour
+window is unusable. You are forecasting, not reacting.
+
+This breaks the approach used elsewhere in the world. Stripe's Smart Retries
+picks retry timing by reacting to live signals - how many devices have
+presented that card in the last few hours, and so on. That method is
+structurally unavailable in India. The dominant global solution does not
+transfer.
+
+There is also a hard budget. NPCI permits ONE original attempt plus THREE
+retries. Four attempts total, ever. This is not a tuning parameter.
+
+And there is a legal edge. India's consumer protection authority published
+Guidelines for Prevention and Regulation of Dark Patterns in 2023, which
+name "subscription trap" - easy to subscribe, hard to cancel - as one of
+thirteen prohibited practices. Enforcement is active in 2026, with penalties
+issued and show-cause notices sent. Grinding a customer who is trying to
+leave is no longer merely unkind; it is exposure. And under clause 10(c),
+some of that exposure lands on the aggregator.
+
+One honest note: the RBI circular never uses the word "retry." Whether a
+reattempt needs its own fresh 24-hour notification, or is covered by the
+original one, is genuinely unresolved. We do not pretend to know. We build
+BOTH interpretations and report results under each. That ambiguity is real
+and engineering for it is a deliberate design choice.
+
+
+-------------------------------------------------------------------------------
+ 4. WHAT WE BUILD
+-------------------------------------------------------------------------------
+
+An engine that, for every failed recurring debit, infers which of three
+things is actually true, and acts accordingly.
+
+  STATE 1 - CAN'T PAY NOW
+    Meaning: temporary liquidity gap. The money isn't there today.
+    Action:  spend one of the four attempts, timed to when that customer's
+             account is most likely to have money.
+
+  STATE 2 - CAN'T PAY EVER
+    Meaning: the payment instrument is dead. Card expired, account closed,
+             mandate revoked.
+    Action:  stop retrying immediately - it is futile and, for a revoked
+             mandate, a compliance problem. Ask the customer to re-authorise.
+
+  STATE 3 - WON'T PAY
+    Meaning: they want out and are passively resisting.
+    Action:  OFFER a clean exit. Pause first, then downgrade, then cancel.
+             Never execute it - offer it.
+
+The third state is the one nobody ships. Every dunning product on the market
+optimises recovery rate, so "let them go" is not in their action space.
+
+Why pause first: Razorpay's own published research says roughly 10% of
+customers who cancel auto-renewal would have preferred to pause if that were
+an option. Razorpay's APIs support pausing and resuming subscriptions and
+UPI mandates. So the exit ramp is not "lose the customer" - it is "park them
+intact." That makes it DEFERRED revenue, not lost revenue.
+
+
+-------------------------------------------------------------------------------
+ 5. HOW THE PREDICTION ACTUALLY WORKS
+-------------------------------------------------------------------------------
+
+The technique is DISCRETE-TIME COMPETING RISKS SURVIVAL ANALYSIS. That name
+sounds heavier than it is, so here is why each word is there.
+
+  SURVIVAL ANALYSIS - the branch of statistics that models "how long until
+  an event happens," and which handles the case where you stop watching
+  before the event occurs.
+
+  COMPETING RISKS - the case where several mutually exclusive things can
+  happen, and whichever happens first prevents the others. Our three states
+  are exactly that: a mandate can recover, or die, or be opted out of, but
+  not two of them.
+
+  DISCRETE-TIME - our clock ticks in attempt slots and billing cycles, not
+  continuously. There are four slots, not a continuum.
+
+THE KEY REASON THIS AND NOT A NORMAL CLASSIFIER:
+
+Most mandates use up all four attempts without resolving. You never find out
+what would have happened. A classifier trained on "did it recover, yes or
+no" silently drops those cases or codes them as failures - either way it
+biases every number toward the mandates that resolved quickly. Survival
+analysis treats them correctly as RIGHT-CENSORED: we stopped watching, we
+did not observe an outcome, and that is information rather than absence.
+
+Getting this wrong is invisible. Everything still runs. The numbers just
+quietly lie. That is why it is worth doing properly.
+
+HOW IT IS IMPLEMENTED:
+
+  1. Reshape the data into "person-period" format - one row per
+     (mandate, attempt slot) rather than one row per mandate.
+  2. Fit a multinomial logistic regression predicting, for each row, which
+     of {recovered, dead, opted out, still pending} happens in that slot.
+     This is mathematically a discrete cause-specific hazard model.
+  3. Convert those hazards into cumulative incidence - the probability that
+     each of the three outcomes has occurred by slot k.
+  4. Calibrate with isotonic regression, so that when the model says 80%,
+     it is right 80% of the time. Publish the reliability diagram.
+
+Deliberately NOT used: deep survival models, transformers, DeepHit. They
+exist for this task and they need data volume we do not have. Reaching for
+them would also undermine the architectural argument below.
+
+CHOOSING WHAT TO DO:
+
+With four slots and three states, the decision space is small enough to
+solve EXACTLY by backward induction - work backwards from the last slot,
+computing the optimal action at each state. No reinforcement learning, no
+heuristic search, no approximation. We solve it properly and say so.
+
+The objective being maximised:
+
+    expected money recovered
+  - probability of opt-out  x  customer lifetime value
+  - cost per attempt
+
+  subject to:
+    every attempt committed at least 24 hours in advance   (clause 6a)
+    amount never above the mandate ceiling                 (clause 4c)
+    amount above the AFA limit routed to re-authentication (clause 8a/8b)
+    at most four attempts total                            (NPCI)
+    stopping rules honoured
+
+That middle term - the churn cost of a notification - is the contribution.
+It is the term Stripe's model does not have because no equivalent regime
+exists there, and the term Razorpay's fixed ladder ignores.
+
+THE SIGNALS THE MODEL USES:
+
+  Strong  : decline code granularity - "insufficient funds," "card expired,"
+            and "mandate revoked" have completely different hazard shapes
+  Strong  : an actual opt-out event, which is near-ground-truth exit intent
+            and did not exist as an observable signal before April 2026
+  Useful  : this customer's own history of successful debit timestamps,
+            which reveals their replenishment rhythm without ever needing to
+            see their balance
+  Useful  : day of month, and the fact that on the 1st through 5th every SIP,
+            EMI and insurance premium in the country competes for the same
+            account balance - so retry timing is partly a CROWDING problem,
+            not just a prediction problem
+  Weak    : product engagement decline, if the merchant shares it
+
+
+-------------------------------------------------------------------------------
+ 6. WHERE AI IS USED, AND WHERE IT DELIBERATELY IS NOT
+-------------------------------------------------------------------------------
+
+This matters because the Buildathon scores "AI judgment - the right tool in
+the right place, and where you chose not to use one."
+
+NO LARGE LANGUAGE MODEL TOUCHES A MONEY DECISION.
+
+The decision core is deterministic and statistical. This is not a
+convention; it is enforced by a git hook that blocks any edit importing an
+LLM client into the model, policy, or core directories. The guard script
+ships in the repo as evidence.
+
+Where models ARE used - language only:
+
+  Claude Haiku : normalising decline strings, which differ wildly between
+                 issuers and are unstandardised free text
+  Claude Haiku : extracting cancellation intent from support ticket text,
+                 including Hinglish
+  Claude Sonnet: writing the merchant-facing root-cause narrative - once per
+                 batch, never per transaction
+
+All structured output goes through required tool-use, so malformed JSON is
+structurally impossible rather than something caught downstream.
+
+AND WE PROVE THE CHOICE RATHER THAN ASSERTING IT.
+
+The repo contains a benchmark running an LLM-as-classifier against the
+statistical model on the same held-out data, reporting four columns:
+
+    accuracy (AUC) | p95 latency | cost per 1000 decisions | RUN-TO-RUN
+                                                             VARIANCE
+
+The variance column is the argument. Give the LLM the identical input five
+times and it may return different retry times. In a payments path that is
+disqualifying regardless of accuracy - because a decision you cannot
+reproduce is a decision you cannot defend in a dispute.
+
+The benchmark ships even though it goes against the LLM. Especially because
+it does.
+
+
+-------------------------------------------------------------------------------
+ 7. THE SAFETY DESIGN
+-------------------------------------------------------------------------------
+
+There is an ugly asymmetry at the heart of this project.
+
+If we wrongly decide a broke customer wants to leave, and offer them a
+cancel button, WE CAUSED THE CHURN WE EXIST TO PREVENT. That error is far
+more expensive than the reverse.
+
+And exit intent is genuinely hard to detect from payment data alone. It is
+what statisticians call weakly identified - the signal is there, but thin.
+
+So the statistical limitation dictates the product's safety design:
+
+  1. SPLIT CONFORMAL PREDICTION gates the off-ramp. Conformal prediction is
+     a technique that gives a distribution-free coverage guarantee: calibrate
+     on held-out data, and you can state the error rate as a mathematical
+     property rather than an empirical hope. We only offer an exit when the
+     conformal prediction set is the single value {WON'T PAY} at 95%
+     coverage. Anything less certain stays in the retry lane.
+
+  2. THE SYSTEM OFFERS; THE CUSTOMER DECIDES. It never cancels anything.
+     This is enforced by the same guard that blocks LLM imports.
+
+  3. BOTH ERROR COSTS ARE REPORTED - the cost of a missed recovery, and the
+     cost of a false off-ramp. A single accuracy number hides the asymmetry
+     that actually matters.
+
+The connection between points 1 and 2 is the most defensible thing in the
+whole submission: the model is not confident enough to act, so it proposes
+and the human decides.
+
+
+-------------------------------------------------------------------------------
+ 8. HOW SUCCESS IS MEASURED
+-------------------------------------------------------------------------------
+
+The evaluation is PRE-REGISTERED. On Day 1, before a single line of policy
+code is written, the simulator configuration and the evaluation protocol are
+committed to git and the commit hash is recorded in the repo. A hook then
+blocks all further edits to those files.
+
+This exists because the most common way an ML demo fools itself is tuning
+the evaluation until the model wins. Making that mechanically impossible is
+cheaper and more convincing than promising not to do it.
+
+THE HEADLINE IS THREE BARS, NOT ONE:
+
+    (a) money recovered
+    (b) attempts spent
+    (c) MANDATES PRESERVED     <- this is where we win
+
+Compared against the incumbent baseline: the fixed T+1 / T+2 / T+3 ladder,
+then halt. That is not a strawman we invented - it is Razorpay's documented
+behaviour.
+
+Every run happens twice, once under each compliance interpretation (strict
+and permissive), because the regulation is ambiguous and we refuse to pick.
+
+And every run happens across five stress regimes that were NOT used for
+tuning: an issuer outage day, a delayed-salary week, a mandate-stacking
+spike, festival season, and a competitor retry storm.
+
+WE REPORT WHERE WE LOSE. A policy that wins in every regime is evidence the
+regimes were tuned to it. An honest loss with an explanation scores higher
+than a suppressed one.
+
+Separately, a chaos harness kills the executor process 50 times at random
+points mid-attempt, proving zero double-charges and zero lost jobs.
+
+
+-------------------------------------------------------------------------------
+ 9. WHY THIS FITS THE COMPETITION
+-------------------------------------------------------------------------------
+
+Track 03 asks for an agent that detects revenue at risk, determines the
+right intervention, and executes a bounded recovery workflow. Two of the
+seven example directions it lists are literally this project: "mandate retry
+sequencer" and "failed-subscription recovery."
+
+The track's stated bar, and what answers it:
+
+  "measured money recovered across a batch"
+      -> 200-mandate batch, our policy against the fixed ladder,
+         both numbers published
+
+  "compliant escalation"
+      -> amount-based routing at the Rs 15,000 authentication threshold;
+         silent retry, then customer nudge, then re-authentication, each
+         rung gated by what is actually permitted
+
+  "stopping rules"
+      -> attempt cap, opt-outs honoured permanently, revoked mandates never
+         retried, and a stop when expected value turns negative
+
+  "an audit trail"
+      -> append-only ledger; every decision recorded with its reason, the
+         rule that produced it, and its outcome
+
+And the four judging criteria:
+
+  Problem taste   -> involuntary churn is the largest silent leak in
+                     subscription businesses, and the incumbent baseline is
+                     documented rather than invented
+  Build quality   -> integer paise throughout, append-only ledger,
+                     idempotency proven under induced crashes, invariants
+                     enforced by hooks rather than prose
+  AI judgment     -> deterministic core with a measured benchmark explaining
+                     why, not an assertion
+  Failure recovery-> incidents logged live during the build, plus a chaos
+                     harness and a deliberate failure shown in the video
+
+
+-------------------------------------------------------------------------------
+ 10. WHAT THIS PROJECT CANNOT DO
+-------------------------------------------------------------------------------
+
+Stated plainly, because a submission that names its own limits is worth more
+than one that pretends it has none.
+
+  1. The evaluation is synthetic. It demonstrates that encoding real
+     constraints beats ignoring them, under a stated model of the world
+     calibrated against published statistics. It is NOT a lift number that
+     transfers to production traffic, and it is not presented as one.
+
+  2. Exit intent is weakly identified from payment data alone. Without
+     merchant product-usage signals, intent accuracy is modest - which is
+     precisely why the system offers rather than acts.
+
+  3. Whether a retry requires its own fresh 24-hour notification is
+     unresolved in the RBI circular. We ship both readings rather than
+     guess. Lower-level NPCI and card-network operating rules may settle it;
+     we have not seen those documents.
+
+  4. Scope is deliberately narrow: failed recurring debits only. Not
+     checkout abandonment, not one-time payment fraud, not receivables.
+
+  5. Prior art exists. There is a granted patent on ML-optimised dunning
+     using logistic regression or gradient boosting to score retry success.
+     Stripe, Recurly and others ship commercial versions. We did NOT invent
+     smart retries. The contribution is the three-way cause decomposition,
+     the notification-cost term, and having "release the customer" in the
+     action space at all.
+
+
+-------------------------------------------------------------------------------
+ 11. GLOSSARY
+-------------------------------------------------------------------------------
+
+  MANDATE          Standing permission from a customer to their bank
+                   allowing a merchant to debit them on a schedule.
+
+  UPI AUTOPAY      India's recurring-payment mechanism over UPI.
+
+  E-MANDATE        The general regulatory term for an electronic mandate,
+                   across cards, UPI and prepaid instruments.
+
+  INVOLUNTARY      Customers lost because a payment failed, not because
+  CHURN            they chose to leave. 20-40% of total churn typically.
+
+  DUNNING          The industry term for the process of chasing failed
+                   payments.
+
+  AFA              Additional Factor of Authentication - the second factor
+                   (PIN, OTP) required above the transaction threshold.
+
+  NPCI             National Payments Corporation of India - operates UPI
+                   and NACH, and sets the retry attempt limits.
+
+  RIGHT-CENSORED   A case where you stopped observing before the outcome
+                   occurred. Handling these correctly is the main technical
+                   reason for choosing survival analysis.
+
+  HAZARD           The probability that an event occurs in a given time
+                   interval, given it has not occurred yet.
+
+  CUMULATIVE       The probability that a particular one of several
+  INCIDENCE        competing outcomes has occurred by a given time.
+
+  CONFORMAL        A method producing prediction sets with a guaranteed
+  PREDICTION       error rate, without assuming a data distribution.
+
+  CALIBRATION      Whether a model's stated confidence matches its actual
+                   accuracy. A model saying 90% should be right 90% of
+                   the time.
+
+  IDEMPOTENCY      The property that performing an operation twice has the
+                   same effect as performing it once. What prevents a
+                   crashed-and-restarted process from double-charging.
+
+  PRE-REGISTRATION Committing to your evaluation method before seeing
+                   results, so you cannot tune the test to fit the answer.
+
+
+-------------------------------------------------------------------------------
+ 12. THE PITCH, IN ONE BREATH
+-------------------------------------------------------------------------------
+
+  Every retry engine asks "will this payment succeed?"
+
+  Ours asks "which of three things went wrong?" - because with four
+  attempts and a cancel button attached to every notification, guessing
+  wrong is expensive in both directions.
+
+  And sometimes the right answer is to stop trying and hold the door.
+
+===============================================================================

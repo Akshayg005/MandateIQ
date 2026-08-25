@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+.env
+*.db
+node_modules/
+dist/
+.DS_Store
+CLAUDE.local.md
+reports/*.json
+!reports/.gitkeep
