@@ -53,9 +53,11 @@ question.
 """
 from __future__ import annotations
 
-from src.core.types import Cause, Outcome, Profile
+from dataclasses import dataclass, field
+
+from src.core.types import Action, Cause, Outcome, Profile
 from eval.frozen.scoring import BatchResult, aggregate, score_mandate
-from eval.frozen.simulator import Simulator, SimMandate, _logits_from_base_rates, _softmax
+from eval.frozen.simulator import AttemptResult, Simulator, SimMandate, _logits_from_base_rates, _softmax
 
 # Deliberately dense and NOT restricted to B8's eventual ~4 structural
 # candidates -- this file answers "what is the true ceiling," not "what B8
@@ -163,3 +165,111 @@ def run(sim: Simulator, profile: Profile) -> BatchResult:
                 break
         results.append(score_mandate(mandate, attempts))
     return aggregate(results, arm=sim.arm, profile=profile.value)
+
+
+@dataclass(frozen=True)
+class CauseAwareMandateResult:
+    mandate_id: str
+    action: Action
+    attempts: tuple[AttemptResult, ...]
+    iatrogenic_failures: int
+
+
+@dataclass(frozen=True)
+class CauseAwareBatchResult:
+    """`run()` above answers "how much is there to gain from perfect
+    timing," holding the ATTEMPT-every-mandate policy fixed -- that is why
+    it can go through the frozen `score_mandate`/`aggregate`, which require
+    at least one attempt per mandate (protocol.md, Known limitations, last
+    bullet). This dataclass exists because `run_cause_aware` below answers a
+    different question -- "how much attempt-budget and iatrogenic
+    contention does perfect cause-targeting avoid" -- and deliberately
+    produces mandates with ZERO attempts (STOP, REAUTH-bound; OFFER, an
+    exit offered), which the frozen scorer rejects by design. Reporting
+    attempts_spent and iatrogenic_failures only (not recovered_paise or
+    preserved) sidesteps needing an offer-acceptance model this diagnostic
+    has no business inventing."""
+
+    arm: str
+    profile: str
+    n_mandates: int
+    n_stopped_reauth: int
+    n_offered_exit: int
+    n_attempted: int
+    total_attempts_spent: int
+    total_iatrogenic_failures: int
+    per_mandate: tuple[CauseAwareMandateResult, ...] = field(repr=False)
+
+    def summary(self) -> str:
+        return (
+            f"[{self.arm}/{self.profile}] n={self.n_mandates} "
+            f"attempted={self.n_attempted} stopped_reauth={self.n_stopped_reauth} "
+            f"offered_exit={self.n_offered_exit} "
+            f"attempts_spent={self.total_attempts_spent} "
+            f"iatrogenic_failures={self.total_iatrogenic_failures}"
+        )
+
+
+def run_cause_aware(sim: Simulator, profile: Profile) -> CauseAwareBatchResult:
+    """Same privileged timing logic as `run()`, plus acting on the true
+    cause: `CANT_PAY_EVER` is never attempted (real action: stop, request
+    re-authorisation) and `WONT_PAY` is never attempted (real action: offer
+    an exit). Only `CANT_PAY_NOW` consumes retry attempts and -- under
+    `coupled` -- household balance. The effective cause is re-checked before
+    every decision point, so a mid-episode switch (misspecified arm) is
+    caught at the next slot, exactly like `run()`'s timing re-solve.
+
+    This is the lever `run()` cannot show: `run()` attempts every mandate
+    regardless of cause, so it can only ever demonstrate timing headroom.
+    Under `coupled`, skipping `CANT_PAY_EVER`/`WONT_PAY` members means they
+    never draw the shared household balance at all (simulator.py's
+    `attempt()` is the only place balance is debited), which is exactly the
+    contention protocol.md's `coupled` section says a batch-blind policy
+    fails to avoid.
+    """
+    order = _execution_order(sim)
+    results = []
+    for mandate in order:
+        attempts: list[AttemptResult] = []
+        last_day = 0
+        attempts_left = 3
+        memo: dict = {}
+        current_cause = sim.effective_cause(mandate.mandate_id)
+        action = Action.ATTEMPT
+        while attempts_left > 0:
+            cause = sim.effective_cause(mandate.mandate_id)
+            if cause == Cause.CANT_PAY_EVER:
+                action = Action.REAUTH
+                break
+            if cause == Cause.WONT_PAY:
+                action = Action.OFFER
+                break
+            if cause != current_cause:
+                memo = {}
+                current_cause = cause
+            _, day = _solve(sim, cause, mandate.amount_paise, attempts_left, last_day, memo)
+            slot = 2 + (3 - attempts_left)
+            attempt = sim.attempt(mandate.mandate_id, slot, day)
+            attempts.append(attempt)
+            last_day = day
+            attempts_left -= 1
+            if attempt.outcome != Outcome.STILL_PENDING:
+                break
+        iatrogenic = sum(1 for a in attempts if a.iatrogenic_insufficient_funds)
+        results.append(
+            CauseAwareMandateResult(
+                mandate_id=mandate.mandate_id, action=action,
+                attempts=tuple(attempts), iatrogenic_failures=iatrogenic,
+            )
+        )
+    return CauseAwareBatchResult(
+        arm=sim.arm,
+        profile=profile.value,
+        n_mandates=len(results),
+        n_stopped_reauth=sum(1 for r in results if r.action == Action.REAUTH),
+        n_offered_exit=sum(1 for r in results if r.action == Action.OFFER),
+        n_attempted=sum(1 for r in results if r.action == Action.ATTEMPT),
+        total_attempts_spent=sum(len(r.attempts) for r in results),
+        total_iatrogenic_failures=sum(r.iatrogenic_failures for r in results),
+        per_mandate=tuple(results),
+    )

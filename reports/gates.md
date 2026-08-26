@@ -15,10 +15,17 @@ written and its gate unmet counts as zero.
 - [x] **B2** ★ **the freeze**: baseline ladder produces a number; FREEZE_HASH recorded; `guard_frozen.py` denies an edit under `eval/frozen/`
 - [ ] **B3** ingest + taxonomy: a real test-mode `payment.failed` lands in the ledger with a classified cause; mandate lifecycle table exists; provider idempotency spike result written to DECISIONS.md
 - [ ] **B4** ★ person-period frame: `validate()` rejects every malformed shape; a censored episode round-trips with all four rows intact; split is mandate-level; no feature encodes a future slot
-- [ ] **B5** ★ competing risks + CIF: beats the ladder on **all three** frozen arms; `Σ_c CIF_c(4) + S(4) == 1`; stats-reviewer returns clean
+- [ ] **B5** ★ competing risks + CIF: beats the ladder on **recovered money** (misspecified arm), on **attempts spent and iatrogenic count** (coupled arm), and on **mandates preserved** (all three arms); `Σ_c CIF_c(4) + S(4) == 1`; stats-reviewer returns clean
       <!-- changed from "both" at PLAN_DETAIL v2 (B1), before the freeze commit
            and before any file under src/policy/ existed: §8.1 decision 1 added
-           a third frozen arm (coupled). Logged in DECISIONS.md. -->
+           a third frozen arm (coupled). Logged in DECISIONS.md.
+           2026-08-27: changed from "all three, one bar" to per-metric,
+           per-arm binding -- oracle_policy.py's timing oracle found coupled
+           does not discriminate on recovered money (9/11/0, mean/SE=-0.22,
+           20 seeds); a cause-aware oracle then found it DOES discriminate on
+           iatrogenic count (mean/SE~5.6). coupled was never built to test
+           recovering more, only wasting less under contention. Logged in
+           DECISIONS.md, does not touch eval/frozen/. -->
 
 - [ ] **B6** ★ calibration + conformal: reliability diagram roughly diagonal; empirical coverage matches nominal on held-out data
 - [ ] **B7** ★ policy foundation: every constant cites its clause; both profiles instantiate; compliance-auditor all-VERIFIED

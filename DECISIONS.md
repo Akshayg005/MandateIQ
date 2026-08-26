@@ -305,3 +305,93 @@ the guard against yet. Add it when B7/B8 land.
 `reports/FREEZE_HASH` now points to `d634346` (was `8321406`). The original
 commit is not rewritten — git history shows the freeze was corrected, which
 is more honest than hiding that it happened.
+
+### 2026-08-27 · B2 · B5's gate rebound per metric, per arm — coupled cannot demonstrate money-recovered headroom
+
+`eval/oracle_policy.py`'s privileged timing oracle (built end of the last
+session, 20-seed sweep) found `coupled` does not discriminate on money
+recovered even under perfect knowledge of timing and cause history: 9/11/0
+wins against the ladder, mean/SE = −0.22 — a coin flip. `misspecified`
+discriminates decisively (20/20, mean/SE = 7.66); `nominal` shows zero
+headroom by design (20/20 exact ties — it is timing-invariant by
+construction, so this is expected, not a finding).
+
+*Why this doesn't mean loosening the arm.* The household balance/demand
+ratio (~9%) could be raised until `coupled` starts discriminating on money
+recovered too, but that is tuning the evaluation until our policy can win —
+the exact failure mode the freeze exists to prevent, and it would not read
+as anything else to a reviewer. `eval/frozen/` stays as re-frozen at
+`d634346` (the entry above); this decision does not touch it.
+
+*What `coupled` was actually built to show, restated.* Independence, not
+scheduling skill, is what `coupled` varies. A per-mandate allocator that
+never checks batch-level contention builds its own debit storm and
+misreads the result as customer illiquidity (PLAN_DETAIL.md finding 1) —
+that is a claim about **wasting less under contention**, not about
+**recovering more**. Money recovered was never the right axis to hold
+`coupled` to a "beats the ladder" bar on.
+
+*New evidence: a cause-aware oracle.* The timing oracle above attempts
+every mandate regardless of cause — it can only ever show timing headroom.
+A second oracle (`run_cause_aware`, same file) additionally acts on the
+true cause: skips `CANT_PAY_EVER` entirely (real action: stop, request
+re-auth) and never attempts `WONT_PAY` (real action: offer an exit),
+spending attempts only on `CANT_PAY_NOW`. 20-seed sweep
+(`eval/cause_aware_headroom.py`), paired per seed against the real
+fixed-cadence ladder over the real frozen config:
+
+| arm | attempts: ladder | attempts: oracle | diff mean/SE | iatrogenic: ladder | iatrogenic: oracle | diff mean/SE |
+|---|---|---|---|---|---|---|
+| nominal | 329.8 ± 9.6 | 154.9 ± 12.3 | 174.90 / 3.09 | 0.0 | 0.0 | n/a — arm has no coupling mechanic |
+| misspecified | 274.5 ± 7.7 | 122.3 ± 10.3 | 152.20 / 3.05 | 0.0 | 0.0 | n/a — arm has no coupling mechanic |
+| coupled | 435.6 ± 10.4 | 251.5 ± 20.7 | 184.10 / 4.17 | 128.1 ± 13.5 | 119.0 ± 14.9 | 9.15 / 1.62 |
+
+The attempts-spent gap is mechanically guaranteed by construction (an
+oracle with ground-truth cause will always skip non-`CANT_PAY_NOW`
+mandates — it is a wiring sanity check, not evidence of skill) and is
+reported for completeness, not as the finding. The `coupled` iatrogenic-
+failures gap (mean/SE ≈ 5.6, ~7% relative reduction, 128.1 → 119.0) is the
+substantive result: a second-order effect through the shared household
+balance — skipping dead/resistant siblings leaves more balance for
+`CANT_PAY_NOW` members — that the timing-only oracle's money-recovered
+metric could not surface. `coupled` **can** demonstrate this project's
+thesis; it demonstrates it on the iatrogenic-failures axis, not the
+recovered-money axis.
+
+*Decision.* B5's gate ("beats the ladder on all three frozen arms") is
+amended to bind different metrics on different arms, reflecting what each
+arm is actually built to test:
+- **recovered money** — binds on `misspecified` only.
+- **attempts spent and iatrogenic count** — binds on `coupled` only.
+- **mandates preserved** — binds on all three arms.
+
+`reports/gates.md` and `PLAN_DETAIL.md`'s B5 section updated to match, both
+carrying this entry's date, the same pattern as the "both" → "all three"
+amendment already on that line.
+
+*Deferred, not forgotten.* `protocol.md`'s Known Limitations section should
+record the cause-aware-oracle finding, the fixed contention order
+(`simulator.py:181-183` — households assigned by generation-order slicing,
+`f"H{i // household_size}"`, not randomized or interleaved), and this
+arm-by-metric split, the same way the misspecified-arm asymmetry is already
+documented there. That file is under `eval/frozen/`, and `guard_frozen.py`
+denies every agent edit to it unconditionally — per its own docstring, this
+needs a human edit outside a Claude session, the same path the 2026-08-26
+corrected freeze used. Not yet applied as of this entry — pending the
+user's choice of how to route a second frozen-file amendment.
+
+### 2026-08-27 · B2 · protocol.md correction applied — FREEZE_HASH updated again
+
+The Known-limitations bullets and per-arm restatements drafted in the entry
+above were pasted into `eval/frozen/protocol.md` by hand, outside a Claude
+session (one paste-seam bug — a missing line break between the last
+existing bullet and the first new one, which would have silently merged
+into the preceding paragraph rather than rendering as its own bullet — was
+caught in review before commit and fixed), then committed as `4daf9ec`
+(`FREEZE (corrected): document coupled's arm-by-metric split and fixed
+contention order in protocol.md`).
+
+`reports/FREEZE_HASH` now points to `4daf9ec` (was `d634346`). No
+simulator or scoring behaviour changed — this correction is disclosure
+only, so unlike the 2026-08-26 correction (an actual money-fabrication
+bug), no `POSTMORTEM.md` incident is logged for it.
