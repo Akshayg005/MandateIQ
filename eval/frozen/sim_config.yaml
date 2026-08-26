@@ -1,0 +1,118 @@
+# eval/frozen/sim_config.yaml
+#
+# PRE-REGISTERED simulator parameters. Frozen at block B2, before any file
+# under src/policy/ exists. See eval/frozen/protocol.md for what is measured
+# and what counts as a win/loss; see PLAN_DETAIL.md §8.1 decision 1 for why
+# three arms.
+#
+# Every number below is an ILLUSTRATIVE synthetic parameter chosen to build
+# a plausible, testable evaluation harness -- NOT a measured statistic from
+# real Razorpay data, real issuer decline rates, or any published source.
+# Do not cite these numbers as real-world facts; they exist to let a
+# candidate policy be scored against a fixed, falsifiable target.
+#
+# guard_frozen.py denies any Edit/Write under eval/frozen/ unconditionally --
+# this file was created via Bash specifically so that protection is already
+# active from its first version, not bolted on after the freeze commit.
+
+seed: 20260826          # today's date as an int; every run is reproducible
+n_mandates: 200
+
+# Every mandate in the batch has already had its ORIGINAL attempt (slot 1)
+# fail -- that failure is what puts a mandate into this system. Only slots
+# 2/3/4 (up to 3 retries, NPCI's cap) are simulated as decisions.
+# All 200 mandates share one cycle start day (day 0) -- billing dates cluster
+# in reality, and this is what makes the coupled arm's storm reproducible
+# under a policy (the baseline ladder, and later our own allocator) that
+# picks the same relative day for many mandates at once.
+retry_slots: [2, 3, 4]
+
+# The incumbent's fixed cadence (T+1/T+2/T+3), used by eval/baseline_ladder.py.
+# The simulator itself is schedule-agnostic -- any caller (ladder now, the
+# allocator at B8) supplies its own day_offset per attempt.
+baseline_ladder_offsets_days: {2: 1, 3: 2, 4: 3}
+
+cause_mix:
+  CANT_PAY_NOW: 0.50
+  CANT_PAY_EVER: 0.20
+  WONT_PAY: 0.30
+
+amount_paise:
+  # AFA_FREE_LIMIT_PAISE = 1,500,000 (Rs 15,000, clause 8a). Ranges leave a
+  # gap on both sides of the cliff so no mandate lands exactly on the
+  # boundary before B7 defines the boundary rule.
+  below_afa_frac: 0.85
+  below_afa_range: [50000, 1400000]      # Rs 500 -- Rs 14,000
+  above_afa_range: [1600000, 9000000]    # Rs 16,000 -- Rs 90,000
+  ceiling_multiplier_range: [1.0, 1.5]   # clause 4c: ceiling_paise >= amount_paise
+
+category_mix:
+  # insurance_premium / mutual_fund / credit_card_bill are the elevated
+  # AFA-free categories under clause 8(b); subscription is not.
+  subscription: 0.70
+  insurance_premium: 0.15
+  mutual_fund: 0.10
+  credit_card_bill: 0.05
+
+# Cause-conditional hazard parameters. Each cause has a base probability of
+# {recover, dead, optout} at any given attempt (conditional on reaching it);
+# the remainder survives (STILL_PENDING) to the next slot. Adjustments are
+# expressed in LOGIT space (additive to the log-odds vs. survive) so the
+# resulting probabilities are always valid without ad-hoc clipping.
+hazards:
+  CANT_PAY_NOW:
+    base_recovery: 0.35
+    base_dead: 0.02
+    base_optout: 0.03
+    salary_window_bonus_logit: 0.9   # attempted in days 1-5: liquidity returns
+  CANT_PAY_EVER:
+    base_recovery: 0.03
+    base_dead: 0.55                  # instrument confirmed dead quickly
+    base_optout: 0.02
+  WONT_PAY:
+    base_recovery: 0.08
+    base_dead: 0.02
+    base_optout: 0.35
+    optout_escalation_logit_per_attempt: 0.35   # grinding raises opt-out odds
+
+arms:
+  nominal:
+    link: logit          # full multinomial-logit hazard, matches what B5's
+                          # MNLogit will assume -- the "easy" arm.
+
+  misspecified:
+    # A model correctly specified for `nominal` should degrade here.
+    link: cloglog                    # complementary log-log for "does ANY
+                                      # terminal event happen this attempt";
+                                      # WHICH one is a secondary categorical
+                                      # draw among {recover, dead, optout}.
+                                      # cloglog approximates an underlying
+                                      # continuous-time hazard; logit
+                                      # approximates proportional-odds --
+                                      # genuinely different functional form,
+                                      # not just re-scaled parameters.
+    replenishment_exponent: 1.5      # CANT_PAY_NOW's recovery SHARE of the
+                                      # terminal outcome grows with
+                                      # days_since_last_attempt ** 1.5 --
+                                      # heavier-tailed than nominal's flat
+                                      # weighting.
+    cause_switch_prob: 0.15          # per-attempt probability the mandate's
+                                      # EFFECTIVE cause is redrawn from
+                                      # cause_mix and STAYS switched (a
+                                      # Markov transition, not flicker) --
+                                      # breaks the "one static cause per
+                                      # mandate-cycle" assumption the person-
+                                      # period frame and belief update rely on.
+
+  coupled:
+    # Same logit link as nominal -- this arm's difference from nominal is
+    # about INDEPENDENCE, not functional form (see PLAN_DETAIL §8.2 finding
+    # 1 / DECISIONS.md 2026-08-26 "three frozen arms").
+    link: logit
+    household_size: 4                # 200 / 4 = 50 households, evenly
+    household_balance_range: [200000, 800000]   # Rs 2,000 -- Rs 8,000 shared
+                                      # pool per household, redrawn fresh at
+                                      # cycle start (day 0), no mid-cycle
+                                      # top-up -- deliberately tight relative
+                                      # to per-mandate amounts so contention
+                                      # is real, not decorative.

@@ -11,11 +11,15 @@ written and its gate unmet counts as zero.
 `★` = critical path · `∥` = parallel, can run any time after its entry block.
 
 - [x] **B0** environment: `.\run.ps1 verify` passes all five, including a real test-mode order
-- [ ] **B1** ★ core + ledger: money/clock/ids tests pass; `ids.py` imports no `time`/`uuid`/`os`/`random`; ledger DDL has no UPDATE path
+- [x] **B1** ★ core + ledger: money/clock/ids tests pass; `ids.py` imports no `time`/`uuid`/`os`/`random`; ledger DDL has no UPDATE path
 - [ ] **B2** ★ **the freeze**: baseline ladder produces a number; FREEZE_HASH recorded; `guard_frozen.py` denies an edit under `eval/frozen/`
 - [ ] **B3** ingest + taxonomy: a real test-mode `payment.failed` lands in the ledger with a classified cause; mandate lifecycle table exists; provider idempotency spike result written to DECISIONS.md
 - [ ] **B4** ★ person-period frame: `validate()` rejects every malformed shape; a censored episode round-trips with all four rows intact; split is mandate-level; no feature encodes a future slot
-- [ ] **B5** ★ competing risks + CIF: beats the ladder on **both** frozen arms; `Σ_c CIF_c(4) + S(4) == 1`; stats-reviewer returns clean
+- [ ] **B5** ★ competing risks + CIF: beats the ladder on **all three** frozen arms; `Σ_c CIF_c(4) + S(4) == 1`; stats-reviewer returns clean
+      <!-- changed from "both" at PLAN_DETAIL v2 (B1), before the freeze commit
+           and before any file under src/policy/ existed: §8.1 decision 1 added
+           a third frozen arm (coupled). Logged in DECISIONS.md. -->
+
 - [ ] **B6** ★ calibration + conformal: reliability diagram roughly diagonal; empirical coverage matches nominal on held-out data
 - [ ] **B7** ★ policy foundation: every constant cites its clause; both profiles instantiate; compliance-auditor all-VERIFIED
 - [ ] **B8** ★ allocator + stopping + off-ramp: 2-slot brute-force equivalence test passes; zero constraint violations across the eval; both profiles produce numbers
