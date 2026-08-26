@@ -236,3 +236,72 @@ the coupling mechanic from ordinary hazard noise. A second test drives the
 config and confirms `coupled` produces iatrogenic failures under the
 incumbent's real fixed-cadence schedule while `nominal` produces zero (it has
 no coupling mechanic at all).
+
+### 2026-08-26 · B2 · Freeze corrected — money-fabrication bug found by required gate review
+
+`payments-domain` (B2's required review, dispatched in the same session,
+before the working tree had a single file under `src/policy/`) found that
+`coupled`'s household-balance coupling fabricated money: a below-balance
+attempt had a chance to "recover anyway," crediting the mandate's full
+amount while only debiting the household to zero. A real run recovered 1.7x
+the total liquidity that existed across every household — independently
+re-derived before acting. Full incident writeup: `POSTMORTEM.md` incident 1.
+
+*Why this got a human decision rather than a silent patch.* `guard_frozen.py`
+denies every Edit/Write under `eval/frozen/` unconditionally, and its own
+docstring says a genuinely-necessary change to frozen content is "a decision
+logged in DECISIONS.md and made by a human... not something an agent does
+mid-task." A serious, unambiguous correctness bug found minutes after the
+freeze commit, before any policy code exists, is exactly the scenario that
+guidance anticipates — so the fix was not applied until the user explicitly
+chose "fix critical + high, re-freeze now" from an enumerated set of options
+that also included "keep this freeze, log everything as known gaps" and
+"stop and let me look first."
+
+*What changed, and why each was in scope for this pass:*
+
+- **The fabrication itself** — the probabilistic branch is gone. A household
+  debit now either succeeds in full or fails outright, matching real UPI
+  AutoPay semantics (no partial debits) as well as fixing conservation.
+- **`protocol.md`'s "same base rates" claim for `misspecified`** — checked
+  against the math and found false: `cloglog(s) >= sigmoid(s)` for every
+  real `s`, so a link that produces different realized probabilities from
+  the same score *cannot* also preserve the same base rates — those are
+  mutually exclusive, not two independent knobs. Forcing "same rates" would
+  have meant round-tripping through the already-fitted probability again,
+  reproducing the exact no-op bug the pre-freeze cloglog fix already caught.
+  Corrected the claim to describe what is actually true (a uniform upward
+  shift in every hazard) rather than change the behavior to match a false
+  claim.
+- **Oracle-field warnings** (`household_id`, `iatrogenic_insufficient_funds`)
+  — cheap, directly requested, and closes the same class of leak the
+  existing `initial_cause`/`effective_cause` warning already covers.
+- **`on_day` monotonicity validation** — a caller passing a non-increasing
+  day previously got a silently-clamped heavy-tail exponent instead of an
+  error; now rejected outright.
+
+*What was NOT fixed, and why — logged as protocol.md limitations instead:*
+no exogenous household-balance competition (real households compete with
+more than our own debits; modeling that belongs in a B13 stress regime, not
+a retrofit onto this arm); coupling by call-order rather than calendar
+distance (consistent with the stated "no mid-cycle top-up" design, just
+cruder than an ideal time-aware model); `cause_switch_prob`'s marginal
+invariance (real, but its intended target was always B7/B8's belief-update
+stationarity assumption, not B5's population-level MNLogit fit);
+`replenishment_exponent` being inert under the ladder's fixed 1-day cadence
+(real, and expected — it activates once a policy chooses variable retry
+spacing, which the ladder never does). Also added: a pre-registered
+multi-seed comparison protocol (seeds 0-19, mean ± 1 pooled SD) for any
+"beats the ladder" claim from B5 onward, since a 40-seed sweep showed ~19%
+CV on recovered paise under `nominal` — a single-seed comparison was never
+a defensible claim.
+
+*Deferred, not forgotten:* mechanically enforcing the oracle-field
+warnings via `guard_invariants.py` (matching the existing LLM-import /
+float-money / hard-cancel checks) was raised but not implemented here —
+`src/policy/` and `src/model/` are still empty, so there is nothing to test
+the guard against yet. Add it when B7/B8 land.
+
+`reports/FREEZE_HASH` now points to `d634346` (was `8321406`). The original
+commit is not rewritten — git history shows the freeze was corrected, which
+is more honest than hiding that it happened.
