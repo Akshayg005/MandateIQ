@@ -10,5 +10,7 @@ node_modules/
 dist/
 .DS_Store
 CLAUDE.local.md
+# scaffold archives -- extracted on day 0, nothing references them
+*.zip
 reports/*.json
 !reports/.gitkeep

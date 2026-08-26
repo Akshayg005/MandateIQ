@@ -114,7 +114,7 @@ Therefore:
 
 ## Conventions
 
-- Python 3.11 · FastAPI · Postgres · statsmodels · lifelines · scikit-learn
+- Python 3.13 · FastAPI · Postgres · statsmodels · lifelines · scikit-learn
 - Every constant in `src/policy/constraints.py` carries its clause reference
   in a docstring. **No unattributed magic numbers.**
 - Type hints everywhere. `.\run.ps1 test` passes before any commit.

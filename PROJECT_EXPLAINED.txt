@@ -4,8 +4,8 @@
 ===============================================================================
 
   Built for : Razorpay AI Buildathon, Track 03 - AI Revenue Recovery
-  Timeline  : 12 days
-  Stack     : Python 3.11, FastAPI, Postgres, statsmodels, lifelines,
+  Timeline  : dependency blocks B0-B16, see reports/gates.md
+  Stack     : Python 3.13, FastAPI, Postgres, statsmodels, lifelines,
               React + Vite, React Three Fiber, Razorpay test-mode APIs
   Deliverable: public repo + 5-minute pitch video + architecture diagram
 
