@@ -6,13 +6,18 @@
 .EXAMPLE
   .\run.ps1 help
   .\run.ps1 test
-  .\run.ps1 checkpoint -Day 3
+  .\run.ps1 checkpoint -Day B4
   .\run.ps1 chaos -Kills 50
 #>
 param(
     [Parameter(Position = 0)]
     [string]$Task = "help",
-    [int]$Day = 0,
+    # Block id, e.g. B4. Typed as a string, not an int: work is keyed to
+    # dependency blocks (reports/gates.md), not to calendar days.
+    # -Block is the preferred spelling; -Day stays valid so existing docs
+    # and habits keep working.
+    [Alias("Block")]
+    [string]$Day = "",
     [int]$Kills = 50
 )
 
@@ -55,8 +60,8 @@ Mandate Recovery Engine -- tasks
   .\run.ps1 chaos -Kills 50   induced process kills
   .\run.ps1 report            regenerate all figures and tables
 
-  .\run.ps1 freeze            DAY 1 ONLY -- commit and record the eval hash
-  .\run.ps1 checkpoint -Day 3 end of session -- regenerate STATE.md
+  .\run.ps1 freeze            BLOCK B2 ONLY -- commit and record the eval hash
+  .\run.ps1 checkpoint -Day B4  end of session -- regenerate STATE.md
   .\run.ps1 state             print the session-start orientation block
   .\run.ps1 verify            full pre-flight: guards, keys, docker, hooks
   .\run.ps1 clean             remove caches
@@ -107,7 +112,7 @@ Mandate Recovery Engine -- tasks
     }
 
     "checkpoint" {
-        if ($Day -gt 0) { & $Py scripts\checkpoint.py $Day } else { & $Py scripts\checkpoint.py }
+        if ($Day) { & $Py scripts\checkpoint.py $Day } else { & $Py scripts\checkpoint.py }
     }
 
     "state" { & $Py scripts\show_state.py }
