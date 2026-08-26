@@ -160,6 +160,10 @@ gates honestly, write the handoff.
   drops invariants, and you will not notice which ones.
 - If you find yourself re-explaining a constraint, it belongs in a
   `CLAUDE.md` — the root one, or the directory-local one.
+- **Never spawn the general-purpose subagent.** It has no scoped
+  instructions, so it reads broadly to work out what it is doing, and that
+  reading is billed. Use a named subagent from `.claude/agents/`, or do the
+  work in the main session.
 
 ## Definition of done for any module
 
