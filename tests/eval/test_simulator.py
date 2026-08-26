@@ -140,6 +140,24 @@ def test_attempt_rejects_repeat_of_same_slot():
         sim.attempt(mid, 2, 1)
 
 
+def test_attempt_rejects_non_increasing_day():
+    """A retry cannot land on or before the previous attempt's day -- the
+    initial slot-1 failure is day 0, so slot 2 must be on day >= 1, and each
+    later slot must be strictly after the one before it."""
+    sim = Simulator("nominal", seed=1)
+    mid = sim.mandates[0].mandate_id
+    with pytest.raises(ValueError):
+        sim.attempt(mid, 2, 0)
+
+
+def test_attempt_rejects_day_equal_to_previous_attempt():
+    sim = Simulator("nominal", seed=1)
+    mid = sim.mandates[0].mandate_id
+    sim.attempt(mid, 2, 5)
+    with pytest.raises(ValueError):
+        sim.attempt(mid, 3, 5)
+
+
 def test_attempt_returns_a_valid_outcome():
     sim = Simulator("nominal", seed=1)
     mid = sim.mandates[0].mandate_id
@@ -352,6 +370,31 @@ def test_household_balance_never_goes_negative():
     for m in members:
         sim.attempt(m.mandate_id, 2, 1)
         assert sim.household_balance(household) >= 0
+
+
+def test_coupled_arm_never_recovers_more_than_the_household_ever_had():
+    """Regression test for a real bug caught by payments-domain review
+    before the freeze commit was finalized: the first implementation gave a
+    below-balance attempt a probabilistic chance to succeed anyway, crediting
+    the FULL mandate amount while only debiting the household to zero --
+    fabricating money. A full batch run recovered 1.7x the total liquidity
+    that existed across every household. This test would have caught it:
+    total recovered, summed across every mandate in a household, must never
+    exceed that household's starting balance."""
+    cfg = _tight_coupled_config()
+    for seed in range(20):
+        sim = Simulator("coupled", config=cfg, seed=seed)
+        households = {}
+        for m in sim.mandates:
+            households.setdefault(m.household_id, []).append(m)
+        for household_id, members in households.items():
+            starting_balance = sim.household_balance(household_id)
+            recovered = 0
+            for m in members:
+                r = sim.attempt(m.mandate_id, 2, 1)
+                if r.outcome == Outcome.RECOVERED:
+                    recovered += m.amount_paise
+            assert recovered <= starting_balance, (seed, household_id)
 
 
 def test_coupled_arm_with_effectively_unlimited_balance_matches_nominal_shape():

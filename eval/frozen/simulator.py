@@ -53,8 +53,13 @@ class SimMandate:
     the cause it was generated with; under the misspecified arm the
     effective cause used for hazard draws can later diverge from this (see
     Simulator.effective_cause) -- callers scoring the simulation should use
-    initial_cause as ground truth for what kind of mandate this really is,
-    and a policy under test must never read either field."""
+    initial_cause as ground truth for what kind of mandate this really is.
+
+    `initial_cause` AND `household_id` are unobservable ground truth. A real
+    payment aggregator has no way to know which mandates share a bank
+    account, any more than it knows a mandate's true latent cause -- a
+    policy under test must never read either field. (Evaluation/scoring
+    code reading them is fine; that is what ground truth is for.)"""
 
     mandate_id: str
     cycle_id: int
@@ -67,6 +72,12 @@ class SimMandate:
 
 @dataclass(frozen=True)
 class AttemptResult:
+    """`iatrogenic_insufficient_funds` is an evaluation-only diagnostic --
+    ground truth about WHY this attempt failed that a real issuer decline
+    string never carries. A policy under test must never read it; it exists
+    so scoring code and tests can measure the coupled arm's storm effect
+    directly instead of inferring it after the fact."""
+
     mandate_id: str
     slot: int
     on_day: int
@@ -208,6 +219,11 @@ class Simulator:
                 f"{mandate_id}: attempted slot {slot} out of order "
                 f"(expected slot {expected_next})"
             )
+        if on_day <= state.last_attempt_day:
+            raise ValueError(
+                f"{mandate_id}: slot {slot} on_day={on_day} is not after "
+                f"the previous attempt's day ({state.last_attempt_day})"
+            )
         mandate = self._by_id(mandate_id)
 
         days_since_last = on_day - state.last_attempt_day
@@ -320,14 +336,20 @@ class Simulator:
         actually can, given the household's shared balance, is a separate
         question -- and a failure here is iatrogenic: caused by our own
         prior debit(s) against this household, not by this mandate's own
-        true state."""
+        true state.
+
+        A debit either succeeds in full or not at all -- UPI AutoPay has no
+        partial-debit semantics, so there is no "probably recovers anyway"
+        branch here. That matters beyond realism: an earlier version of
+        this method gave a below-balance attempt a chance to succeed
+        weighted by balance/amount, but on success still credited the FULL
+        mandate amount while only debiting the household down to zero --
+        fabricating money (verified: a full batch run recovered 1.7x the
+        total liquidity that existed across every household). A household
+        can never pay out more than it demonstrably has.
+        """
         balance = self._household_balance[mandate.household_id]
         if balance >= mandate.amount_paise:
             self._household_balance[mandate.household_id] = balance - mandate.amount_paise
-            return Outcome.RECOVERED, False
-        # Partial liquidity: chance of recovering scales with what's left.
-        p_recover_anyway = balance / mandate.amount_paise if mandate.amount_paise else 0.0
-        if self._rng.random() < p_recover_anyway:
-            self._household_balance[mandate.household_id] = 0
             return Outcome.RECOVERED, False
         return Outcome.STILL_PENDING, True

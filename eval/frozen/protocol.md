@@ -59,14 +59,27 @@ downstream can contaminate.
   competing-risks MNLogit model (B5) assumes. A win here is necessary, not
   sufficient: it is evidence the model fits its own assumed world, which is
   the easiest bar in this file to clear.
-- **`misspecified`.** Same cause mix and base rates, different functional
-  form (cloglog hazard instead of logit) plus a heavier-tailed CANT_PAY_NOW
-  replenishment curve and per-attempt cause-switching. A win here is the
-  first real evidence: the model was never told the world looks like this.
-  A **loss or a narrowed margin here is an expected, reportable finding**,
-  not a failure of this protocol -- B13's report is required to show at
-  least one regime where the policy loses, explained, and this arm is a
-  legitimate candidate for that finding.
+- **`misspecified`.** Same cause mix and the same underlying additive
+  log-odds scores that reproduce nominal's stated base rates *under a logit
+  link* -- but a genuinely different link function, not merely a reshaping
+  of the same numbers. Cloglog mathematically dominates logit for any
+  shared score (`1 - exp(-exp(s)) >= 1/(1 + exp(-s))` for every real `s`,
+  with equality only in the limit), so misspecified's *realized* hazards
+  are uniformly higher than nominal's stated base rates -- e.g. CANT_PAY_NOW
+  recovery moves from a stated 0.35 to roughly 0.43 at the base score, purely
+  from the link. **This is the honest story, not a bug to paper over**: a
+  model that assumes logit when the true process is closer to cloglog will
+  systematically *under-predict every hazard*, not just get a curve's shape
+  slightly wrong -- and that is a stronger, more falsifiable misspecification
+  claim than "same rates, different shape" would have been. (An earlier
+  draft of this paragraph claimed "same base rates"; that was checked
+  against the implementation and found false -- see DECISIONS.md.) Plus a
+  heavier-tailed CANT_PAY_NOW replenishment curve and per-attempt
+  cause-switching. A win here is the first real evidence: the model was
+  never told the world looks like this. A **loss or a narrowed margin here
+  is an expected, reportable finding**, not a failure of this protocol --
+  B13's report is required to show at least one regime where the policy
+  loses, explained, and this arm is a legitimate candidate for that finding.
 - **`coupled`.** Independence, not functional form, is what is varied.
   Mandates share a household balance; recovering one can starve a sibling's
   recovery later the same cycle through pure liquidity contention, which
@@ -93,6 +106,72 @@ the ladder does not adapt to either RBI compliance interpretation, which is
 itself part of what a compliant policy is supposed to improve on. This is
 recorded here, not left to look like an oversight when the same
 `BatchResult` shape is produced under both profiles.
+
+## Comparisons are across seeds, not one seed
+
+`sim_config.yaml`'s single `seed` is what B2's own baseline-ladder number
+uses (deterministic, reproducible with one command), but it is **not** what
+"beats the ladder" means from B5 onward. A 40-seed sweep of the ladder under
+`nominal` shows real run-to-run variance (recovered paise, mean/seed batch:
+CV ~19%). Any reported comparison against the ladder from B5 onward is
+computed across a pre-registered sweep of **seeds 0-19** (distinct from the
+frozen config's own seed), reporting mean and standard deviation for both
+the candidate and the ladder; a "beats the ladder" claim requires the
+candidate's mean to exceed the ladder's mean by more than one pooled
+standard deviation. A single-seed comparison is not evidence of anything by
+itself and must not be reported as a result.
+
+## Known limitations, disclosed rather than hidden
+
+These are documented here, at the freeze, rather than discovered and
+explained away after a result is seen.
+
+- **Household balance in `coupled` has no exogenous competition.** Nothing
+  except our own debits ever draws it down -- no EMI, no rent NACH, no other
+  merchant's AutoPay. In production our mandates are a minority of what
+  competes for a household's balance in the salary window, so `coupled`
+  understates real-world contention rather than overstating it. The salary-
+  window recovery bonus (`salary_window_bonus_logit`) is consequently pure
+  upside in every arm, including `coupled` -- it does not carry the
+  offsetting "everyone else is also debiting this window" cost a real
+  household would face. A `mandate-stacking spike` stress regime (B13) is
+  the more appropriate place to model exogenous competition explicitly,
+  not a retrofit onto this frozen arm.
+- **Coupling depletes by call order within a cycle, not by calendar
+  distance.** Consistent with "fresh balance at cycle start, no mid-cycle
+  top-up" (deliberate, stated above) -- but it means spreading a household's
+  retries across more days does not by itself reduce contention; only
+  attempting fewer members of the same household does. A policy is
+  therefore rewarded by this arm for reading `household_id` and avoiding
+  siblings, which is NOT a real capability (see `simulator.py`'s
+  `SimMandate` docstring: `household_id` is unobservable ground truth,
+  a policy under test must never read it) and NOT the same thing as
+  solving batch capacity. `iatrogenic_insufficient_funds` totals should
+  always be read alongside attempts and money recovered, never alone --
+  a policy that trivially wins on iatrogenic count by attempting less is
+  not evidence it solved anything.
+- **`cause_switch_prob`'s marginal distribution is invariant by
+  construction** -- redrawing from the same `cause_mix` at each attempt
+  does not shift the population-level hazard rate a pooled MNLogit (B5)
+  fits. Its intended target is the *within-mandate* stationarity
+  assumption the belief update (`PLAN_DETAIL.md` §4, `update(b, e) ∝
+  b[c]·P(e|c)`) relies on, not B5's marginal fit -- expect this arm to
+  stress B7/B8 more than B5.
+- **`replenishment_exponent`'s heavy-tailed boost is inert under the
+  ladder's fixed cadence.** T+1/T+2/T+3 means `days_since_last_attempt`
+  is always exactly 1 at every retry, so the boost (which scales with that
+  gap) never activates under the only policy that has run against this arm
+  so far. It is real and tested in isolation
+  (`tests/eval/test_simulator.py`), and will start to matter the moment a
+  future policy chooses variable retry spacing -- which is the point.
+- **A policy that chooses STOP or OFFER without ever attempting a mandate
+  needs its own scoring path.** `score_mandate` requires at least one
+  `AttemptResult` because this simulator only models the ATTEMPT action;
+  REAUTH and OFFER have no outcome model here at all (their probabilistic
+  behaviour is B8's design, per `PLAN_DETAIL.md` §4's `Q(b, REAUTH, ...)`
+  and `Q(b, OFFER, ...)`). This is not a defect in this scorer, but B8 must
+  design how a batch mixing ATTEMPT/REAUTH/OFFER/STOP gets scored before
+  it can be evaluated against this harness.
 
 ## What this protocol does not cover
 
