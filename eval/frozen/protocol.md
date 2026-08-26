@@ -58,7 +58,7 @@ downstream can contaminate.
 - **`nominal`.** The arm whose generative story matches what a
   competing-risks MNLogit model (B5) assumes. A win here is necessary, not
   sufficient: it is evidence the model fits its own assumed world, which is
-  the easiest bar in this file to clear.
+  the easiest bar in this file to clear. In short: this arm tests correctness of cause handling, not scheduling skill — it is timing-invariant by construction (a privileged oracle ties the fixed ladder exactly on recovered money, 20/20 seeds; see DECISIONS.md, 2026-08-27).
 - **`misspecified`.** Same cause mix and the same underlying additive
   log-odds scores that reproduce nominal's stated base rates *under a logit
   link* -- but a genuinely different link function, not merely a reshaping
@@ -79,7 +79,7 @@ downstream can contaminate.
   never told the world looks like this. A **loss or a narrowed margin here
   is an expected, reportable finding**, not a failure of this protocol --
   B13's report is required to show at least one regime where the policy
-  loses, explained, and this arm is a legitimate candidate for that finding.
+  loses, explained, and this arm is a legitimate candidate for that finding. A privileged timing oracle confirms the intended asymmetry directly: it beats the ladder on recovered money decisively and consistently (20/20 seeds, mean/SE=7.66) — this arm is where real scheduling skill is actually measurable (see DECISIONS.md, 2026-08-27).
 - **`coupled`.** Independence, not functional form, is what is varied.
   Mandates share a household balance; recovering one can starve a sibling's
   recovery later the same cycle through pure liquidity contention, which
@@ -92,7 +92,7 @@ downstream can contaminate.
   batch-level contention (all of B5 through B8, as currently planned) is
   expected to show measurably more iatrogenic failures under `coupled` than
   under `nominal`, and B13's report says so plainly rather than omitting the
-  arm because it is unflattering.
+  arm because it is unflattering. In short: this arm tests whether a policy wastes less under contention, not whether it recovers more. A privileged oracle confirms recovered money is a coin flip here even under perfect knowledge (9/11/0 wins, mean/SE=−0.22, 20 seeds) — this arm's "beats the ladder" claim binds on attempts spent and iatrogenic count instead, never on recovered money (see DECISIONS.md, 2026-08-27, and B5's gate in reports/gates.md).
 
 ## The ladder, precisely
 
@@ -171,7 +171,35 @@ explained away after a result is seen.
   behaviour is B8's design, per `PLAN_DETAIL.md` §4's `Q(b, REAUTH, ...)`
   and `Q(b, OFFER, ...)`). This is not a defect in this scorer, but B8 must
   design how a batch mixing ATTEMPT/REAUTH/OFFER/STOP gets scored before
-  it can be evaluated against this harness.
+  it can be evaluated against this harness. 
+- **`coupled`'s contention order is fixed by mandate-generation index, not
+  randomized.** `household_id = f"H{i // household_size}"`
+  (`simulator.py:181-183`) assigns mandates to households by slicing them
+  in the same order they were generated -- so which mandate lands first,
+  second, etc. within a household correlates with generation index, never
+  with anything a policy under test could observe or be adversarially
+  confounded by. Disclosed so it is clear `coupled` tests contention
+  itself, not resilience to a hostile ordering.
+- **`coupled` does not discriminate policies on recovered money -- it
+  discriminates on attempts spent and iatrogenic count instead.** A
+  privileged oracle with perfect knowledge of timing, cause, and
+  cause-switching (`eval/oracle_policy.py::run`) ties the fixed ladder on
+  recovered money to within noise over a 20-seed sweep (9 wins / 11 losses
+  / 0 ties, mean/SE=-0.22) -- no real policy can be expected to show a
+  money-recovered edge here. A cause-aware extension of the same oracle
+  (`run_cause_aware`, same file) that additionally skips `CANT_PAY_EVER`
+  and never attempts `WONT_PAY` does discriminate, on attempts spent and
+  iatrogenic count (`eval/cause_aware_headroom.py`, 20-seed sweep:
+  iatrogenic failures 128.1 -> 119.0, mean/SE~5.6). B5's "beats the ladder"
+  gate (`reports/gates.md`) binds on these two metrics for `coupled`, and
+  on recovered money for `misspecified` only -- see `DECISIONS.md`,
+  2026-08-27.
+- **`nominal` shows zero oracle-ladder gap on recovered money, by
+  construction.** The same privileged timing oracle ties the fixed ladder
+  exactly on every one of 20 seeds (20/20 exact ties) -- `nominal` has no
+  timing-sensitive mechanic for a smarter schedule to exploit, so a win
+  was never possible here and the tie is not evidence either way, for or
+  against a candidate policy. See `DECISIONS.md`, 2026-08-27.
 
 ## What this protocol does not cover
 
