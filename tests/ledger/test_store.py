@@ -33,7 +33,10 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from src.core.types import MandateState
-from src.ledger.store import LedgerEntry, append, find_by_key, latest_state, replay
+from src.ledger.store import (
+    LedgerEntry, append, find_by_key, latest_state, replay,
+    record_lifecycle_event, record_ingested_event,
+)
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 STORE_SRC = ROOT / "src" / "ledger" / "store.py"
@@ -190,6 +193,231 @@ def test_latest_state_raises_for_mandate_with_no_lifecycle_rows(pg_schema):
         latest_state(pg_schema.conn, "M-NEVER-SEEN")
 
 
+# --- record_lifecycle_event: append-only mandate state transitions --------
+
+def test_record_lifecycle_event_inserts_fresh_row_returns_mandate_state(pg_schema):
+    """A new event_id should insert one row and return the MandateState
+    enum member matching the state string passed in."""
+    effective_at = datetime(2026, 6, 1, tzinfo=timezone.utc)
+
+    result = record_lifecycle_event(
+        pg_schema.conn,
+        event_id="evt-lifecycle-1",
+        mandate_id="M-LIFECYCLE-FRESH",
+        state="ACTIVE",
+        source="WEBHOOK",
+        effective_at=effective_at,
+    )
+
+    assert result == MandateState.ACTIVE
+    with pg_schema.conn.cursor() as cur:
+        cur.execute(
+            "SELECT event_id, mandate_id, state, source, effective_at FROM mandate_lifecycle "
+            "WHERE event_id = %s",
+            ("evt-lifecycle-1",),
+        )
+        row = cur.fetchone()
+    assert row is not None
+    assert row[0] == "evt-lifecycle-1"
+    assert row[1] == "M-LIFECYCLE-FRESH"
+    assert row[2] == "ACTIVE"
+    assert row[3] == "WEBHOOK"
+
+
+def test_record_lifecycle_event_duplicate_event_id_ignores_second_call_returns_first_state(pg_schema):
+    """Simulates a retried webhook delivery: calling with the same event_id
+    but different state the second time must return the FIRST call's state,
+    ignore the second call's state entirely, and leave exactly one row in
+    the table (the ON CONFLICT DO NOTHING behavior)."""
+    effective_at_1 = datetime(2026, 6, 1, tzinfo=timezone.utc)
+    effective_at_2 = datetime(2026, 6, 2, tzinfo=timezone.utc)
+
+    result_1 = record_lifecycle_event(
+        pg_schema.conn,
+        event_id="evt-lifecycle-dup",
+        mandate_id="M-LIFECYCLE-DUP",
+        state="CREATED",
+        source="WEBHOOK",
+        effective_at=effective_at_1,
+    )
+    result_2 = record_lifecycle_event(
+        pg_schema.conn,
+        event_id="evt-lifecycle-dup",
+        mandate_id="M-LIFECYCLE-DUP-IGNORED",
+        state="ACTIVE",
+        source="INTERNAL",
+        effective_at=effective_at_2,
+    )
+
+    assert result_1 == MandateState.CREATED
+    assert result_2 == MandateState.CREATED  # Returns what was stored first, not second
+    with pg_schema.conn.cursor() as cur:
+        cur.execute(
+            "SELECT count(*) FROM mandate_lifecycle WHERE event_id = %s",
+            ("evt-lifecycle-dup",),
+        )
+        count = cur.fetchone()[0]
+    assert count == 1
+
+
+def test_record_lifecycle_event_all_mandate_states(pg_schema):
+    """Verify that every MandateState enum member can be inserted and
+    read back without error."""
+    for state in MandateState:
+        effective_at = datetime(2026, 6, 1, tzinfo=timezone.utc)
+        result = record_lifecycle_event(
+            pg_schema.conn,
+            event_id=f"evt-state-{state.value}",
+            mandate_id=f"M-STATE-{state.value}",
+            state=state.value,
+            source="TEST",
+            effective_at=effective_at,
+        )
+        assert result == state
+
+
+# --- record_ingested_event: append-only ingest landing zone ---------------
+
+def test_record_ingested_event_minimal_fields_inserts_with_nulls(pg_schema):
+    """Call with only required fields (event_id, event_type,
+    raw_payload_sha256); all optional fields None. Returns None (fire and
+    forget), and the row's nullable columns are actually NULL."""
+    record_ingested_event(
+        pg_schema.conn,
+        event_id="evt-ingest-minimal",
+        event_type="payment.failed",
+        raw_payload_sha256="a" * 64,
+    )
+
+    with pg_schema.conn.cursor() as cur:
+        cur.execute(
+            "SELECT event_id, event_type, mandate_id, provider_ref, decline_code, "
+            "decline_text, decline_class, cause_prior, amount_paise, raw_payload_sha256 "
+            "FROM ingested_event WHERE event_id = %s",
+            ("evt-ingest-minimal",),
+        )
+        row = cur.fetchone()
+    assert row is not None
+    event_id, event_type, mandate_id, provider_ref, decline_code, decline_text, decline_class, cause_prior, amount_paise, raw_payload_sha256 = row
+    assert event_id == "evt-ingest-minimal"
+    assert event_type == "payment.failed"
+    assert mandate_id is None
+    assert provider_ref is None
+    assert decline_code is None
+    assert decline_text is None
+    assert decline_class is None
+    assert cause_prior is None
+    assert amount_paise is None
+    assert raw_payload_sha256 == "a" * 64
+
+
+def test_record_ingested_event_all_fields_populated_roundtrips_exactly(pg_schema):
+    """Insert a row with every field populated (realistic decline event).
+    Verify that all columns round-trip exactly, and specifically confirm
+    that amount_paise comes back as a plain Python int, never float."""
+    cause_prior_json = '{"CANT_PAY_NOW": 0.8, "CANT_PAY_EVER": 0.1, "WONT_PAY": 0.1}'
+    amount_paise = 150000
+
+    record_ingested_event(
+        pg_schema.conn,
+        event_id="evt-ingest-full",
+        event_type="payment.failed",
+        raw_payload_sha256="b" * 64,
+        mandate_id="M-INGEST-FULL",
+        provider_ref="pay_ABC123DEF456",
+        decline_code="INSUFFICIENT_FUNDS",
+        decline_text="Insufficient balance",
+        decline_class="INSUFFICIENT_FUNDS",
+        cause_prior_json=cause_prior_json,
+        taxonomy_version="v1",
+        prior_version="v2",
+        amount_paise=amount_paise,
+    )
+
+    with pg_schema.conn.cursor() as cur:
+        cur.execute(
+            "SELECT event_id, event_type, mandate_id, provider_ref, decline_code, "
+            "decline_text, decline_class, cause_prior, taxonomy_version, "
+            "prior_version, amount_paise, raw_payload_sha256 "
+            "FROM ingested_event WHERE event_id = %s",
+            ("evt-ingest-full",),
+        )
+        row = cur.fetchone()
+    assert row is not None
+    (event_id, event_type, mandate_id, provider_ref, decline_code, decline_text,
+     decline_class, cause_prior, taxonomy_version, prior_version,
+     amount_paise_read, raw_payload_sha256) = row
+    assert event_id == "evt-ingest-full"
+    assert event_type == "payment.failed"
+    assert mandate_id == "M-INGEST-FULL"
+    assert provider_ref == "pay_ABC123DEF456"
+    assert decline_code == "INSUFFICIENT_FUNDS"
+    assert decline_text == "Insufficient balance"
+    assert decline_class == "INSUFFICIENT_FUNDS"
+    assert cause_prior == cause_prior_json
+    assert taxonomy_version == "v1"
+    assert prior_version == "v2"
+    assert isinstance(amount_paise_read, int), f"amount_paise must be int, got {type(amount_paise_read)}"
+    assert amount_paise_read == amount_paise
+    assert raw_payload_sha256 == "b" * 64
+
+
+def test_record_ingested_event_duplicate_event_id_ignores_second_call(pg_schema):
+    """Call record_ingested_event() twice with the same event_id but
+    different field values the second time. Must not raise, SELECT count(*)
+    must still be 1, and the row's contents must match the FIRST call."""
+    record_ingested_event(
+        pg_schema.conn,
+        event_id="evt-ingest-dup",
+        event_type="payment.failed",
+        raw_payload_sha256="c" * 64,
+        mandate_id="M-INGEST-DUP",
+        amount_paise=100000,
+    )
+    record_ingested_event(
+        pg_schema.conn,
+        event_id="evt-ingest-dup",
+        event_type="subscription.charged",
+        raw_payload_sha256="d" * 64,
+        mandate_id="M-INGEST-DUP-IGNORED",
+        amount_paise=200000,
+    )
+
+    with pg_schema.conn.cursor() as cur:
+        cur.execute(
+            "SELECT count(*) FROM ingested_event WHERE event_id = %s",
+            ("evt-ingest-dup",),
+        )
+        count = cur.fetchone()[0]
+    assert count == 1
+
+    with pg_schema.conn.cursor() as cur:
+        cur.execute(
+            "SELECT event_type, mandate_id, amount_paise FROM ingested_event "
+            "WHERE event_id = %s",
+            ("evt-ingest-dup",),
+        )
+        row = cur.fetchone()
+    assert row[0] == "payment.failed"  # First call's event_type, not second
+    assert row[1] == "M-INGEST-DUP"  # First call's mandate_id
+    assert row[2] == 100000  # First call's amount_paise
+
+
+def test_record_ingested_event_negative_amount_paise_raises_check_violation(pg_schema):
+    """The schema has CHECK (amount_paise IS NULL OR amount_paise >= 0).
+    Attempt to insert a negative amount_paise must raise CheckViolation."""
+    import psycopg
+
+    with pytest.raises(psycopg.errors.CheckViolation):
+        record_ingested_event(
+            pg_schema.conn,
+            event_id="evt-ingest-negative",
+            event_type="payment.failed",
+            raw_payload_sha256="e" * 64,
+            amount_paise=-1000,
+        )
+
+
 # --- source guard: append-only in the code, not just the DB ----------------
 
 def test_store_never_updates_or_deletes_the_ledger_table():
@@ -208,3 +436,19 @@ def test_store_never_updates_or_deletes_the_ledger_table():
     for pattern in banned:
         match = re.search(pattern, text, re.IGNORECASE)
         assert match is None, f"store.py must never UPDATE/DELETE ledger, found: {match.group(0)!r}"
+
+
+def test_store_never_updates_or_deletes_new_tables():
+    """The two new functions (record_lifecycle_event, record_ingested_event)
+    must be append-only via ON CONFLICT DO NOTHING, not ON CONFLICT DO UPDATE.
+    Verify that the source never contains UPDATE against the new tables."""
+    text = STORE_SRC.read_text(encoding="utf-8")
+    banned = [
+        r'UPDATE\s+ingested_event\b',
+        r'UPDATE\s+"ingested_event"',
+        r'UPDATE\s+mandate_lifecycle\b',
+        r'UPDATE\s+"mandate_lifecycle"',
+    ]
+    for pattern in banned:
+        match = re.search(pattern, text, re.IGNORECASE)
+        assert match is None, f"store.py must never UPDATE ingested_event or mandate_lifecycle, found: {match.group(0)!r}"

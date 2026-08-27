@@ -13,7 +13,13 @@ written and its gate unmet counts as zero.
 - [x] **B0** environment: `.\run.ps1 verify` passes all five, including a real test-mode order
 - [x] **B1** ★ core + ledger: money/clock/ids tests pass; `ids.py` imports no `time`/`uuid`/`os`/`random`; ledger DDL has no UPDATE path
 - [x] **B2** ★ **the freeze**: baseline ladder produces a number; FREEZE_HASH recorded; `guard_frozen.py` denies an edit under `eval/frozen/`
-- [ ] **B3** ingest + taxonomy: a real test-mode `payment.failed` lands in the ledger with a classified cause; mandate lifecycle table exists; provider idempotency spike result written to DECISIONS.md
+- [x] **B3** ingest + taxonomy: a real test-mode `payment.failed` lands in the ledger's ingest table (`ingested_event`) with a classified cause; mandate lifecycle table exists; provider idempotency spike result written to DECISIONS.md
+      <!-- changed from "lands in the ledger" to "lands in ingested_event",
+           2026-08-27, before any webhook had been received and before this
+           block's code existed beyond the plan file: ledger.decision_sha256
+           is NOT NULL REFERENCES plan, and no plan row can exist before B8's
+           allocator -- a bare observed decline has no decision to attach to.
+           Logged in DECISIONS.md, does not touch eval/frozen/. -->
 - [ ] **B4** ★ person-period frame: `validate()` rejects every malformed shape; a censored episode round-trips with all four rows intact; split is mandate-level; no feature encodes a future slot
 - [ ] **B5** ★ competing risks + CIF: beats the ladder on **recovered money** (misspecified arm), on **attempts spent and iatrogenic count** (coupled arm), and on **mandates preserved** (all three arms); `Σ_c CIF_c(4) + S(4) == 1`; stats-reviewer returns clean
       <!-- changed from "both" at PLAN_DETAIL v2 (B1), before the freeze commit

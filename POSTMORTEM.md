@@ -66,3 +66,56 @@ to `attempt()` (a non-increasing day previously clamped silently via
 exceeds the household's starting balance. This is the exact invariant whose
 absence let the bug ship undetected by my own tests; it is now a permanent
 regression test, not just a review finding.
+
+## Incident 2 — webhook writes silently discarded despite HTTP 200
+
+**When:** Block B3, 2026-08-27, during the plan's manual end-to-end
+verification step — after all 235 automated tests and
+`guard_invariants.py --all` were already green.
+
+**Symptom:** `POST /webhook/razorpay` against the real running server (not
+`TestClient`) returned `HTTP 200 {"status": "ok"}` for a validly-signed
+`payment.failed` body. A direct query of `ingested_event` immediately
+afterward, against the same real database, found no matching row. The
+write reported success and then simply wasn't there.
+
+**Root cause:** `src/ingest/deps.py`'s `get_conn()` opened its connection
+via `src.core.db.connect()` with no `autocommit` argument. psycopg3
+defaults new connections to `autocommit=False`, so every write inside the
+request handler ran inside an implicit transaction that nothing ever
+committed. When `get_conn()`'s `finally: conn.close()` ran at the end of
+the request, the uncommitted transaction was discarded along with the
+connection — silently; closing a connection with a live uncommitted
+transaction is not an error in psycopg3, it's just a rollback.
+
+**Why it wasn't caught earlier:** all 235 tests, including the full
+8-test `tests/ingest/test_webhook.py` suite (signature verification,
+replay window, dedupe, both event-type routing paths, a source guard),
+passed cleanly against this exact code — because none of them ever ran
+the real `get_conn()`. `test_webhook.py`'s `client` fixture overrides the
+dependency entirely (`app.dependency_overrides[get_conn] = lambda:
+pg_schema.conn`), and `pg_schema.conn` is opened with `autocommit=True`
+directly in `tests/conftest.py`, for an unrelated reason (so a test's own
+verification queries see its writes immediately without an explicit
+commit call). That override is correct and necessary for test isolation
+— it points every write at a scratch schema instead of the real database
+— but as a side effect it also bypassed the exact line of production code
+that had the bug. Only a manual run against a live server and the real
+database could have caught this, and did.
+
+**Fix:** `src/core/db.py::connect()` already leaves autocommit to the
+caller, by design (its own docstring says so). Fixed by making the
+caller — `deps.py::get_conn()` — decide correctly: `connect(autocommit=
+True)`. Verified by restarting the real server and re-running the same
+manual check: the row now lands, with the correct `decline_class`,
+`mandate_id`, an `amount_paise` that is a plain Python `int`, and a
+`cause_prior` JSON summing to 1.0.
+
+**Guard added:** `tests/ingest/test_deps.py::
+test_get_conn_yields_an_autocommit_connection` — calls the REAL `get_conn()`
+generator, deliberately not overridden (skips if Postgres is unreachable,
+matching `pg_schema`'s own skip discipline, rather than mocking around the
+exact thing this guard exists to exercise), and asserts `conn.autocommit
+is True`. This is the one test in the suite that would have failed before
+the fix, because it is the only one that doesn't go through
+`dependency_overrides`.

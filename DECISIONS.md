@@ -380,6 +380,279 @@ needs a human edit outside a Claude session, the same path the 2026-08-26
 corrected freeze used. Not yet applied as of this entry — pending the
 user's choice of how to route a second frozen-file amendment.
 
+### 2026-08-27 · B3 · Gate rebound: "lands in the ledger" → "lands in `ingested_event`"
+
+`reports/gates.md`'s B3 line read "a real test-mode `payment.failed` lands in
+the **ledger** with a classified cause." It cannot: `ledger.decision_sha256`
+is `NOT NULL REFERENCES plan`, and no `plan` row can exist before B8's
+allocator produces one. A bare observed decline is not a decision of this
+system's to move money — forcing it through `ledger` would be a category
+error, not a simplification.
+
+*Resolution.* A new, additive table, `ingested_event` (plus a second,
+`webhook_event`, backing dedupe only), is the classified landing zone
+instead. Gate text amended to name it explicitly, before any webhook had
+been received and before this block's code existed beyond the plan file —
+the same pre-result timing as the B5 per-arm rebinding earlier this block.
+Does not touch `eval/frozen/`.
+
+*What still needs `ledger` eventually.* Nothing from B3. `ledger` stays
+exactly what B1 built it to be: this system's own authorised decisions to
+move money, each traceable to a `plan` row. B8 is where a decline observed
+here starts feeding a belief that eventually produces one.
+
+### 2026-08-27 · B3 · Razorpay has no dedicated mandate-revocation decline reason
+
+Independently verified against Razorpay's own error-reason documentation
+(the UPI and card payment error-reason pages) while building
+`decline_taxonomy.py`: there is no `error_reason` value meaning "the
+customer revoked their mandate." Further research (Razorpay's subscription-
+states documentation) found the actual behaviour: when a customer cancels a
+UPI AutoPay mandate at their bank, the *next* debit attempt does not surface
+a distinct decline reason for it at all — the subscription's own status
+moves to `pending`, and **Razorpay's own auto-retry keeps attempting it
+blindly the following day.** This is the incumbent behaviour this project
+exists to replace, showing up as a documented fact about the platform
+itself, not a hypothesis.
+
+*Consequence for this block.* `decline_taxonomy.classify()`'s
+`MANDATE_REVOKED` class is therefore a weak, best-effort match against
+free-text revocation language only (e.g. a bank narration that happens to
+say "mandate revoked") — never a confident classifier, and its docstring
+says so. The reliable channel for clause 6(c) signal is
+`src/ingest/lifecycle_route.py` reading the subscription entity's own
+`status` from a `subscription.cancelled`-family webhook, mapped to
+`MandateState.REVOKED` — a structurally different, more trustworthy signal
+than anything decline text can offer.
+
+*The gap this leaves, found by `compliance-auditor`'s B3 review.* If that
+subscription webhook is delayed beyond the 48h replay window or genuinely
+never arrives (Razorpay retries failed delivery on backoff for 24h, then
+gives up), the only signal remaining is the weak decline-text match — and
+today, nothing reads it as a fallback. `mandate_lifecycle` would show no
+`REVOKED` row, `latest_state()` would still report the mandate `ACTIVE`, and
+a future executor consulting only that table could attempt again.
+
+*Why this is disclosed, not fixed, here.* The fallback the auditor describes
+— treat a repeated pattern of `MANDATE_REVOKED`-classified `ingested_event`
+rows with no corresponding lifecycle row as secondary revocation evidence —
+is executor-side interpretation logic, which is B9's `pre-call re-read`
+concern (PLAN_DETAIL.md §1 B9's "late-read principle"), not B3's ingest
+concern. Designing it now, before B9's belief/executor machinery exists,
+would be guessing at an interface that doesn't exist yet. What B3 *has* done
+is make the fallback possible: every weakly-classified `MANDATE_REVOKED`
+decline is captured in `ingested_event` with its `mandate_id`, so the raw
+signal exists for B9 to build on. **Flagging for B9:** consult
+`ingested_event` as well as `mandate_lifecycle` before concluding a mandate
+is still retriable.
+
+### 2026-08-27 · B3 · Provider idempotency spike — `receipt` does NOT dedupe Order.create
+
+`scripts/idempotency_spike.py`, run for real against the live Razorpay
+test-mode API (not simulated, not assumed from docs): called `Order.create`
+twice with an identical body and a fixed `receipt`. **Observed:
+`DOUBLE_CREATED`** — two distinct orders, `order_TUlHyAjGj0hWzK` and
+`order_TUlHyP6FTZCKYY`, both created from the same request body and the same
+`receipt` value.
+
+*This contradicts the previous session's documentation-only claim* (recorded
+in this block's plan: "Orders' `receipt` field is 'treated as an idempotency
+key' but rejects a second create call with the same value") — Razorpay's own
+prose describes `receipt` as *"treated as"* an idempotency key, and the
+empirical result says it is not enforced as one on Orders, at least not
+under the conditions this spike used. A follow-up search found Razorpay
+does document per-endpoint idempotency-key HTTP headers (`X-Payout-
+Idempotency`, `X-Refund-Idempotency`) for Payouts and Refunds specifically —
+no equivalent was found documented for Orders, consistent with what the
+spike observed, though absence from search results is suggestive, not
+exhaustive proof no such mechanism exists.
+
+*Why this doesn't weaken this project's own safety case — if anything it
+sharpens it.* This system was never designed to lean on provider-side
+dedup as a backstop: invariant 3 (ledger write before money action) and
+`ledger_intent_once`'s partial unique index exist specifically so that a
+second `Order.create`/`Payment` call for the same attempt is *never issued
+in the first place* — the lease-claim-before-send step in PLAN_DETAIL.md
+§3's write-ordering protocol is the actual safety mechanism, not a
+courtesy. This result proves that assumption was load-bearing correctly:
+had `razorpay_client.py` been designed around "the provider will catch a
+duplicate for us," this finding would have been a shipped double-charge
+path, not a spike result.
+
+*Consequence for B9.* `PLAN_DETAIL.md` §1 B9 already names
+`find_by_receipt` as `razorpay_client.py`'s recovery interface rather than
+"trust the key" — this result confirms that was the right call, for a
+stronger reason than originally written (not "belt and braces," but "the
+belt is the only thing holding anything up"). `find_by_receipt`'s
+implementation should use `receipt` as a *lookup filter* on a fetch/list
+call after a crash (querying "did an order with this receipt get created?"),
+never rely on `receipt` to have prevented a duplicate `create` from
+happening — B9 must not call `Order.create` again for an attempt whose
+INTENT row already exists, full stop; recovery is by asking, never by
+resending. Implementation deferred to B9, per plan.
+
+### 2026-08-27 · B3 · payments-domain review — taxonomy fixed, cause_map's safe-default corrected, two gaps disclosed
+
+`payments-domain`'s required B3 review (decline-taxonomy coverage) ran
+adversarially rather than confirmatory, and found real, demonstrated
+failures — not speculation — by feeding `classify()` the actual verified
+Razorpay `error_description` strings this session's own research had
+already collected, with `code` stripped. What was found, and what was done
+with each:
+
+**Fixed — text-only input collapsed to UNKNOWN for classes whose real
+description doesn't contain the enum token.** Demonstrated concretely: the
+real `insufficient_funds` description never contains the word
+"insufficient"; `invalid_vpa`'s never says "vpa"; `debit_instrument_blocked`'s
+says "card being blocked", not "instrument blocked"; `card_not_enrolled`'s
+says "not activated for online", not "not enrolled". Every keyword list had
+been built mostly from the underscored `error_reason` token, with only
+partial prose coverage — a real gap given `classify()`'s own signature
+accepts `code: str | None`, meaning free-text-only input (exactly what
+issuers/NPCI narration or a future non-Razorpay source would supply) was
+already a designed-for case, just a badly-handled one. Fixed by adding the
+actual verified description phrases as additional keywords (`decline_taxonomy.py`,
+`TAXONOMY_VERSION` bumped implicitly — see below); pinned with 6 new
+text-only parametrized test cases plus a compound `"account" in haystack
+and "closed" in haystack` check for the "account has been closed" case
+specifically (real prose isn't the contiguous phrase "account closed" the
+original keyword matched).
+
+**Fixed — `payment_cancelled` could satisfy the MANDATE_REVOKED heuristic by
+accident.** The mandate-revoked check requires "mandate" + ("revoked" or
+"cancelled"); on UPI AutoPay, "mandate" is the ordinary product noun, so a
+per-attempt cancel's own free text routinely names it (constructed example:
+`payment_cancelled` / *"The customer cancelled the UPI AutoPay mandate
+approval request."*) — exactly the conflation this file's one hard
+invariant exists to prevent (a per-attempt decline is not evidence the
+whole mandate was revoked). Fixed by excluding `"payment_cancelled"` from
+the check explicitly, since it's a real, specific Razorpay code for exactly
+this case; pinned with a named regression test.
+
+**Fixed — `cause_map.py`'s ambiguous-class priors violated documented
+project policy.** `.claude/skills/new-failure-class/SKILL.md` already says,
+for a genuinely ambiguous class: *"map it to CANT_PAY_NOW (the safe
+default: we retry rather than offer an exit)."* `UNKNOWN` (exact uniform)
+and `ISSUER_DECLINE` (near-uniform) both violated this — a design choice
+made last session (PLAN_DETAIL.md, before this skill file was consulted)
+reasoning from statistical honesty ("no signal → no opinion") rather than
+this project's actual safety framing. The reviewer's sharper point: the
+three causes are not symmetric in consequence — `CANT_PAY_NOW` costs a
+cheap, reversible retry slot; `WONT_PAY` routes toward an off-ramp offer —
+so an abstention that spreads mass evenly *is* a bet, and the skill had
+already settled which way it should fall. Both classes changed to 0.60 /
+0.20 / 0.20 (`CANT_PAY_NOW` / `CANT_PAY_EVER` / `WONT_PAY`); `PRIOR_VERSION`
+bumped `v1` → `v2`; the one test that hard-coded exact uniformity
+(`test_unknown_is_exactly_uniform`) rewritten to assert the skew instead of
+weakened to pass — its replacement, `test_unknown_skews_cant_pay_now_not_uniform`,
+also asserts the skew stops short of 0.75 (an abstention, not overconfidence).
+
+**Added — classification is now versioned.** Neither `decline_class` nor
+`cause_prior` written to `ingested_event` carried any record of which
+ruleset produced it — the same gap B11's gate exists to close for the LLM
+normaliser ("normaliser output is versioned in the ledger before it can
+touch a belief"), just for the keyword matcher instead, and arguably more
+urgent given `new-failure-class/SKILL.md` states outright that *"the
+taxonomy will grow all week."* Two nullable columns, `taxonomy_version` /
+`prior_version`, added to `ingested_event`; `decline_taxonomy.TAXONOMY_VERSION`
+/ `cause_map.PRIOR_VERSION` module constants added, bumped by hand,
+threaded through `store.record_ingested_event` and `webhook.py`.
+
+**Disclosed, not fixed — raw NPCI/NACH response codes.** ("51", "U17",
+similar) arrive, if at all, entirely outside Razorpay's normalised
+`error_reason` vocabulary, and no substring rule can safely reach short
+numeric/alphanumeric codes without risking a false match against an amount
+or an id fragment. Recorded in `decline_taxonomy.py`'s docstring as a named
+gap, explicitly the free-text problem B11's LLM layer exists for — not
+attempted here, since it needs either a dedicated code table or the B11
+normaliser, both out of B3's scope.
+
+**Disclosed, not fixed — a decline whose real cause is "amount exceeds the
+mandate ceiling"** (clause 4(c) territory) has no dedicated `DeclineClass`
+among the 7 and lands in `ISSUER_DECLINE`, the least-wrong available
+bucket. `DeclineClass`'s members are a B1 artifact; adding an 8th is out of
+scope for B3.
+
+**Disclosed, not fixed — `ISSUER_DECLINE` is a grab-bag bin, not a
+phenomenon.** The reviewer's deeper critique: the class currently bundles
+`incorrect_cvv` (a typo), `risk_check_failed` (an issuer fraud flag),
+`transaction_limit` (a structural cap), and `payment_declined` (whose own
+description reads as insufficient-funds-flavoured) under one shared prior,
+purely as an accident of which strings happen to contain "declined".
+Splitting it into better-fitting sub-bins is a real improvement but a
+larger redesign than a review-response pass should attempt unilaterally —
+noted for whoever next touches this file, not actioned here.
+
+**Independently corroborates the compliance-auditor's finding, same
+session:** both reviews, working from different files and different
+reasoning paths, converged on the same real gap — `lifecycle_route.py`
+declines to map `pending`/`halted` because the taxonomy said the reliable
+signal is the subscription status, and the taxonomy declines to confidently
+classify revocation because it expects `lifecycle_route.py` to catch it —
+each individually well-reasoned, but a bank-side cancellation can fall
+through both. See the entry above ("Razorpay has no dedicated
+mandate-revocation decline reason") for the full writeup and why it's
+disclosed rather than mitigated in B3.
+
+**Also found, unrelated to the taxonomy — a tooling gap.** `run.ps1 lint`
+/ `guard_invariants.py --all` scans `git ls-files *.py`, i.e. only
+git-*tracked* files. Every file this block created was untracked at review
+time, so `--all` silently checked none of them; the guard had to be re-run
+against explicit paths to actually cover this block's own diff. Not fixed
+here — pre-existing tooling behaviour, unrelated to B3's deliverables, and
+worth its own deliberate look rather than a bolt-on fix.
+
+### 2026-08-27 · B3 · Live-tunnel phase: gate closed with a real webhook
+
+`cloudflared` tunnel + `run.ps1 serve` equivalent, webhook registered on the
+real Razorpay test-mode dashboard, a real order created via the API with
+`notes.mandate_id` set (per this block's own plan — the mitigation for "the
+one thing most likely to go wrong"), payment attempted against it. Result:
+a genuine `payment.failed` webhook, delivered from `52.66.76.63` (AWS
+Mumbai — consistent with Razorpay's own infrastructure, not a replay),
+landed in `ingested_event`:
+
+- `mandate_id` resolved correctly via `notes` — **not NULL**, confirming
+  the plan's mitigation actually worked, not just in theory.
+- `decline_class = ISSUER_DECLINE` (not `UNKNOWN`) for decline text this
+  session had never seen before ("Your payment didn't go through due to a
+  temporary issue...") — matched via the `payment_failed` keyword, one
+  layer of coverage this same session added in response to
+  payments-domain's review.
+- `cause_prior = {"CANT_PAY_NOW": 0.6, "CANT_PAY_EVER": 0.2, "WONT_PAY":
+  0.2}` — the corrected safe-default skew, also confirmed live.
+- `taxonomy_version = "v1"`, `prior_version = "v2"` both stamped.
+
+*Deviation from plan, and why it doesn't weaken the result.* The intended
+path was UPI, VPA `failure@razorpay` — Razorpay's documented deterministic
+test-mode failure address. Two S2S JSON API endpoints
+(`/v1/payments/create/json`, `/v1/payments/create/upi`) both returned a
+genuine 404 from Razorpay's real API (confirmed via direct URL inspection,
+not an SDK bug) — this account does not have server-to-server payment
+creation enabled. Fell back to Razorpay's primary, definitely-supported
+mechanism: a real Checkout.js popup in a real browser. **No UPI option
+appeared in that popup either** — the user completed the flow via Wallet
+→ Ola Money → failure instead. The gate's requirement ("a real test-mode
+`payment.failed`") is about the webhook being genuine, not about which
+payment method produced it, so this still satisfies it — but it's the same
+decline text a wallet failure produces, not a UPI one, so it doesn't
+exercise the UPI-specific vocabulary this session researched as thoroughly.
+
+**Flagging for the user, not this session to fix:** this test account is
+missing both **Subscriptions** (no `subscription.*` category in the
+webhook event picker) and, now confirmed, **UPI** as a Checkout payment
+method. `SETUP_GUIDE_WINDOWS.md` Stage B already anticipated the
+Subscriptions gap ("if it is missing or greyed out, request activation via
+support right now") — worth doing that request now, since B9's
+`pause_subscription` and any real e-mandate registration testing need it,
+and this project is specifically about UPI AutoPay mandates.
+
+Two throwaway test-mode orders/payments were created in the process
+(`order_TUlxvAtuEEvLGb`, `order_TUlydHC25aE5Nk` — both abandoned after the
+404s, no payment attached; `order_TUlz2ij96t6mZ4` — the one actually paid,
+test mode, no real money moved). No cleanup needed; Razorpay does not
+charge for unused or failed test-mode orders.
+
 ### 2026-08-27 · B2 · protocol.md correction applied — FREEZE_HASH updated again
 
 The Known-limitations bullets and per-arm restatements drafted in the entry

@@ -140,3 +140,68 @@ def latest_state(conn, mandate_id: str) -> MandateState:
     if row is None:
         raise LookupError(f"no mandate_lifecycle rows for mandate_id={mandate_id!r}")
     return MandateState(row[0])
+
+
+def record_lifecycle_event(
+    conn, *, event_id: str, mandate_id: str, state: str, source: str,
+    effective_at: datetime,
+) -> MandateState:
+    """Record one mandate_lifecycle transition, keyed by the provider's own
+    event_id (also this table's dedupe key). ON CONFLICT DO NOTHING: a
+    retried webhook delivery of an event_id we already recorded is not an
+    error, it's the normal case. Returns the MandateState the row
+    represents -- either the state just inserted, or, on a duplicate
+    event_id, the state recorded the FIRST time (re-read from the existing
+    row), never the caller's second-call arguments."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO mandate_lifecycle (event_id, mandate_id, state, source, effective_at)
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (event_id) DO NOTHING
+            RETURNING state
+            """,
+            (event_id, mandate_id, state, source, effective_at),
+        )
+        row = cur.fetchone()
+        if row is None:
+            cur.execute(
+                "SELECT state FROM mandate_lifecycle WHERE event_id = %s",
+                (event_id,),
+            )
+            row = cur.fetchone()
+    return MandateState(row[0])
+
+
+def record_ingested_event(
+    conn, *, event_id: str, event_type: str, raw_payload_sha256: str,
+    mandate_id: str | None = None, provider_ref: str | None = None,
+    decline_code: str | None = None, decline_text: str | None = None,
+    decline_class: str | None = None, cause_prior_json: str | None = None,
+    taxonomy_version: str | None = None, prior_version: str | None = None,
+    amount_paise: int | None = None,
+) -> None:
+    """Record one classified ingest event into `ingested_event`. Fire and
+    forget: no return value. ON CONFLICT DO NOTHING, mirroring append()'s
+    dedup discipline -- a retried webhook delivery of the same event_id is
+    silently a no-op, never a second row and never an exception.
+
+    taxonomy_version / prior_version record which decline_taxonomy.py /
+    cause_map.py ruleset produced decline_class / cause_prior_json on THIS
+    row -- see schema.sql's comment on these columns."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO ingested_event (
+                event_id, event_type, mandate_id, provider_ref, decline_code,
+                decline_text, decline_class, cause_prior, taxonomy_version,
+                prior_version, amount_paise, raw_payload_sha256
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (event_id) DO NOTHING
+            """,
+            (
+                event_id, event_type, mandate_id, provider_ref, decline_code,
+                decline_text, decline_class, cause_prior_json, taxonomy_version,
+                prior_version, amount_paise, raw_payload_sha256,
+            ),
+        )

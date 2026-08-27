@@ -95,3 +95,50 @@ CREATE TABLE attempt_lease (
   idempotency_key TEXT PRIMARY KEY,
   owner TEXT NOT NULL, expires_at TIMESTAMPTZ NOT NULL
 );
+
+-- B3: ingest. Event-level idempotency, type-agnostic -- backs dedupe.py
+-- only. Deliberately has no decline-specific columns: coupling this to
+-- DeclineClass/Cause would force dedupe.py to import src/classify/, which
+-- is exactly the scope leak this table exists to avoid.
+CREATE TABLE webhook_event (
+  event_id    TEXT        PRIMARY KEY,
+  event_type  TEXT        NOT NULL,
+  received_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- B3: the classified landing zone the gate needs. NOT `ledger` -- ledger
+-- rows key off decision_sha256 REFERENCES plan, representing this system's
+-- OWN decisions to move money, and no plan row can exist before B8's
+-- allocator. A bare observed decline has no decision to attach to; forcing
+-- it through `ledger` would be a category error. See DECISIONS.md for the
+-- B3 gate rebinding this table's name is now part of.
+--
+-- mandate_id is nullable: a payment.failed body carries no reliable link
+-- back to a mandate (Razorpay's Payment entity has no subscription_id), so
+-- webhook.py resolves it from payload.payment.entity.notes, falling back to
+-- a sibling subscription.entity.id, falling back to NULL. An honest NULL,
+-- reported as a rate, is preferred over a guessed mandate_id.
+CREATE TABLE ingested_event (
+  event_id           TEXT        PRIMARY KEY,
+  event_type         TEXT        NOT NULL,
+  mandate_id         TEXT,
+  provider_ref       TEXT,
+  decline_code       TEXT,
+  decline_text       TEXT,
+  decline_class      TEXT,
+  cause_prior        TEXT,                 -- JSON dict[Cause,float] from cause_map.prior()
+  -- Which version of decline_taxonomy.classify() / cause_map.prior() wrote
+  -- decline_class / cause_prior on THIS row. "the taxonomy will grow all
+  -- week" (.claude/skills/new-failure-class/SKILL.md) -- without this, a
+  -- future re-read of an old row can't tell which ruleset judged it,
+  -- mirroring the exact reason B11's normaliser output must be versioned
+  -- before it can touch a belief (PLAN_DETAIL.md B11 gate). Nullable: not
+  -- every future writer of this table need touch classification at all.
+  taxonomy_version   TEXT,
+  prior_version      TEXT,
+  amount_paise       BIGINT,
+  raw_payload_sha256 TEXT        NOT NULL,
+  received_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CHECK (amount_paise IS NULL OR amount_paise >= 0)
+);
+CREATE INDEX ingested_event_mandate ON ingested_event (mandate_id, received_at DESC);

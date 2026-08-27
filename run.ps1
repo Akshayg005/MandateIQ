@@ -64,6 +64,8 @@ Mandate Recovery Engine -- tasks
   .\run.ps1 checkpoint -Day B4  end of session -- regenerate STATE.md
   .\run.ps1 state             print the session-start orientation block
   .\run.ps1 verify            full pre-flight: guards, keys, docker, hooks
+  .\run.ps1 serve             run the webhook ingest API (uvicorn, port 8000)
+  .\run.ps1 coverage          decline_class / UNKNOWN-rate breakdown from ingested_event
   .\run.ps1 clean             remove caches
 
 "@
@@ -172,6 +174,12 @@ print(c.order.create({'amount':100,'currency':'INR'})['id'])
         if ($fail -eq 0) { Write-Host "ALL CHECKS PASSED" -ForegroundColor Green }
         else { Write-Host "SOMETHING FAILED -- fix before building" -ForegroundColor Red; exit 1 }
     }
+
+    "serve" {
+        & $Py -m uvicorn src.ingest.app:app --reload --port 8000
+    }
+
+    "coverage" { & $Py scripts\decline_coverage.py }
 
     "clean" {
         Get-ChildItem -Recurse -Directory -Filter __pycache__ |
