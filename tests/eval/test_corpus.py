@@ -18,6 +18,7 @@ from src.policy.constraints import afa_free_limit_paise, ELEVATED_AFA_CATEGORIES
 from eval.corpus import (
     Episode,
     LegalityError,
+    MIN_CELL_COUNT,
     TRAIN_SEEDS,
     assert_legal,
     generate,
@@ -364,7 +365,7 @@ def test_generate_raises_on_empty_cell(monkeypatch):
 
 def test_generate_default_corpus_has_no_empty_cell():
     """Positive counterpart to the above: the real, shipped generate()
-    defaults (COMPRESSED_FRAC=0.30 and all 10 TRAIN_SEEDS) must not raise,
+    defaults (COMPRESSED_FRAC=0.30 and all of TRAIN_SEEDS) must not raise,
     and cell_counts() over its output must show every one of the 18 cells
     with at least one attempt -- the actual fix, not just the guard."""
     episodes = generate(seeds=TRAIN_SEEDS, rng_seed=1)
@@ -375,21 +376,30 @@ def test_generate_default_corpus_has_no_empty_cell():
     )
 
 
-def test_generate_default_corpus_residual_thin_cells_are_disclosed():
-    """slot-4-in-window is real but thin (a handful of observations per
-    cause) even after the fix -- on_day is strictly increasing and the
-    salary window is a one-time, non-recurring range, so this is a
-    structural limit, not a remaining bug. Documented in DECISIONS.md,
-    2026-08-28; pinned here so a future change to _draw_schedule that
-    silently reduces coverage further is caught."""
+def test_generate_default_corpus_has_no_thin_cells():
+    """At the original TRAIN_SEEDS size (10 seeds), slot-4-in-window was
+    real but thin (7/14/11 observations per cause, below MIN_CELL_COUNT=20)
+    -- disclosed in DECISIONS.md, 2026-08-28, B4, as a structural
+    consequence of on_day being strictly increasing against a one-time,
+    non-recurring salary window, not a remaining bug.
+
+    TRAIN_SEEDS was widened 10 -> 40 on 2026-08-28 (DECISIONS.md, B5
+    stats-reviewer entry, finding 2 -- unrelated motivation: a held-out
+    log-loss claim needed more statistical power). That widening resolved
+    this disclosed limitation as a side effect: all three cells now clear
+    MIN_CELL_COUNT (22/52/38), and the corpus has zero thin cells anywhere.
+    Pinned here, updated from the original (now-stale) assertion, so a
+    future change to _draw_schedule or TRAIN_SEEDS that silently
+    reintroduces thin cells is caught."""
     episodes = generate(seeds=TRAIN_SEEDS, rng_seed=1)
     counts = cell_counts(episodes)
     thin = set(thin_cells(counts))
+    assert thin == set(), f"unexpected thin cell(s): {sorted(thin)}"
     slot4_in_window = {("CANT_PAY_EVER", 4, 0), ("CANT_PAY_NOW", 4, 0), ("WONT_PAY", 4, 0)}
-    assert slot4_in_window.issubset(thin)
-    # But never zero -- that's the difference between "thin" and "empty".
     for key in slot4_in_window:
-        assert counts[key] > 0
+        assert counts[key] >= MIN_CELL_COUNT, (
+            f"{key} has {counts[key]} observations, below MIN_CELL_COUNT={MIN_CELL_COUNT}"
+        )
 
 
 # === thin_cells Tests ==========================================================

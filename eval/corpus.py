@@ -76,8 +76,16 @@ _ALL_DAY_BUCKETS: tuple[int, ...] = (0, 1)
 # sim_config.yaml's frozen seed (20260826) -- asserted below, not just
 # documented, so the disjointness the user asked to have confirmed is
 # actually machine-checked on every import of this module.
-TRAIN_SEEDS: tuple[int, ...] = (90001, 90002, 90003, 90004, 90005,
-                                 90006, 90007, 90008, 90009, 90010)
+# Widened from 10 to 40 seeds, 2026-08-28 (DECISIONS.md, B5 stats-reviewer
+# finding 2): at 10 seeds (1,769 mandates, 3,016 estimable rows) the
+# held-out log-loss "full model beats intercept-only null" claim was
+# statistically indistinguishable from noise (paired t=-0.84, p=0.40) --
+# the corpus is simulated and free, and widening it to 40 seeds (~12,300
+# estimable rows) is what turns a real, DGP-matching effect into one the
+# held-out split can actually detect (t=-6.32, p<1e-9, verified by
+# stats-reviewer). Still disjoint from eval/frozen/sim_config.yaml's frozen
+# seed, asserted below.
+TRAIN_SEEDS: tuple[int, ...] = tuple(range(90001, 90041))
 
 _FROZEN_SEED = load_config()["seed"]
 assert _FROZEN_SEED not in TRAIN_SEEDS, (

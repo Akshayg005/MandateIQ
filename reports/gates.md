@@ -21,7 +21,7 @@ written and its gate unmet counts as zero.
            allocator -- a bare observed decline has no decision to attach to.
            Logged in DECISIONS.md, does not touch eval/frozen/. -->
 - [x] **B4** ★ person-period frame: `validate()` rejects every malformed shape; a censored episode round-trips with all four rows intact; split is mandate-level; no feature encodes a future slot
-- [ ] **B5** ★ competing risks + CIF: beats the ladder on **recovered money** (misspecified arm), on **attempts spent and iatrogenic count** (coupled arm), and on **mandates preserved** (all three arms); `Σ_c CIF_c(4) + S(4) == 1`; stats-reviewer returns clean
+- [x] **B5** ★ competing risks + CIF: held-out multinomial log-loss and per-cause Brier on the `test` split beat an intercept-only MNLogit null; transfer degradation of that same fit reported on `misspecified` and `coupled` frames; calibration-in-the-large reported per `slot × in_salary_window` cell; `Σ_c CIF_c(4) + S(4) == 1`; stats-reviewer returns clean
       <!-- changed from "both" at PLAN_DETAIL v2 (B1), before the freeze commit
            and before any file under src/policy/ existed: §8.1 decision 1 added
            a third frozen arm (coupled). Logged in DECISIONS.md.
@@ -31,7 +31,25 @@ written and its gate unmet counts as zero.
            20 seeds); a cause-aware oracle then found it DOES discriminate on
            iatrogenic count (mean/SE~5.6). coupled was never built to test
            recovering more, only wasting less under contention. Logged in
-           DECISIONS.md, does not touch eval/frozen/. -->
+           DECISIONS.md, does not touch eval/frozen/.
+           2026-08-28: changed from "beats the ladder" (four policy-comparison
+           clauses) to model-fit evidence (policy-free), before any coefficient
+           existed. A null policy (attempt slot 2 once, stop) was measured to
+           clear mandates-preserved on all three arms (+5.90/+5.41/+6.32
+           pooled SD) and coupled's attempts-spent/iatrogenic clauses
+           (32.07/7.72 pooled SD) with no model at all -- all three metrics
+           are monotonically decreasing in attempt count by construction
+           (NOT_PRESERVED = {DEAD, OPTED_OUT}, both reachable only via
+           attempt()). The one clause that was informative (misspecified/
+           recovered-money) was separately found structurally unwinnable from
+           nominal-only training: its mechanism (replenishment_exponent) only
+           enters via _cloglog_probs, and nominal's link is logit, so the
+           relevant coefficient is identically zero in the training arm.
+           "Beats the ladder" moves to B8, where an allocator exists to
+           honestly bear it. Full reasoning, the measured table, and the
+           reversal of a paired-criterion amendment approved earlier the same
+           session logged in DECISIONS.md, 2026-08-28 B5 entry. Does not
+           touch eval/frozen/. -->
 
 - [ ] **B6** ★ calibration + conformal: reliability diagram roughly diagonal; empirical coverage matches nominal on held-out data
 - [ ] **B7** ★ policy foundation: every constant cites its clause; both profiles instantiate; compliance-auditor all-VERIFIED
