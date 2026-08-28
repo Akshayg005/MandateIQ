@@ -167,7 +167,17 @@ def featurize(df: pd.DataFrame, *, profile: Profile = Profile.strict) -> pd.Data
         "outcome", "event_code", "at_risk", "censored", "censor_reason", "is_terminal",
         "estimable",
     }
-    out = out.drop(columns=["on_day"] + sorted(outcome_columns & set(out.columns)))
+    # household_id is dropped the same way as on_day -- an identity column
+    # person_period.build() emits that this module's feature vocabulary
+    # never includes. Physically absent, not merely unused: household_id
+    # is latent ground truth (eval/frozen/simulator.py's SimMandate
+    # docstring) a policy under test must never read, and it is also
+    # listed in FORBIDDEN below as a belt-and-suspenders check -- dropping
+    # it here is what keeps that check from ever actually firing on this
+    # function's own output.
+    out = out.drop(
+        columns=["on_day", "household_id"] + sorted(outcome_columns & set(out.columns))
+    )
 
     forbidden_present = FORBIDDEN & set(out.columns)
     if forbidden_present:

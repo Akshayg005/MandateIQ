@@ -493,3 +493,261 @@ def test_build_multiple_episodes_same_mandate_different_cycles():
     cycle2_rows = df[df["cycle_id"] == 2]
     assert len(cycle2_rows) == 3
     assert set(cycle2_rows["slot"]) == {1, 2, 3}
+
+
+# === Household ID (coupled arm) ================================================
+
+
+def _mandate_with_household(
+    mandate_id: str,
+    household_id: str | None,
+    cycle_id: int = 7,
+    amount_paise: int = 50_000,
+    ceiling_paise: int = 100_000,
+    category: str = "subscription",
+) -> SimMandate:
+    """Helper to build a SimMandate with an explicit household_id --
+    dataclasses.replace() over _mandate()'s pattern, since SimMandate is a
+    frozen dataclass and household_id is the one field _mandate() always
+    hard-codes to None (matching every mandate on the nominal/misspecified
+    arms; only the coupled arm ever sets a real value -- see
+    eval/frozen/simulator.py's SimMandate docstring)."""
+    import dataclasses
+
+    return dataclasses.replace(
+        _mandate(
+            mandate_id=mandate_id,
+            cycle_id=cycle_id,
+            amount_paise=amount_paise,
+            ceiling_paise=ceiling_paise,
+            category=category,
+        ),
+        household_id=household_id,
+    )
+
+
+def test_household_id_column_present_and_null_when_all_mandates_have_none():
+    """Every mandate on nominal/misspecified has household_id=None (see
+    eval/frozen/simulator.py's SimMandate docstring) -- build() must still
+    emit a household_id column, with every value null, and EMITTED_COLUMNS
+    must list it. This is the status-quo shape every already-reported
+    model number was computed against."""
+    assert "household_id" in EMITTED_COLUMNS
+
+    mandate = _mandate("M_nohh", cycle_id=1)
+    episode = Episode(
+        mandate=mandate,
+        attempts=(_attempt("M_nohh", 2, 2, Outcome.RECOVERED),),
+        censor_reason=CensorReason.NONE,
+    )
+    df = build([episode])
+
+    assert "household_id" in df.columns
+    assert df["household_id"].isna().all()
+
+
+def test_household_id_matches_source_mandate_real_and_none():
+    """Each row's household_id must match its source episode's
+    mandate.household_id exactly -- a real string for a coupled-style
+    mandate, null for a mandate with none. Two mandates in the same
+    household both carry that household's id."""
+    mandate_a = _mandate_with_household("M_hh_a", "H0", cycle_id=1)
+    episode_a = Episode(
+        mandate=mandate_a,
+        attempts=(_attempt("M_hh_a", 2, 2, Outcome.STILL_PENDING),),
+        censor_reason=CensorReason.WINDOW_CLOSED,
+    )
+
+    mandate_b = _mandate_with_household("M_hh_b", "H0", cycle_id=1)
+    episode_b = Episode(
+        mandate=mandate_b,
+        attempts=(_attempt("M_hh_b", 2, 5, Outcome.RECOVERED),),
+        censor_reason=CensorReason.NONE,
+    )
+
+    mandate_c = _mandate_with_household("M_hh_c", "H1", cycle_id=1)
+    episode_c = Episode(
+        mandate=mandate_c,
+        attempts=(_attempt("M_hh_c", 2, 3, Outcome.DEAD),),
+        censor_reason=CensorReason.NONE,
+    )
+
+    mandate_none = _mandate_with_household("M_hh_none", None, cycle_id=1)
+    episode_none = Episode(
+        mandate=mandate_none, attempts=(), censor_reason=CensorReason.WINDOW_CLOSED
+    )
+
+    df = build([episode_a, episode_b, episode_c, episode_none])
+
+    assert set(df[df["mandate_id"] == "M_hh_a"]["household_id"]) == {"H0"}
+    assert set(df[df["mandate_id"] == "M_hh_b"]["household_id"]) == {"H0"}
+    assert set(df[df["mandate_id"] == "M_hh_c"]["household_id"]) == {"H1"}
+    assert df[df["mandate_id"] == "M_hh_none"]["household_id"].isna().all()
+
+
+def test_household_id_constant_within_mandate_cycle_group():
+    """household_id must be the same value on every row of one
+    (mandate_id, cycle_id) group -- build a multi-attempt episode and
+    check all its rows agree."""
+    mandate = _mandate_with_household("M_hh_multi", "H7", cycle_id=2)
+    attempts = (
+        _attempt("M_hh_multi", 2, 2, Outcome.STILL_PENDING),
+        _attempt("M_hh_multi", 3, 8, Outcome.STILL_PENDING),
+        _attempt("M_hh_multi", 4, 15, Outcome.STILL_PENDING),
+    )
+    episode = Episode(
+        mandate=mandate, attempts=attempts, censor_reason=CensorReason.BUDGET_EXHAUSTED
+    )
+
+    df = build([episode])
+    assert len(df) == 4
+    assert df["household_id"].nunique(dropna=False) == 1
+    assert set(df["household_id"]) == {"H7"}
+
+
+def test_validate_accepts_consistent_household_id_per_group():
+    """validate() must accept a frame where every (mandate_id, cycle_id)
+    group's household_id is internally consistent, including a mix of
+    real households and no household across different mandates."""
+    mandate_a = _mandate_with_household("M_ok_a", "H0", cycle_id=1)
+    episode_a = Episode(
+        mandate=mandate_a,
+        attempts=(_attempt("M_ok_a", 2, 3, Outcome.RECOVERED),),
+        censor_reason=CensorReason.NONE,
+    )
+    mandate_b = _mandate_with_household("M_ok_b", None, cycle_id=1)
+    episode_b = Episode(
+        mandate=mandate_b,
+        attempts=(_attempt("M_ok_b", 2, 3, Outcome.STILL_PENDING),),
+        censor_reason=CensorReason.WINDOW_CLOSED,
+    )
+
+    df = build([episode_a, episode_b])
+    # Non-vacuous precondition: household_id must actually be a real,
+    # populated column here, or the validate() call below would trivially
+    # pass on today's pre-implementation build() (which has no
+    # household_id column at all yet) without exercising the new
+    # consistency check in the slightest.
+    assert "household_id" in df.columns
+    assert df[df["mandate_id"] == "M_ok_a"]["household_id"].iloc[0] == "H0"
+
+    # build() already calls validate() internally (it would have raised
+    # above if this were wrong) -- call it again directly so the intent,
+    # that validate() itself accepts this shape, is explicit rather than
+    # merely inferred from build() not raising.
+    validate(df)
+
+
+def test_validate_rejects_inconsistent_household_id_within_group():
+    """validate() must raise FrameError if two rows of the SAME
+    (mandate_id, cycle_id) group carry DIFFERENT household_id values --
+    hand-corrupt a build() output post-hoc, since build()'s own
+    construction (household_id copied once per episode, constant across
+    every row it emits) cannot produce this state naturally."""
+    mandate = _mandate_with_household("M_corrupt", "H0", cycle_id=1)
+    attempts = (
+        _attempt("M_corrupt", 2, 3, Outcome.STILL_PENDING),
+        _attempt("M_corrupt", 3, 9, Outcome.RECOVERED),
+    )
+    episode = Episode(mandate=mandate, attempts=attempts, censor_reason=CensorReason.NONE)
+    df = build([episode])
+
+    # Directly corrupt: the last row (slot 3) gets a different household_id
+    # than the rest of its own (mandate_id, cycle_id) group.
+    df.loc[df["slot"] == 3, "household_id"] = "H999"
+
+    with pytest.raises(FrameError):
+        validate(df)
+
+
+def test_validate_rejects_same_mandate_different_household_across_cycles():
+    """A mandate cannot belong to two different households across its
+    cycles -- build() must reject this directly (it calls validate()
+    internally). Constructed from two ordinary episodes that happen to
+    share a mandate_id but disagree on household_id and cycle_id: nothing
+    about build()'s own construction rules out this input shape (each
+    episode independently carries its own mandate.household_id), so this
+    is the natural construction, not a hand-corrupted post-hoc frame --
+    build()'s own machinery produces the invalid state, validate() is what
+    must catch it."""
+    mandate_cycle1 = _mandate_with_household("M_two_hh", "H0", cycle_id=1)
+    episode_cycle1 = Episode(
+        mandate=mandate_cycle1,
+        attempts=(_attempt("M_two_hh", 2, 3, Outcome.RECOVERED),),
+        censor_reason=CensorReason.NONE,
+    )
+    mandate_cycle2 = _mandate_with_household("M_two_hh", "H1", cycle_id=2)
+    episode_cycle2 = Episode(
+        mandate=mandate_cycle2,
+        attempts=(_attempt("M_two_hh", 2, 4, Outcome.RECOVERED),),
+        censor_reason=CensorReason.NONE,
+    )
+
+    with pytest.raises(FrameError):
+        build([episode_cycle1, episode_cycle2])
+
+
+# === Household Worked Example ==================================================
+
+
+def test_worked_example_household_two_mandates_share_a_household():
+    """Coupled-arm-style worked example, mirroring
+    test_worked_example_a_recovered_at_slot_3_with_3_rows's row-by-row
+    assertion depth, but the axis under test is household_id: M_h001 and
+    M_h002 share household H0, M_h003 has no household. build() makes no
+    arm assumption, so mixing a household mandate with a None-household
+    mandate in one call is a legitimate input shape even though a single
+    real Simulator arm would never itself produce that mix."""
+    mandate_h1 = _mandate_with_household("M_h001", "H0", cycle_id=7)
+    attempts_h1 = (
+        _attempt("M_h001", slot=2, on_day=3, outcome=Outcome.STILL_PENDING),
+        _attempt("M_h001", slot=3, on_day=9, outcome=Outcome.RECOVERED),
+    )
+    episode_h1 = Episode(
+        mandate=mandate_h1, attempts=attempts_h1, censor_reason=CensorReason.NONE
+    )
+
+    mandate_h2 = _mandate_with_household("M_h002", "H0", cycle_id=7)
+    attempts_h2 = (_attempt("M_h002", slot=2, on_day=4, outcome=Outcome.STILL_PENDING),)
+    episode_h2 = Episode(
+        mandate=mandate_h2, attempts=attempts_h2, censor_reason=CensorReason.WINDOW_CLOSED
+    )
+
+    mandate_h3 = _mandate_with_household("M_h003", None, cycle_id=7)
+    episode_h3 = Episode(
+        mandate=mandate_h3, attempts=(), censor_reason=CensorReason.WINDOW_CLOSED
+    )
+
+    df = build([episode_h1, episode_h2, episode_h3])
+    # h1: slot 1 (synthesized) + slot 2 + slot 3 = 3 rows
+    # h2: slot 1 (synthesized) + slot 2 = 2 rows
+    # h3: slot 1 (synthesized) only, zero-attempt episode = 1 row
+    assert len(df) == 6
+
+    h1_rows = df[df["mandate_id"] == "M_h001"]
+    assert len(h1_rows) == 3
+    assert set(h1_rows["household_id"]) == {"H0"}
+
+    h2_rows = df[df["mandate_id"] == "M_h002"]
+    assert len(h2_rows) == 2
+    assert set(h2_rows["household_id"]) == {"H0"}
+
+    h3_rows = df[df["mandate_id"] == "M_h003"]
+    assert len(h3_rows) == 1
+    assert h3_rows["household_id"].isna().all()
+
+    # Row-by-row, mirroring worked example A's level of detail: slot 3 of
+    # M_h001 is terminal/recovered AND carries the household id.
+    row3 = h1_rows[h1_rows["slot"] == 3].iloc[0]
+    assert row3["outcome"] == Outcome.RECOVERED
+    assert row3["event_code"] == 1
+    assert bool(row3["is_terminal"]) is True
+    assert bool(row3["censored"]) is False
+    assert row3["household_id"] == "H0"
+    assert row3["row_id"] == row_id("M_h001", 7, 3)
+
+    # Slot 1 of M_h002 (synthesized) also carries H0, even though it is
+    # neither terminal nor the row that gave the household its name.
+    row1_h2 = h2_rows[h2_rows["slot"] == 1].iloc[0]
+    assert bool(row1_h2["is_terminal"]) is False
+    assert row1_h2["household_id"] == "H0"

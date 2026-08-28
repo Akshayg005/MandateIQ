@@ -1465,3 +1465,390 @@ mandate-grouped CV — is what produced the number above, independently
 reproduced by a second run. `Σ_c CIF_c(4) + S(4) == 1` verified on the real
 fitted model (confirming pass, max deviation 0.000e+00) as well as on
 `cif.py`'s own synthetic-array test suite (21/21 passing).
+
+---
+
+### 2026-08-28 · B6 · Calibration + conformal: label space narrowed to Outcome, household split fix, isotonic measured to lose, schedule-threading deferred
+
+Four decisions taken before any code, all confirmed with the user first
+(this project's "never cut scope without asking" rule, applied to a
+planning-time fork rather than a mid-build one).
+
+**1 — Conformal validated over `Outcome`, not `Cause`.** `PLAN_DETAIL.md:299`
+literally specifies `pred_set(score) -> set[Cause]`. No cause-scorer exists at
+B6 — `belief.py` is B7, `intent.py` is B11, and `cause_map.py`'s own docstring
+says nothing downstream of B5 should read it. `Cause` is also latent: it has
+no production label, ever, so a `Cause`-space coverage claim could never be
+re-validated against real issuer data. `src/model/conformal.py` therefore
+consumes nonconformity **scores only, never probabilities**, and is generic
+over any hashable label type (tested directly:
+`test_generic_over_custom_enum_labels` exercises a 3-member throwaway enum
+alongside the 4-member `Outcome` case). **Consequence:** B6 unblocks the
+off-ramp gate's *machinery*, not a live off-ramp — B8 keeps `FullSetGate`
+(never offers, the safe direction) until a cause posterior exists at B7/B11.
+`PLAN_DETAIL.md:309`'s "unblocks B8's *real* off-ramp gate" is narrowed by
+this entry, not by an edit to that file.
+
+**2 — `household_id` carried as an identity column; `split()` groups on it.**
+Flagged at B5 (stats-reviewer finding 7, previous entry): `splits.py` grouped
+on `mandate_id` only, but under `coupled` a household split across
+train/calib_conf breaks the exchangeability split conformal needs, narrowing
+prediction sets in the direction of a false off-ramp. Fix: `EMITTED_COLUMNS`
+gains `household_id` (identity block, after `row_id`); `person_period.
+validate()` gains two consistency checks (constant within a
+`(mandate_id, cycle_id)` group, and across a mandate's cycles);
+`features.featurize()` drops it the same way it already drops `on_day`, so
+`FORBIDDEN`'s existing `household_id` entry is never actually violated by
+`featurize()`'s own output; `splits.split()` gains a keyword-only
+`group_key: pd.Series | None = None`, default `None` reproducing today's
+mandate-only grouping exactly. **Bit-identity is the load-bearing guarantee,
+not a nice-to-have**: on `nominal`, `household_id` is always null, so
+`household_id.fillna(mandate_id)` is elementwise identical to `mandate_id`,
+and every already-reported B5 number is reproduced byte-for-byte — proven,
+not asserted, by `test_split_group_key_matches_default_bit_identical_on_
+synthetic_frame` (`pd.testing.assert_frame_equal` across 5 split seeds) and
+a second test exercising the literal `household_id.fillna(mandate_id)`
+expression against a real (all-null) column on a `person_period.build()`
+frame. A `Simulator` trap noted for whoever next builds a multi-seed
+`coupled` corpus: `household_id = f"H{i // household_size}"`
+(`simulator.py:182`) is **not** seed-namespaced the way `corpus.py`
+namespaces `mandate_id` — namespace it in `corpus.py` when that corpus is
+built, never in the frozen simulator.
+
+**3 — Per-class isotonic on the three event hazards, `STILL_PENDING` as pure
+residual, never renormalised.** `cif.py:63-68` already treats hazard column 0
+as "survives this slot", never reading it — `calibration.py`'s
+`h_cal[:,0] = 1 - (h_cal[:,1]+h_cal[:,2]+h_cal[:,3])` makes that semantics
+explicit rather than inventing a new one. `apply()` raises `SimplexViolation`
+(never clips) if the three event maps would sum above 1 — tested against a
+deliberately pathological hand-built `IsotonicCalibrator`, not just the
+happy path.
+
+**Real, measured finding, not a hypothesis:** isotonic calibration on this
+model's hazards **does not improve** classwise ECE. 20-seed sweep on the real
+40-seed corpus: raw ECE min/mean/max = 0.0116/0.0213/0.0283, calibrated =
+0.0165/0.0256/0.0350 — calibrated is worse on every seed measured. Mechanism:
+this model's `FEATURE_COLUMNS` (`const, slot_3, slot_4, in_salary_window`)
+produces only 6 distinct hazard vectors; hazard-level calibration on `test` is
+already close to its own noise floor, and isotonic fit on ~1,200-row
+`calib_iso` cells replaces a 4-parameter MLE fit on ~8,600 rows with
+per-cell empirical means on far less data. The regression guard in both
+`tests/model/test_calibration.py` and the eval report is therefore
+`classwise_ece(calibrated) <= classwise_ece(raw) + 0.01`, explicitly **not**
+"calibration improves ECE" — a future session must not "fix" this direction
+without re-deriving it; a test demanding improvement would be asserting
+noise, which is exactly the trap `competing_risks.py`'s B5 caveat (this
+file's earlier entry, "do not repeat the original argument as precedent")
+already burned this project once on.
+
+**4 — LAC over APS, smoothed Mondrian conformal as the shipped default** (per
+the approved plan; not relitigated here). Real, measured trap caught during
+implementation, not anticipated at planning time: `apply()`'s simplex check
+was originally `event_sum >= 1.0`, which incorrectly rejected the valid
+boundary case (residual exactly 0) — caught by
+`test_apply_maintains_isotonic_monotonicity` producing a false
+`SimplexViolation` at `sum == 1.0` exactly; fixed to strict `> 1.0`.
+
+**Schedule-threading deferred, disclosed as a measured rate, not silently
+dropped.** `paths.hazard_tensor()`'s preferred path (thread the real
+committed schedule through `eval.corpus.Episode`, eliminating imputation for
+un-attempted slots) was **not** implemented this block — the `schedule=None`
+fallback (exact when the mandate's last real attempt already fell outside the
+salary window; a documented, disclosed assumption otherwise) is what ships.
+Measured, not estimated: **42.7%–43.6% of `test`-split tensor cells are
+imputed**, printed by `eval/model_fit_report.py`'s new B6 section every run
+(`sweep['imputed_fraction']`), not just asserted in this file. This is within
+the plan's own stated tolerance ("Prefer threading the real schedule... the
+`schedule=None` fallback imputes 41% of cells... report the count either
+way") but is real scope not completed, flagged explicitly for whoever next
+touches `paths.py` or B8's allocator (which will want the real schedule
+regardless, to commit attempt days).
+
+**Bugs found and fixed in generated tests, not in the design.** Three
+test-writer subagents (Haiku) produced `tests/model/test_paths.py` (36
+tests), `tests/model/test_calibration.py` (33), `tests/model/test_conformal.py`
+(30), plus 14 tests extending `test_person_period.py`/`test_features.py`/
+`test_splits.py` for decision 2 — all reviewed and fixed by hand before
+implementation, not accepted blind:
+1. `test_paths.py`'s `_build_model_frame` fit `competing_risks.fit()` on the
+   SAME small, outcome-homogeneous episodes each test used for scoring —
+   `fit()` requires all 4 `event_code` classes present, which most
+   individually-small per-test episode sets don't have. Confirmed by direct
+   reproduction before fixing, not assumed. Fixed by decoupling fit-time data
+   (a fixed, class-diverse `_diverse_fit_frame()`) from predict-time data —
+   which mirrors real usage, not a workaround (`competing_risks.py`'s own
+   docstring already notes fit-time and predict-time batches routinely
+   differ in composition).
+2. One `test_paths.py` case built a slot-4-only attempt with no slot-2/3 rows
+   — `person_period.build()` correctly rejects this as a non-contiguous slot
+   sequence. Fixed by adding the missing intermediate STILL_PENDING attempts,
+   matching every other multi-slot test in the same file.
+3. `test_calibration.py`: three tests fed statistically **independent**
+   random `h`/`y` (two separate `RandomState(seed)` draws, no relationship)
+   into isotonic fitting at small n (15-20 rows) — three independently-noisy
+   per-class curves evaluated together on further-independent test data can
+   genuinely sum above 1 by sampling chance (measured, not assumed: reaching
+   sums up to ~1.31). This is `SimplexViolation` working as designed against
+   a real pathology, not a bug in it, but the wrong fixture for tests
+   checking unrelated properties (exact-sum arithmetic, determinism, cif
+   compatibility) — fixed by sizing those three tests' calibration data to
+   n=300 (verified empirically against each test's exact seed before
+   committing). A fourth test (`test_calibration_graceful_degradation_
+   independent_data`) is legitimately ABOUT independent data by design and
+   name — fixed the same way (n_calib 50→500) rather than changing its
+   intent. A fifth test called `RandomState.dirichlet(..., random_state=rng)`
+   — not a valid parameter on that method (confused with a
+   `scipy.stats`-style API) — fixed by removing the invalid kwarg.
+4. `test_conformal.py`'s `test_exact_coverage_on_continuous_exchangeable_
+   scores` asserted single-seed marginal coverage in a narrow
+   `[0.945, 0.955]` band, justified only by test-set sampling SE
+   (`sqrt(0.95*0.05/20000)≈0.00154`). Split conformal's coverage for one
+   FIXED calibration draw is itself a random variable (its quantile is an
+   order statistic; asymptotically Beta-distributed) with its own standard
+   deviation — measured directly by sweeping 20 independent calibration
+   seeds: mean 0.9489, SD 0.0055, roughly **half the seeds land outside a
+   naive ±0.005 band**, purely from calibration-draw variance the test's own
+   justification never accounted for. This is the identical class of mistake
+   this project already caught and fixed once before, at B5 (`eval/
+   model_fit_report.py`'s own docstring: "a single-seed comparison is not
+   evidence of anything by itself"). Fixed the same way: sweep 20 seeds,
+   assert on the mean with a band sized off the measured SD, not one
+   arbitrary seed. `test_pred_set_returns_frozenset` separately hit
+   `ConformalUnderpowered` at its original n=100/seed=11 (one class randomly
+   drew only 16 of the required 19 examples) — orthogonal to what that test
+   checks (`pred_set`'s return type); fixed by raising n_cal to 150,
+   verified to clear the floor for that exact seed before committing.
+5. `coverage_report()`'s integer count columns (`n`, `singleton_count`, …)
+   returned `numpy.int64` on `.iloc[]` access, which is not
+   `isinstance(x, int)` (unlike `numpy.float64`, which does subclass Python's
+   `float` — the asymmetry is a real numpy quirk, not a guess) — caught by
+   `test_mean_prediction_set_size_and_singleton_count_correct`. Fixed by
+   casting those columns to `dtype=object` before returning, the same fix
+   already used in `src/model/paths.py`'s `HazardTensor.observed` for the
+   identical reason (`is True`/`is False` identity checks). One test in the
+   same function also asserted `mean_set_size >= 1` as if it were a real
+   invariant — it isn't (alpha=0.5 against 3 calibration rows routinely
+   produces empty sets, which the same test suite's own
+   `test_coverage_report_counts_empty_set_as_miscoverage` relies on via high
+   alpha) — corrected to the actual structural guarantee, `>= 0`.
+
+**Numbers, real 40-seed corpus, 20-seed sweep** (`eval/model_fit_report.py`,
+via `eval-runner`):
+
+```
+classwise ECE  raw:        min=0.0116  mean=0.0213  max=0.0283
+classwise ECE  calibrated: min=0.0165  mean=0.0256  max=0.0350
+
+conformal marginal coverage: min=0.9360  mean=0.9568  max=0.9675  (nominal 0.95)
+conformal mean set size:     min=3.8195  mean=3.8437  max=3.8801  (of 4 labels)
+conformal singleton rate:    min=0.0000  mean=0.0030  max=0.0188
+
+per-class coverage [STILL_PENDING]: min=0.8659  mean=0.9545  max=0.9881
+per-class coverage [RECOVERED]:     min=0.9365  mean=0.9587  max=0.9753
+per-class coverage [DEAD]:          min=0.9073  mean=0.9615  max=1.0000
+per-class coverage [OPTED_OUT]:     min=0.8882  mean=0.9514  max=0.9770
+
+un-attempted-slot imputation rate (test split): ~0.427-0.436
+```
+
+**Honest headline, stated plainly rather than left implicit:** coverage
+holds reasonably per-class under exchangeability (all four classes' means
+sit within ~1pt of nominal; STILL_PENDING's minimum, 0.8659, is the
+softest of the four, consistent with it being the class this project's own
+design notes flagged as hardest), but the sets are almost always
+uninformative at this model's resolution — mean size 3.84 of 4, singleton
+rate under 0.3%. That correctly routes the real work (a design matrix with
+enough resolution to ever produce a singleton) to B8, rather than a passing
+coverage number hiding it.
+
+**Gate status:** `stats-reviewer` review pending as of this entry; will be
+appended once returned, per this project's standing review discipline.
+
+---
+
+### 2026-08-28 · B6 · stats-reviewer review — 2 blocking findings, both real, both fixed; gate closed on corrected numbers
+
+Full review requested against the entry above, with six specific questions
+(leakage across the four-way split, `terminal_labels()`'s eligibility edge
+cases, the `household_id` bit-identity claim, isotonic's residual
+construction, the conformal p-value formula I had explicitly flagged as
+self-unverified, and the `schedule=None` imputation's effect on the
+numbers). Verdict up front, in the reviewer's own words: "the censoring
+semantics, the split, and the bridge are all correct — I tried hard to
+break them and could not." Two blocking findings, both real, both now
+fixed and reverified — this entry is not a summary written before seeing
+whether the fixes worked; both were rerun via `eval-runner` after the
+fixes and the corrected numbers are below.
+
+**BLOCKING 1 — `hazard_tensor()`'s imputation was outcome-determined: real
+leakage, not a precision limitation.** The `schedule=None` fallback (which
+is what every call in `eval/model_fit_report.py` was actually using,
+despite the `schedule` parameter existing) imputes an un-attempted slot's
+`in_salary_window` based on whether the episode *survived* to that slot —
+and survival to slot 3/4 is a deterministic function of the very outcome
+being predicted. Measured corpus-wide: essentially 100% of STILL_PENDING
+episodes have a real slot-3 row; only 36–43% of RECOVERED ones do. That is
+exactly `src/model/CLAUDE.md` rule 2 ("no feature may encode the future"),
+and it meant the previously-reported coverage number (this entry's earlier
+table) was for a predictor that cannot exist at commit time — at commit
+time NO slot-3/4 cell is real, so the deployed scorer is 100% imputed while
+the evaluated one was ~57% real. The reviewer's own decision-time-only
+reprobe (imputing slots 3/4 unconditionally, matching what a real deployment
+sees) found OPTED_OUT and DEAD coverage falling *below* nominal — the unsafe
+direction, sets narrower, closer to the singleton that fires the off-ramp.
+
+**Fixed by doing the deferred item properly, not by degrading to the
+pessimistic always-impute case.** `eval/corpus.py`'s `Episode` gains an
+optional `schedule: tuple[int, int, int] | None = None` field — the full
+`(day2, day3, day4)` `_draw_schedule()` already draws before any `attempt()`
+call (legitimate per `assert_legal`'s own "committed once, never adjusted"
+guarantee); `generate()` now populates it. `eval/model_fit_report.py`'s
+`_build_corpus()` returns a third value, `schedule_df` (built by the new
+`_schedule_frame()`), threaded into every `hazard_tensor(..., schedule=...)`
+call in `_calibration_conformal_sweep`. This is not a new design — it is
+`paths.py`'s own already-documented preferred path, previously deferred and
+disclosed as a measured imputation RATE (~43%) rather than a measured BIAS.
+The reviewer's finding is what turned "rate, disclosed" into "which cells,
+and that matters" — the fix removes the *dependence*, not the *rate*: the
+un-attempted-slot rate is still ~40–44% (mandates that resolve early
+genuinely have fewer real attempts — that part was never the problem), but
+every one of those cells now gets its `in_salary_window` from the real
+committed day, the same source regardless of what happened at earlier
+slots. `eval/model_fit_report.py`'s printed line was reworded to say this
+precisely, not just re-labelled.
+
+**BLOCKING 2 — the conformal p-value formula was not Vovk's smoothed
+p-value.** `src/model/conformal.py`'s `_p_value` computed
+`(greater + weight*equal + 1) / (n+1)` — the `+1` (the test point's own tie
+with itself under the hypothetical (n+1)-point exchangeable sequence) was a
+flat constant instead of being weighted by `u` like the calibration ties
+are. This under-smooths, giving systematic OVER-coverage that grows as the
+pool shrinks and ties get heavier — precisely this project's regime
+(Mondrian pools as small as the `ceil(1/alpha)-1=19` floor, ~6 distinct
+hazard atoms). Measured by the reviewer in isolation: up to +4.35 points of
+excess coverage at pool size 19 with 6 score atoms. One-line fix:
+`(greater + weight*(equal + 1)) / (n+1)`. The unsmoothed path (`u=1`) is
+unaffected — weighting doesn't matter when it's always 1, which is why
+`test_heavy_ties_instability_unsmoothed_shows_variance` and every other
+unsmoothed-path test still passes unchanged.
+
+**Corrected numbers, both fixes applied, real 40-seed corpus, 20-seed
+sweep** (`eval/model_fit_report.py`, via `eval-runner`; both directions
+moved exactly as theory predicts — down, toward nominal, tighter sets):
+
+```
+                              before (this entry, pre-review)   after (both fixes)
+classwise ECE  raw:           min=0.0116 mean=0.0213 max=0.0283  unchanged (fixes don't touch calibration.py)
+classwise ECE  calibrated:    min=0.0165 mean=0.0256 max=0.0350  unchanged
+
+conformal marginal coverage:  min=0.9360 mean=0.9568 max=0.9675  min=0.9327 mean=0.9517 max=0.9653
+conformal mean set size:      min=3.8195 mean=3.8437 max=3.8801  min=3.7301 mean=3.7830 max=3.8483
+conformal singleton rate:     min=0.0000 mean=0.0030 max=0.0188  min=0.0000 mean=0.0069 max=0.0421
+
+per-class coverage [STILL_PENDING]: mean 0.9545 -> 0.9476
+per-class coverage [RECOVERED]:     mean 0.9587 -> 0.9557
+per-class coverage [DEAD]:          mean 0.9615 -> 0.9490   (largest single move, matching the p-value fix's expected effect)
+per-class coverage [OPTED_OUT]:     mean 0.9514 -> 0.9495
+
+un-attempted-slot rate (test split): min=0.4004 mean=0.4236 max=0.4376
+```
+
+No implementation defects in the corrected run (all coverage in [0,1], set
+sizes in [0,4], no NaN). Notably, the corrected numbers land BETTER than the
+reviewer's own decision-time-only reprobe (which used the pessimistic
+always-impute-False approximation, not the real fix) — properly threading
+the schedule gives the model genuine information at every slot rather than
+forcing a worst-case guess, so DEAD/OPTED_OUT stay near nominal (0.9490,
+0.9495 mean) rather than falling below it. **This is the honest number: no
+leaked information, no over-smoothing bug, real 40-seed corpus.**
+
+**Non-blocking findings, addressed:**
+1. *(terminal_labels robustness)* Eligibility's primary filter changed from
+   `slot == horizon AND censor_reason == BUDGET_EXHAUSTED` to `slot >=
+   horizon`, with `BUDGET_EXHAUSTED` demoted to an assertion (raises loudly
+   if violated) rather than baked into the mask — a STILL_PENDING row at or
+   past the horizon is the observed event regardless of *why* the episode
+   then stopped; today `BUDGET_EXHAUSTED` is the only reason this corpus
+   ever stamps there (verified corpus-wide by the reviewer: 777/777 slot-4
+   pending rows are `BUDGET_EXHAUSTED`, 283/283 slot-3 pending are
+   `WINDOW_CLOSED`, zero at slot 1/2) — but a future censor reason at the
+   horizon no longer risks silently dropping an honest label.
+2. *(`split()` defensive check)* `group_key`, when supplied, now gets a
+   length check and an index-equality check against `df`, raising
+   `SplitIntegrityError` on mismatch — every internal slice is `.iloc[pos]`
+   on both `df` and `key` in lockstep, which silently assumed positional
+   alignment before. Not exercised by any production caller today (see
+   finding 3 below), but a real footgun for whoever wires one in.
+3. *(disclosed, not fixed — correctly scoped as future work)* The
+   `household_id`/`group_key` machinery from earlier in this entry is
+   real and tested, but **inert**: `featurize()` drops `household_id`
+   before `assembled` exists, and `assembled` is the only frame
+   `eval/model_fit_report.py` ever calls `split()` on — so B5's finding 7
+   (household exchangeability under `coupled`) is not yet closed
+   operationally, only the mechanism exists. Correct as-is: there is no
+   `coupled`-arm training/reporting pipeline before a later block, so
+   nothing exists yet to wire it into. Flagged here so whoever builds that
+   pipeline knows the machinery is ready and tested but not yet called with
+   a real `group_key`.
+4. *(caveat added, not a functional change)* `cif.terminal_distribution()`'s
+   docstring now discloses that the eligible mandate population (excluding
+   the ~4% WINDOW_CLOSED-before-horizon episodes) is not a random subset —
+   exclusion correlates with the same schedule draw that sets
+   `in_salary_window`. Confirmed harmless for conformal specifically (an
+   independent permutation control gave 0.9575 vs the real split's 0.9578 —
+   indistinguishable), but a real caveat for a future reader of this
+   function's output as unconditional per-mandate risk (B8's allocator).
+5. *(disclosed, one sentence, not a code change)* Isotonic calibration and
+   split conformal are never composed in this block — conformal scores raw
+   hazards (`hazard_tensor` → `competing_risks.hazards`), not
+   isotonic-calibrated ones. Given isotonic measurably loses (this entry's
+   original finding, independently reconfirmed by the reviewer per-class:
+   the three fitted event classes degrade by +0.0100 combined, more than
+   the residual class absorbs at +0.0041), not composing them is the
+   correct call for now, not an oversight — but it means `calib_iso`'s 10%
+   of every split is currently spent on a component nothing downstream
+   consumes.
+6. *(cleanup)* Removed `pp_calib_iso` from `_calibration_conformal_sweep` —
+   computed, never used; isotonic calibration works at the person-period row
+   level and never needed `terminal_labels()`'s per-mandate frame.
+
+**Confirmed clean, independently reasoned through (not re-asserted from my
+own claims):** the household bit-identity mechanism (`GroupShuffleSplit`
+partitions from `np.unique(groups)`'s sort order and count alone, never
+dtype or array provenance — the claim is true for the right reason, not by
+luck); isotonic's lack of any hidden `test`-split dependency; the censoring
+semantics in `person_period.build()` ("the thing most likely to be wrong in
+a model like this, and it is right"); split exchangeability, verified
+independently by pooling `calib_conf ∪ test` and re-splitting at random
+(0.9575 vs the real grouped split's 0.9578 — indistinguishable, meaning the
+residual ~0.8pp of over-coverage after the p-value fix is ordinary
+finite-sample Mondrian conservativeness, not contamination); the bridge's
+split-membership preservation end to end (the `_row` position carried
+through `_terminal_distribution_and_labels`'s merge makes cross-mandate
+mislabelling structurally unreachable); `assert_disjoint()` present at both
+boundaries that matter; cause-specific-vs-subdistribution usage (the
+allocator-facing quantity is correctly `cif.terminal_distribution`, absolute
+risk, not the cause-specific hazards); every structural invariant (no
+LLM/`Cause` import in the new modules, `household_id` physically dropped,
+money untouched, the `> 1.0` simplex boundary fix is correct as shipped).
+
+**Carried forward for B8, not B6's to fix:** the reviewer's own
+least-comfortable flag — the coverage guarantee rests on `calib_conf`/`test`
+exchangeability, which holds here only because the simulator's schedule RNG
+(`corpus.py`'s `day_rng`) is independent of its outcome RNG. In a real
+deployment, the allocator *chooses* the committed schedule in response to
+the model's own output, which breaks that independence. Coverage validated
+on this corpus does not automatically transfer to a closed loop — written
+down now, while the reasoning is fresh, for whoever builds B8.
+
+**Gate closed.** `★ calibration + conformal: reliability diagram roughly
+diagonal` — supported (raw classwise ECE 0.0213 with ~140 rows/atom/split
+sits at the estimator's own noise floor, stated as such, not dressed up).
+`empirical coverage matches nominal on held-out data` — supported on the
+corrected numbers above: marginal 0.9517 mean (min 0.9327), all four
+per-class means within ~1.5pp of nominal, mean set size 3.78/4, singleton
+rate under 0.7%. The honest headline stands as originally written: coverage
+holds reasonably per-class under exchangeability, but the sets are almost
+always uninformative at this model's resolution — which correctly routes
+the real work (a design matrix with enough resolution to ever produce a
+singleton) to B8, rather than a passing number hiding it.

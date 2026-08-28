@@ -51,7 +51,20 @@ written and its gate unmet counts as zero.
            session logged in DECISIONS.md, 2026-08-28 B5 entry. Does not
            touch eval/frozen/. -->
 
-- [ ] **B6** ★ calibration + conformal: reliability diagram roughly diagonal; empirical coverage matches nominal on held-out data
+- [x] **B6** ★ calibration + conformal: reliability diagram roughly diagonal; empirical coverage matches nominal on held-out data
+      <!-- 2026-08-28: stats-reviewer found 2 blocking issues before this
+           was ticked -- an outcome-dependent imputation leak in
+           hazard_tensor()'s schedule=None fallback (fixed by threading
+           eval/corpus.py's real committed schedule through, closing a gap
+           this block had deferred and disclosed but not yet fixed), and a
+           conformal p-value formula bug under-smoothing test-point ties
+           (one-line fix). Both reverified via eval-runner on the real
+           40-seed corpus: corrected marginal coverage 0.9517 mean (min
+           0.9327), all four per-class means within ~1.5pp of nominal.
+           Full findings and both before/after number tables in
+           DECISIONS.md, 2026-08-28, the two B6 entries. Does not touch
+           eval/frozen/. -->
+
 - [ ] **B7** ★ policy foundation: every constant cites its clause; both profiles instantiate; compliance-auditor all-VERIFIED
 - [ ] **B8** ★ allocator + stopping + off-ramp: 2-slot brute-force equivalence test passes; zero constraint violations across the eval; both profiles produce numbers
       <!-- flagged at B4, 2026-08-28, from stats-reviewer's B4 finding 4: the

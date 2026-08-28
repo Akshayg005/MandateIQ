@@ -446,3 +446,79 @@ def test_featurize_output_contains_only_spec_columns():
 
     for col in df_feat.columns:
         assert col in allowed_cols, f"Unexpected column in featurize() output: {col}"
+
+
+# === Household ID (coupled arm) ================================================
+
+
+def _mandate_with_household(
+    mandate_id: str,
+    household_id: str | None,
+    cycle_id: int = 1,
+    amount_paise: int = 50_000,
+    ceiling_paise: int = 100_000,
+    category: str = "subscription",
+) -> SimMandate:
+    """Helper to build a SimMandate with an explicit household_id --
+    dataclasses.replace() over _mandate()'s pattern, since SimMandate is a
+    frozen dataclass and household_id is the one field _mandate() always
+    hard-codes to None."""
+    import dataclasses
+
+    return dataclasses.replace(
+        _mandate(
+            mandate_id=mandate_id,
+            cycle_id=cycle_id,
+            amount_paise=amount_paise,
+            ceiling_paise=ceiling_paise,
+            category=category,
+        ),
+        household_id=household_id,
+    )
+
+
+def test_featurize_drops_household_id_even_when_input_has_real_values():
+    """household_id is already in FORBIDDEN (this module's own list) --
+    featurize() must physically drop it from its output, the same way it
+    already drops on_day, so the design matrix never sees it even when the
+    input build() frame carries a real (non-null) household_id, matching
+    the coupled arm."""
+    mandate = _mandate_with_household("M_hh_feat", "H0", cycle_id=1)
+    episode = Episode(
+        mandate=mandate,
+        attempts=(
+            _attempt("M_hh_feat", 2, 3, Outcome.STILL_PENDING),
+            _attempt("M_hh_feat", 3, 8, Outcome.RECOVERED),
+        ),
+        censor_reason=CensorReason.NONE,
+    )
+    df_built = build([episode])
+    assert "household_id" in df_built.columns
+    assert df_built["household_id"].notna().all()
+
+    df_feat = featurize(df_built)
+
+    assert "household_id" not in df_feat.columns
+
+
+def test_featurize_does_not_raise_on_real_household_id_input():
+    """A real household_id in the input must not trip featurize()'s
+    FORBIDDEN check -- the column is dropped before that check runs (same
+    mechanism as on_day), so featurize() must return normally, not raise."""
+    mandate = _mandate_with_household("M_hh_feat_ok", "H1", cycle_id=1)
+    episode = Episode(
+        mandate=mandate,
+        attempts=(_attempt("M_hh_feat_ok", 2, 3, Outcome.STILL_PENDING),),
+        censor_reason=CensorReason.WINDOW_CLOSED,
+    )
+    df_built = build([episode])
+    # Non-vacuous precondition: household_id must actually be a real,
+    # populated column on the input, or "featurize() does not raise" would
+    # trivially hold today without ever exercising FORBIDDEN's
+    # household_id entry at all (household_id doesn't exist as a build()
+    # column yet, pre-implementation).
+    assert df_built["household_id"].iloc[0] == "H1"
+
+    df_feat = featurize(df_built)  # must not raise
+
+    assert len(df_feat) == len(df_built)

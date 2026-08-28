@@ -82,3 +82,31 @@ def cif(h: np.ndarray) -> np.ndarray:
         h_k = h[:, k - 2, 1:4]  # this slot's hazard, causes [RECOVERED, DEAD, OPTED_OUT]
         out[:, :, k - 1] = out[:, :, k - 2] + h_k * s_prev[:, None]
     return out
+
+
+def terminal_distribution(h: np.ndarray) -> np.ndarray:
+    """The by-slot-4 outcome distribution per mandate, shape (n, 4), in
+    Outcome int order: [S(4), CIF_RECOVERED(4), CIF_DEAD(4), CIF_OPTED_OUT(4)].
+    Rows sum to 1 by the identity survival(h)[:, 3] + cif(h)[:, :, 3].sum(axis=1)
+    == 1, which B5 certified on the fitted model over real test-split
+    mandates (max deviation 0.0) -- this function only repackages survival()
+    and cif()'s own already-verified outputs into one array in Outcome
+    order; it is not a new numerical claim.
+
+    CAVEAT for a caller reading a row as absolute risk (e.g. B8's
+    allocator): when `h` comes from src/model/paths.hazard_tensor() over a
+    corpus built by eval/corpus.py, the mandate population it is computed
+    over already excludes every episode whose schedule was WINDOW_CLOSED
+    before slot 4 (src/model/paths.terminal_labels()'s eligibility filter)
+    -- about 4% of the corpus, and NOT a random 4%: exclusion is exactly
+    "committed day4 > MAX_DAY", the same draw that also sets
+    in_salary_window, a model covariate (stats-reviewer, B6, DECISIONS.md
+    2026-08-28 finding 4). Harmless for conformal calibration/coverage
+    (both the fitting and reporting populations are filtered identically --
+    confirmed by an independent permutation control), but the eligible
+    subpopulation over-represents compressed schedules, so this function's
+    output should not be read as an unconditional per-mandate risk without
+    accounting for that."""
+    s = survival(h)
+    c = cif(h)
+    return np.stack([s[:, 3], c[:, 0, 3], c[:, 1, 3], c[:, 2, 3]], axis=1)

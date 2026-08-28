@@ -131,10 +131,34 @@ class Episode:
     MUST be ignored by every caller -- `episode.mandate.mandate_id` is the
     only authoritative identity for this episode, all the way through
     src/model/person_period.py's row construction.
+
+    `schedule` is the FULL (day2, day3, day4) committed schedule
+    _draw_schedule() drew for this mandate, regardless of how many slots
+    were actually attempted before the episode resolved or was censored --
+    legitimate per assert_legal's own guarantee that the schedule is drawn
+    once, before any attempt() call, and never adjusted after seeing an
+    outcome (clause 6(a): committed ahead, not reactive). Optional
+    (default None) so every existing direct `Episode(...)` construction in
+    this repo's test suites -- which predate this field and have no reason
+    to care about it -- keeps working unchanged.
+
+    Added at B6 (stats-reviewer finding 1, DECISIONS.md 2026-08-28): without
+    it, src/model/paths.hazard_tensor()'s schedule=None fallback imputes an
+    un-attempted slot's in_salary_window from whether the episode SURVIVED
+    to that slot -- which is a deterministic function of the very outcome
+    being predicted (measured: ~100% of STILL_PENDING episodes have a real
+    slot-3 row, ~36-43% of RECOVERED ones do). That is exactly
+    src/model/CLAUDE.md rule 2 ("no feature may encode the future"), and it
+    made the reported conformal coverage a number for a predictor that
+    cannot exist at commit time. Carrying the real, pre-registered schedule
+    here and threading it into hazard_tensor(schedule=...) removes the
+    leak: every mandate's slot-3/4 covariates come from the one source
+    (the committed schedule) regardless of what happened at earlier slots.
     """
     mandate: SimMandate
     attempts: tuple[AttemptResult, ...]
     censor_reason: CensorReason  # NONE if the episode resolved
+    schedule: tuple[int, int, int] | None = None
 
 
 class LegalityError(ValueError):
@@ -327,7 +351,8 @@ def generate(
                 censor_reason = CensorReason.WINDOW_CLOSED
 
             episode = Episode(
-                mandate=namespaced, attempts=tuple(attempts), censor_reason=censor_reason
+                mandate=namespaced, attempts=tuple(attempts), censor_reason=censor_reason,
+                schedule=(day2, day3, day4),
             )
             assert_legal(episode)
             episodes.append(episode)

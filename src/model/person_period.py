@@ -74,7 +74,7 @@ def _as_censor_reason(x: object) -> CensorReason:
 # documented above. features.py's SPEC_COLUMNS/UNSOURCED bookkeeping is
 # deliberately a disjoint list from this one -- see that module's docstring.
 EMITTED_COLUMNS: tuple[str, ...] = (
-    "mandate_id", "cycle_id", "slot", "row_id",
+    "mandate_id", "cycle_id", "slot", "row_id", "household_id",
     "outcome", "event_code", "at_risk", "censored", "censor_reason", "is_terminal",
     "estimable",
     "amount_paise", "ceiling_paise", "category", "on_day",
@@ -130,6 +130,7 @@ def build(episodes: Sequence[object]) -> pd.DataFrame:
             "cycle_id": cycle_id,
             "slot": 1,
             "row_id": _row_id(mandate_id, cycle_id, 1),
+            "household_id": mandate.household_id,
             "outcome": Outcome.STILL_PENDING,
             "event_code": int(Outcome.STILL_PENDING),
             "at_risk": True,
@@ -151,6 +152,7 @@ def build(episodes: Sequence[object]) -> pd.DataFrame:
                 "cycle_id": cycle_id,
                 "slot": a.slot,
                 "row_id": _row_id(mandate_id, cycle_id, a.slot),
+                "household_id": mandate.household_id,
                 "outcome": a.outcome,
                 "event_code": int(a.outcome),
                 "at_risk": True,
@@ -202,6 +204,7 @@ def _apply_dtypes(df: pd.DataFrame) -> pd.DataFrame:
     df["cycle_id"] = df["cycle_id"].astype("int16")
     df["slot"] = df["slot"].astype("int8")
     df["row_id"] = df["row_id"].astype("string")
+    df["household_id"] = df["household_id"].astype("string")
     outcome_dtype = pd.CategoricalDtype(categories=list(Outcome))
     df["outcome"] = df["outcome"].map(_as_outcome).astype(outcome_dtype)
     df["event_code"] = df["event_code"].astype("int8")
@@ -237,6 +240,20 @@ def validate(df: pd.DataFrame) -> None:
     exactly the flag B5 must filter on before fitting anything (see this
     module's docstring) and a drift between it and `slot` would silently
     reopen the contamination it exists to prevent.
+
+    Plus, added at B6 for src/model/splits.py's household-grouping (see
+    that module): `household_id` must be constant within every
+    (mandate_id, cycle_id) group, AND constant across every cycle of a
+    given mandate_id -- a mandate cannot belong to two households. This is
+    what lets splits.split() group on household_id (falling back to
+    mandate_id where null) and still inherit build()'s own "a mandate's
+    rows never straddle a split" guarantee as a corollary rather than a
+    separate assumption. build() cannot itself construct within-group
+    disagreement (household_id is copied once per episode, constant across
+    every row it emits), but a caller could still hand validate() a
+    corrupted frame directly, and two ordinary episodes that happen to
+    share a mandate_id across cycles with different household_id values
+    build() *can* construct -- both are checked here, not assumed away.
 
     Raises FrameError with a message naming the offending mandate_id/
     cycle_id and which check failed -- never returns a bool, never logs and
@@ -299,3 +316,18 @@ def validate(df: pd.DataFrame) -> None:
                     f"{mandate_id}:{cycle_id}: censored row has outcome "
                     f"{last_outcome!r}, expected STILL_PENDING"
                 )
+
+        if int(group["household_id"].nunique(dropna=False)) != 1:
+            raise FrameError(
+                f"{mandate_id}:{cycle_id}: household_id is not constant "
+                f"within this group: "
+                f"{sorted(group['household_id'].dropna().unique().tolist())}"
+            )
+
+    for mandate_id, group in df.groupby("mandate_id", sort=False, observed=True):
+        if int(group["household_id"].nunique(dropna=False)) != 1:
+            raise FrameError(
+                f"{mandate_id}: household_id is not constant across this "
+                f"mandate's cycles: "
+                f"{sorted(group['household_id'].dropna().unique().tolist())}"
+            )

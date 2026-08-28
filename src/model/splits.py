@@ -59,34 +59,86 @@ class SplitIntegrityError(RuntimeError):
 
 
 def split(
-    df: pd.DataFrame, seed: int
+    df: pd.DataFrame, seed: int, *, group_key: pd.Series | None = None
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Split `df` (person-period rows, output of person_period.build() or
     features.featurize()) into (train, calib_iso, calib_conf, test) grouped
-    on mandate_id via sklearn's GroupShuffleSplit, at TRAIN_FRAC/
-    CALIB_ISO_FRAC/CALIB_CONF_FRAC/TEST_FRAC.
+    on `group_key` (default: mandate_id) via sklearn's GroupShuffleSplit, at
+    TRAIN_FRAC/CALIB_ISO_FRAC/CALIB_CONF_FRAC/TEST_FRAC.
+
+    `group_key`, added at B6: an optional pd.Series, aligned to `df`'s row
+    order/index, giving the grouping unit for each row. Default None groups
+    on mandate_id exactly as before B6 -- every call site written before
+    this parameter existed keeps its exact prior behaviour, byte for byte.
+    The intended caller-side construction, for the `coupled` arm's shared-
+    balance households, is `household_id` where non-null, falling back to
+    `mandate_id` where null (e.g. `df["household_id"].fillna(df["mandate_id"])`)
+    -- this function does not build that fallback itself, since it has no
+    opinion on where the grouping key comes from, only that rows sharing a
+    key never straddle a split. On `nominal`/`misspecified`, household_id is
+    always null (eval/frozen/simulator.py's SimMandate docstring), so that
+    construction is elementwise identical to mandate_id and every B5 number
+    -- computed before this parameter existed -- is reproduced bit-for-bit;
+    see tests/model/test_splits.py's bit-identity tests. On `coupled`,
+    grouping on household_id is what keeps a household's mandates -- whose
+    outcomes are dependent through shared-balance contention -- from
+    straddling train/calib_conf and silently narrowing conformal's
+    prediction sets below stated coverage (DECISIONS.md, 2026-08-28, B5
+    stats-reviewer finding 7).
 
     Guarantees, all checked before returning (raising SplitIntegrityError,
-    not asserting): the four mandate_id sets are pairwise disjoint; every
+    not asserting): the four group-key sets are pairwise disjoint; every
     row of `df` appears in exactly one output frame (no row dropped, no row
     duplicated); every (mandate_id, cycle_id) episode's rows all land in
-    the same one of the four frames (an episode never straddles a split,
-    since GroupShuffleSplit groups on mandate_id and cycle_id is never
-    independently split within a mandate here); the same `seed` reproduces
-    the identical four-way partition.
+    the same one of the four frames. Under the default (group_key=None,
+    grouping on mandate_id) this holds because GroupShuffleSplit groups on
+    mandate_id and cycle_id is never independently split within a mandate.
+    Under an explicit group_key, "no mandate straddles a split" is a
+    COROLLARY, not a separately-enforced guarantee: it holds whenever every
+    mandate maps to exactly one group-key value, which person_period.
+    validate() now enforces upstream for household_id (constant within a
+    mandate across all its cycles) -- this function trusts that precondition
+    rather than re-checking it, the same discipline competing_risks.py's
+    `estimable` filter uses for its own upstream invariant. The same `seed`
+    reproduces the identical four-way partition.
 
-    Three GroupShuffleSplit passes, all grouped on mandate_id -- sklearn
+    Three GroupShuffleSplit passes, all grouped on the group key -- sklearn
     splits by PROPORTION OF GROUPS, which is what makes the FRAC constants
-    a statement about mandate counts (what tests/model/test_splits.py
-    checks) rather than row counts: peel off TEST_FRAC of the mandates,
-    then CALIB_CONF_FRAC's share of what's left, then split what remains
-    into train vs calib_iso.
+    a statement about group counts (mandate counts, under the default)
+    rather than row counts: peel off TEST_FRAC of the groups, then
+    CALIB_CONF_FRAC's share of what's left, then split what remains into
+    train vs calib_iso.
     """
-    groups = df["mandate_id"].to_numpy()
+    if group_key is None:
+        key = df["mandate_id"]
+    else:
+        # Positional alignment, not just length: every slice below is
+        # `.iloc[pos]` on both `df` and `key` in lockstep, which is only
+        # correct if row i of `key` really is row i's group -- silently
+        # true for the documented construction pattern
+        # (`df["household_id"].fillna(df["mandate_id"])`, which inherits
+        # df's own index by construction) but not guaranteed for an
+        # arbitrary caller-supplied Series. Checked here (stats-reviewer,
+        # B6, DECISIONS.md 2026-08-28 finding 5) rather than trusted.
+        if len(group_key) != len(df):
+            raise SplitIntegrityError(
+                f"group_key length {len(group_key)} does not match df length "
+                f"{len(df)}"
+            )
+        if not group_key.index.equals(df.index):
+            raise SplitIntegrityError(
+                "group_key's index does not match df's index -- positional "
+                "alignment between the two is required (e.g. "
+                "df['household_id'].fillna(df['mandate_id']), which "
+                "inherits df's index by construction)"
+            )
+        key = group_key
+    groups = key.to_numpy()
 
     test_split = GroupShuffleSplit(n_splits=1, test_size=TEST_FRAC, random_state=seed)
     rest_pos, test_pos = next(test_split.split(df, groups=groups))
     rest_df = df.iloc[rest_pos]
+    rest_key = key.iloc[rest_pos]
 
     calib_conf_relative_frac = CALIB_CONF_FRAC / (
         TRAIN_FRAC + CALIB_ISO_FRAC + CALIB_CONF_FRAC
@@ -95,16 +147,17 @@ def split(
         n_splits=1, test_size=calib_conf_relative_frac, random_state=seed
     )
     rest2_pos, calib_conf_pos = next(
-        calib_conf_split.split(rest_df, groups=rest_df["mandate_id"].to_numpy())
+        calib_conf_split.split(rest_df, groups=rest_key.to_numpy())
     )
     rest2_df = rest_df.iloc[rest2_pos]
+    rest2_key = rest_key.iloc[rest2_pos]
 
     calib_iso_relative_frac = CALIB_ISO_FRAC / (TRAIN_FRAC + CALIB_ISO_FRAC)
     calib_iso_split = GroupShuffleSplit(
         n_splits=1, test_size=calib_iso_relative_frac, random_state=seed
     )
     train_rel, calib_iso_rel = next(
-        calib_iso_split.split(rest2_df, groups=rest2_df["mandate_id"].to_numpy())
+        calib_iso_split.split(rest2_df, groups=rest2_key.to_numpy())
     )
 
     train_df = rest2_df.iloc[train_rel].reset_index(drop=True)

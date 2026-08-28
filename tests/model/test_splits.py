@@ -358,3 +358,363 @@ def test_fractions_sum_to_one():
     """The four FRAC constants must sum to 1.0 -- if they don't, split()'s
     relative-fraction arithmetic silently produces the wrong proportions."""
     assert TRAIN_FRAC + CALIB_ISO_FRAC + CALIB_CONF_FRAC + TEST_FRAC == pytest.approx(1.0)
+
+
+# === Household-Aware Grouping (coupled arm) ====================================
+
+
+def _mandate_with_household(
+    mandate_id: str,
+    household_id: str | None,
+    cycle_id: int = 1,
+    amount_paise: int = 50_000,
+    ceiling_paise: int = 100_000,
+    category: str = "subscription",
+) -> SimMandate:
+    """Helper to build a SimMandate with an explicit household_id --
+    dataclasses.replace() over _mandate()'s pattern, since SimMandate is a
+    frozen dataclass and household_id is the one field _mandate() always
+    hard-codes to None."""
+    import dataclasses
+
+    return dataclasses.replace(
+        _mandate(
+            mandate_id=mandate_id,
+            cycle_id=cycle_id,
+            amount_paise=amount_paise,
+            ceiling_paise=ceiling_paise,
+            category=category,
+        ),
+        household_id=household_id,
+    )
+
+
+def _synthetic_pp_frame_with_households(n_households: int = 12) -> pd.DataFrame:
+    """Like _synthetic_frame(), but every mandate belongs to a real
+    household_id, in households of 2-3 mandates each (alternating) -- and
+    the frame is returned straight from person_period.build() rather than
+    run through featurize(). featurize() correctly drops household_id
+    from its own output (see tests/model/test_features.py's
+    test_featurize_drops_household_id_even_when_input_has_real_values),
+    and the grouping tests below need household_id genuinely present on
+    the split() output frames to check containment. split()'s own
+    docstring states it accepts either a build() or a featurize() output,
+    so this is a legitimate `df` for split() even though every other
+    helper in this file passes a featurized one."""
+    episodes = []
+    i = 0
+    for h in range(n_households):
+        household_id = f"H{h:03d}"
+        household_size = 2 + (h % 2)  # alternates 2, 3, 2, 3, ...
+        for _ in range(household_size):
+            mandate_id = f"M_hh_{i:04d}"
+            mandate = _mandate_with_household(mandate_id, household_id, cycle_id=1)
+
+            n_slots = (i % 3) + 2  # 2, 3, or 4 attempts
+            attempts = []
+            for slot in range(2, n_slots + 1):
+                on_day = 1 + (slot - 1) * 3  # Spacing out days
+                if slot == n_slots and i % 5 == 0:
+                    outcome = Outcome.RECOVERED
+                elif slot == n_slots and i % 7 == 0:
+                    outcome = Outcome.DEAD
+                else:
+                    outcome = Outcome.STILL_PENDING
+
+                attempts.append(_attempt(mandate_id, slot, on_day, outcome))
+
+            censor_reason = CensorReason.NONE if outcome != Outcome.STILL_PENDING else CensorReason.BUDGET_EXHAUSTED if n_slots == 4 else CensorReason.WINDOW_CLOSED
+            episodes.append(
+                Episode(mandate=mandate, attempts=tuple(attempts), censor_reason=censor_reason)
+            )
+            i += 1
+
+    return build(episodes)
+
+
+def test_split_group_key_matches_default_bit_identical_on_synthetic_frame():
+    """THE bit-identity test -- most important test in this batch. B5's
+    already-reported numbers (held-out log-loss, calibration) are computed
+    on exactly this shape: a featurize()'d nominal-arm frame passed to
+    split(). featurize() correctly drops household_id from its own output
+    (see tests/model/test_features.py's
+    test_featurize_drops_household_id_even_when_input_has_real_values), so
+    there is no live household_id column on a featurized frame to read a
+    group_key from directly -- but every mandate _synthetic_frame()
+    generates goes through plain _mandate() (household_id=None), so the
+    household-id-falling-back-to-mandate-id construction reduces, for this
+    frame, to exactly mandate_id: group_key=df["mandate_id"] IS the value
+    that construction would produce here, just without a live column to
+    read it from.
+    (test_split_group_key_fillna_construction_is_a_noop_when_household_id_
+    all_null, below, exercises the literal household_id.fillna(mandate_id)
+    expression against a real household_id column instead, on a
+    person_period.build() frame.)
+
+    split() with that group_key must be bit-identical to split() with none
+    -- proving the household-aware grouping change never touches any
+    already-reported nominal-arm number (root CLAUDE.md invariant 4 on
+    eval/frozen/ immutability is why this must be provable, not just
+    plausible).
+
+    Covers a representative subset of seeds rather than the full
+    range(20) to keep this a fast unit test; 5 seeds spanning the range is
+    enough to catch a systematic bug (e.g. group_key silently reordering
+    rows) that a single seed could hide by chance."""
+    df = _synthetic_frame(n_mandates=40)
+    group_key = df["mandate_id"].copy()
+
+    for seed in [0, 1, 5, 13, 19]:
+        default_result = split(df, seed=seed)
+        grouped_result = split(df, seed=seed, group_key=group_key)
+
+        for name, default_frame, grouped_frame in zip(
+            ("train", "calib_iso", "calib_conf", "test"), default_result, grouped_result
+        ):
+            try:
+                pd.testing.assert_frame_equal(
+                    default_frame.reset_index(drop=True),
+                    grouped_frame.reset_index(drop=True),
+                )
+            except AssertionError as exc:
+                raise AssertionError(
+                    f"seed={seed}, frame={name}: not bit-identical -- {exc}"
+                ) from exc
+
+
+def test_split_group_key_fillna_construction_is_a_noop_when_household_id_all_null():
+    """Directly exercises the caller-side group_key construction pattern
+    (household_id.fillna(mandate_id)) against a real household_id column,
+    on a person_period.build() frame (which -- unlike a featurize()
+    output -- still carries household_id; split() accepts either shape
+    per its own docstring). Every mandate here goes through plain
+    _mandate() (household_id=None), so the constructed group_key must
+    literally equal mandate_id row for row, and split() with that
+    group_key must be bit-identical to split() with none."""
+    episodes = []
+    for i in range(30):
+        mandate_id = f"M_nullhh_{i:04d}"
+        mandate = _mandate(mandate_id, cycle_id=1)
+        n_slots = (i % 3) + 2
+        attempts = tuple(
+            _attempt(mandate_id, slot, 1 + (slot - 1) * 3, Outcome.STILL_PENDING)
+            for slot in range(2, n_slots + 1)
+        )
+        censor_reason = (
+            CensorReason.BUDGET_EXHAUSTED if n_slots == 4 else CensorReason.WINDOW_CLOSED
+        )
+        episodes.append(Episode(mandate=mandate, attempts=attempts, censor_reason=censor_reason))
+
+    df = build(episodes)
+    # Non-vacuous precondition: household_id must actually be a real,
+    # populated (if all-null) column here, or this test would trivially
+    # KeyError before it could exercise anything -- confirming that,
+    # rather than papering over it, is the point.
+    assert "household_id" in df.columns
+    assert df["household_id"].isna().all()
+
+    group_key = df["household_id"].fillna(df["mandate_id"])
+
+    for seed in [0, 1, 5, 13, 19]:
+        default_result = split(df, seed=seed)
+        grouped_result = split(df, seed=seed, group_key=group_key)
+
+        for name, default_frame, grouped_frame in zip(
+            ("train", "calib_iso", "calib_conf", "test"), default_result, grouped_result
+        ):
+            try:
+                pd.testing.assert_frame_equal(
+                    default_frame.reset_index(drop=True),
+                    grouped_frame.reset_index(drop=True),
+                )
+            except AssertionError as exc:
+                raise AssertionError(
+                    f"seed={seed}, frame={name}: not bit-identical -- {exc}"
+                ) from exc
+
+
+def test_household_group_key_keeps_household_within_one_split():
+    """With group_key built from household_id (falling back to
+    mandate_id), no household's mandates may be split across more than
+    one of the four output frames -- mirrors
+    test_mandate_never_straddles_split's structure, checked at household
+    level instead of mandate level."""
+    df = _synthetic_pp_frame_with_households(n_households=12)
+    group_key = df["household_id"].fillna(df["mandate_id"])
+
+    train, calib_iso, calib_conf, test = split(df, seed=99, group_key=group_key)
+    frames = {"train": train, "calib_iso": calib_iso, "calib_conf": calib_conf, "test": test}
+
+    for household_id in df["household_id"].dropna().unique():
+        counts = {
+            name: int((frame["household_id"] == household_id).sum())
+            for name, frame in frames.items()
+        }
+        n_input = int((df["household_id"] == household_id).sum())
+        total_output = sum(counts.values())
+
+        assert (
+            total_output == n_input
+        ), f"Household {household_id}: input {n_input} rows, found {total_output} across splits"
+
+        non_zero_splits = sum(1 for c in counts.values() if c > 0)
+        assert (
+            non_zero_splits == 1
+        ), f"Household {household_id}: found in {non_zero_splits} splits (expected 1): {counts}"
+
+
+def test_mixed_household_and_null_frame_nulls_stay_independent_groups():
+    """A frame mixing real households (2+ mandates sharing one household
+    id) with household_id=None mandates: with
+    group_key=household_id.fillna(mandate_id), the null-household
+    mandates are each their own independent group (never straddling, and
+    not coalesced into one giant group either), while the same-household
+    mandates never straddle a split."""
+    household_episodes = []
+    i = 0
+    for h in range(6):
+        household_id = f"HM{h:02d}"
+        for _ in range(2):
+            mandate_id = f"M_hh_{i:04d}"
+            mandate = _mandate_with_household(mandate_id, household_id, cycle_id=1)
+            attempts = (_attempt(mandate_id, 2, 2 + (i % 4), Outcome.STILL_PENDING),)
+            household_episodes.append(
+                Episode(
+                    mandate=mandate, attempts=attempts, censor_reason=CensorReason.WINDOW_CLOSED
+                )
+            )
+            i += 1
+
+    null_episodes = []
+    for j in range(20):
+        mandate_id = f"M_null_{j:04d}"
+        mandate = _mandate_with_household(mandate_id, None, cycle_id=1)
+        attempts = (_attempt(mandate_id, 2, 2 + (j % 4), Outcome.STILL_PENDING),)
+        null_episodes.append(
+            Episode(mandate=mandate, attempts=attempts, censor_reason=CensorReason.WINDOW_CLOSED)
+        )
+
+    df = build(household_episodes + null_episodes)
+    group_key = df["household_id"].fillna(df["mandate_id"])
+
+    train, calib_iso, calib_conf, test = split(df, seed=7, group_key=group_key)
+    frames = {"train": train, "calib_iso": calib_iso, "calib_conf": calib_conf, "test": test}
+
+    # Same-household mandates never straddle a split.
+    for household_id in df["household_id"].dropna().unique():
+        counts = {
+            name: int((frame["household_id"] == household_id).sum())
+            for name, frame in frames.items()
+        }
+        non_zero_splits = sum(1 for c in counts.values() if c > 0)
+        assert (
+            non_zero_splits == 1
+        ), f"Household {household_id}: found in {non_zero_splits} splits (expected 1): {counts}"
+
+    # Null-household mandates never straddle either -- each is its own
+    # independent group, exactly like today's mandate_id-only grouping.
+    null_mandate_ids = df[df["household_id"].isna()]["mandate_id"].unique()
+    for mandate_id in null_mandate_ids:
+        counts = {
+            name: int((frame["mandate_id"] == mandate_id).sum())
+            for name, frame in frames.items()
+        }
+        non_zero_splits = sum(1 for c in counts.values() if c > 0)
+        assert non_zero_splits == 1, (
+            f"Null-household mandate {mandate_id}: found in {non_zero_splits} "
+            f"splits (expected 1): {counts}"
+        )
+
+    # Sanity: null-household mandates must be genuinely independent
+    # groups, not silently coalesced into one -- with 20 of them at
+    # 70/10/10/10 proportions they should not all land in a single split.
+    homes_touched = {
+        name for name, frame in frames.items()
+        if frame["mandate_id"].isin(null_mandate_ids).any()
+    }
+    assert len(homes_touched) > 1, (
+        "all null-household mandates landed in a single split -- group_key "
+        "may have coalesced them instead of treating each as its own "
+        "independent group"
+    )
+
+
+def test_household_id_never_reaches_design_matrix_or_feature_columns():
+    """Belt-and-suspenders regression guard: household_id must never
+    appear in src.model.competing_risks._design_matrix()'s output
+    columns, nor in a fitted HazardModel.feature_columns. This should
+    already trivially hold once featurize() correctly drops the column
+    (see tests/model/test_features.py's
+    test_featurize_drops_household_id_even_when_input_has_real_values) --
+    it is checked again here, at the far end of the pipeline, because
+    household_id leaking into a design matrix would be a serious,
+    easy-to-miss bug: nothing downstream raises when it happens, the
+    model just silently fits against a column it should never have seen.
+
+    Builds a minimal frame with real (non-null) household ids through the
+    full build() -> featurize() -> assemble() -> fit() pipeline,
+    mirroring tests/model/test_competing_risks.py's
+    _simple_estimable_frame() shape (25 rows per (slot, in_salary_window)
+    cell, cycling all 4 event_code classes, since fit() requires every
+    class present)."""
+    from src.model.competing_risks import assemble, fit, _design_matrix
+
+    episodes = []
+    idx = 0
+    for slot in [2, 3, 4]:
+        for in_window in [False, True]:
+            for outcome_cycle in range(25):
+                mandate_id = f"M_hh_est_{idx:04d}"
+                household_id = f"H{idx % 5}"
+                idx += 1
+
+                if in_window:
+                    on_day = 2 + outcome_cycle % 4
+                else:
+                    on_day = 6 + outcome_cycle % 10
+
+                if outcome_cycle % 4 == 0:
+                    outcome = Outcome.RECOVERED
+                elif outcome_cycle % 4 == 1:
+                    outcome = Outcome.DEAD
+                elif outcome_cycle % 4 == 2:
+                    outcome = Outcome.OPTED_OUT
+                else:
+                    outcome = Outcome.STILL_PENDING
+
+                attempts = []
+                for s in range(2, slot + 1):
+                    day = on_day if s == slot else on_day - (slot - s) * 3
+                    out = outcome if s == slot else Outcome.STILL_PENDING
+                    attempts.append(_attempt(mandate_id, s, day, out))
+
+                mandate = _mandate_with_household(mandate_id, household_id, cycle_id=1)
+                episode = Episode(
+                    mandate=mandate,
+                    attempts=tuple(attempts),
+                    censor_reason=(
+                        (CensorReason.BUDGET_EXHAUSTED if slot == 4 else CensorReason.WINDOW_CLOSED)
+                        if outcome == Outcome.STILL_PENDING
+                        else CensorReason.NONE
+                    ),
+                )
+                episodes.append(episode)
+
+    pp_df = build(episodes)
+    # Non-vacuous precondition: household_id must actually reach pp_df as
+    # a real, populated column before this test can say anything about
+    # whether it then LEAKS further downstream -- without this, the
+    # assertions below would trivially hold even today, pre-
+    # implementation, since neither _design_matrix() nor FEATURE_COLUMNS
+    # mentions household_id by name regardless of what build() emits.
+    assert "household_id" in pp_df.columns
+    assert pp_df["household_id"].notna().all()
+
+    feat_df = featurize(pp_df)
+    assembled = assemble(pp_df, feat_df)
+
+    design = _design_matrix(assembled)
+    assert "household_id" not in design.columns
+
+    model = fit(assembled)
+    assert "household_id" not in model.feature_columns
