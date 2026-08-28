@@ -20,7 +20,7 @@ written and its gate unmet counts as zero.
            is NOT NULL REFERENCES plan, and no plan row can exist before B8's
            allocator -- a bare observed decline has no decision to attach to.
            Logged in DECISIONS.md, does not touch eval/frozen/. -->
-- [ ] **B4** ★ person-period frame: `validate()` rejects every malformed shape; a censored episode round-trips with all four rows intact; split is mandate-level; no feature encodes a future slot
+- [x] **B4** ★ person-period frame: `validate()` rejects every malformed shape; a censored episode round-trips with all four rows intact; split is mandate-level; no feature encodes a future slot
 - [ ] **B5** ★ competing risks + CIF: beats the ladder on **recovered money** (misspecified arm), on **attempts spent and iatrogenic count** (coupled arm), and on **mandates preserved** (all three arms); `Σ_c CIF_c(4) + S(4) == 1`; stats-reviewer returns clean
       <!-- changed from "both" at PLAN_DETAIL v2 (B1), before the freeze commit
            and before any file under src/policy/ existed: §8.1 decision 1 added
@@ -36,6 +36,16 @@ written and its gate unmet counts as zero.
 - [ ] **B6** ★ calibration + conformal: reliability diagram roughly diagonal; empirical coverage matches nominal on held-out data
 - [ ] **B7** ★ policy foundation: every constant cites its clause; both profiles instantiate; compliance-auditor all-VERIFIED
 - [ ] **B8** ★ allocator + stopping + off-ramp: 2-slot brute-force equivalence test passes; zero constraint violations across the eval; both profiles produce numbers
+      <!-- flagged at B4, 2026-08-28, from stats-reviewer's B4 finding 4: the
+           allocator MUST apply src.policy.constraints.afa_free_limit_paise()
+           before ever consulting the hazard model, routing any above-cliff
+           mandate straight to Action.REAUTH -- eval/corpus.py already
+           excludes these from B5's training data on that assumption (they
+           are 9% of the frozen batch, e.g. subscription mandates above
+           Rs 15,000), and the model has zero support for them. Scoring one
+           through the CIF/backward-induction path anyway is out-of-support
+           extrapolation, not a compliance nuance. Logged in DECISIONS.md,
+           does not touch eval/frozen/. -->
 - [ ] **B9** ★ executor + idempotency: keys test passes (no clock/uuid/pid); **an opt-out arriving inside the 24h window is honoured**; `UNCONFIRMED` has a resolution path that is actually reachable
 - [ ] **B10** chaos: 50 induced kills; zero double-charges; zero lost jobs; ledger complete; **the denominator is reported** — how many kills landed inside the unsafe window
 - [ ] **B11** ∥ LLM edge + golden set: golden set passes; no LLM import in core; normaliser output is versioned in the ledger before it can touch a belief

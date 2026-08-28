@@ -668,3 +668,237 @@ contention order in protocol.md`).
 simulator or scoring behaviour changed — this correction is disclosure
 only, so unlike the 2026-08-26 correction (an actual money-fabrication
 bug), no `POSTMORTEM.md` incident is logged for it.
+
+### 2026-08-27/28 · B4 · Person-period frame: corpus design, UNSOURCED features, split proportions, and a critical review-caught contamination bug
+
+**What was built.** `src/policy/constraints.py` (AFA constants, 8(a)/8(b),
+created early since `eval/corpus.py` needs one and there is no source of
+truth elsewhere), `eval/corpus.py` (exploring-behaviour-policy training
+corpus), `src/model/person_period.py` (`build`/`validate`),
+`src/model/features.py` (`featurize`, `SPEC_COLUMNS`, `UNSOURCED`,
+`FORBIDDEN`), `src/model/splits.py` (`split`). Tests written first via
+`test-writer`, four new files under `tests/model/` and `tests/eval/`.
+
+**Why training data is not the frozen ladder's own episodes.** The fixed
+T+1/T+2/T+3 cadence (`sim_config.yaml:26-33`) attempts on days 1/2/3 —
+entirely inside the salary window (`1 <= on_day <= 5`) — with
+`days_since_last_attempt` always exactly 1. A model trained on that would
+see zero variance on two of the three real hazard signals the simulator's
+`_draw_outcome` actually depends on; it would fit cleanly, `validate()`
+would pass, and B8's allocator would then choose `on_day` by extrapolating
+outside its own training support. `eval/corpus.py` instead drives the
+frozen `Simulator` under an exploring policy across 10 seeds
+(`TRAIN_SEEDS`) disjoint from `sim_config.yaml`'s frozen seed (asserted at
+import time). `nominal` arm only — training on `misspecified` or `coupled`
+would void their purpose as held-out stress arms.
+
+**AFA-cliff mandates are excluded from the corpus, not clipped or
+attempted**, because the frozen simulator has no re-auth path. This is not
+a training gap to backfill: a compliant above-cliff mandate should never
+reach the hazard model's retry-timing decision at all — clause 8(a)/8(b)
+routes it to `Action.REAUTH` before any retry-timing choice. **B8's
+allocator must apply this identical filter before ever consulting the
+hazard model** (flagged inline at `reports/gates.md`'s B8 entry). No hazard
+signal is lost by the exclusion (`amount_paise`/`category` never enter
+`_draw_outcome` under `nominal`), only sample size and, per the review
+below, 9% of the frozen batch's own training analog.
+
+**Seven-plus-two `SPEC_COLUMNS` features have no source, and are omitted +
+declared rather than emitted null or fabricated** (the user's explicit
+choice): `last_decline_class`, `decline_class_slot1..3` (simulator emits
+`Outcome` only); `mandate_age_days`, `prior_cycles_ok`, `prior_cycles_failed`
+(`cycle_id` hard-coded to 1); `issuer_id`, `instrument_type` (never
+generated); `notification_lead_hours` (a policy output); `afa_limit_paise`,
+`above_afa_cliff` (constant, per the AFA exclusion). `features.UNSOURCED`
+names each with its reason; a test asserts `SPEC_COLUMNS == (emitted ∩
+SPEC_COLUMNS) | set(UNSOURCED)`.
+
+**`featurize()` physically strips outcome/censoring columns from its own
+output**, not merely excludes them from `FORBIDDEN`. B5 reads the fit
+target from `person_period.build()`'s own frame, rejoined by `row_id`,
+rather than from `featurize()`'s output — making the `y = (df.outcome ==
+"RECOVERED")` anti-pattern structurally harder to commit, since the leakage
+column is simply never in the same frame as X.
+
+**`profile` is a small, additive extension** of the stated `featurize(df)`
+signature: `featurize(df, *, profile: Profile = Profile.strict)`, stamped
+as a constant column. Note for B5: being constant within any one call makes
+it perfectly collinear with the intercept once dummy-encoded — drop it
+from the design matrix, or only include it when a batch genuinely mixes
+both profiles' rows.
+
+**Reviews, round 1.** `compliance-auditor`: all four items VERIFIED (AFA
+paise conversion exact; category gating matches `sim_config.yaml` exactly;
+AFA-cliff exclusion is the compliant response; no `rzp_live_`, no
+cancellation calls). One recommendation applied: `assert_legal()`'s
+docstring now states explicitly that its clause 6(a) check is a
+training-data artifact (day granularity only, no hour component), not real
+enforcement, naming the exact failure mode (a schedule committed at 23:59
+and attempted at 00:01) a future B9 session must not assume this already
+covers. `money-auditor`: clean, no defects — every money value confirmed
+Python `int` end to end from `SimMandate` through `.astype("int64")`, no
+float/division, no unit mismatch, no fabrication/duplication across
+`build()`/`featurize()`.
+
+**Review, round 2 — `stats-reviewer`, NOT clean on the first pass.**
+Verified clean, with hard evidence: censoring (319/1,769 episodes censored,
+all kept as `STILL_PENDING`/`event_code=0`, none dropped or relabeled,
+worked example B round-trips exactly); `featurize()` leakage (every
+column at slot k checked against slot <= k only; `days_since_last_attempt`
+verified against the simulator's own internal day tracking across all
+4,801 rows, 0 mismatches); split disjointness (200-seed brute-force,
+maximum pairwise mandate overlap = 0); seed/id namespacing; `assert_legal()`
+enforcement. But found four real defects, all now fixed:
+
+1. **CRITICAL — slot-1 rows contaminated every hazard coefficient.**
+   Slot 1 is always `STILL_PENDING` by construction (P=1, no variation to
+   explain), so `h_c(1) ≡ 0` is a structural zero, not a parameter to
+   estimate. Fitting slot 1 into the same likelihood as slots 2-4 let the
+   MLE "explain" a deterministic outcome using whichever covariates happen
+   to separate slot-1 rows from the rest. Measured concretely, same data,
+   only difference being inclusion of slot-1 rows: `days_since_last_attempt`
+   → RECOVERED went from a correct ≈0 to a fabricated **+0.10 logit/day**
+   (a real hazard model would invent this project's own timing thesis out
+   of a frame artifact); `in_salary_window` → OPTED_OUT went from ≈0 to
+   **+1.38**; `prior_failures` → RECOVERED went from ≈0 to **+0.75**.
+   *Fix:* `person_period.build()` now emits `estimable: bool` (`slot >= 2`),
+   asserted by `validate()` (`estimable == (slot >= 2)` on every row, raising
+   `FrameError` on any drift). B5 must filter `df[df.estimable]` before
+   fitting anything, and must not independently reconstruct this as
+   `df.slot >= 2` — one flag, not two definitions that can drift apart.
+   `on_day = 0` for slot 1 is kept, NOT nulled: it is the mandate's true
+   cycle-start anchor, and `features.featurize()`'s
+   `days_since_last_attempt` computation for slot 2 (a real, estimable row)
+   depends on it being a real number — nulling it would silently corrupt
+   slot 2's gap to a wrong constant, a worse bug than the one being fixed.
+   `estimable` is dropped by `featurize()` the same way `event_code` is
+   handled: B5 consults it via `build()`'s frame, not via `featurize()`'s
+   output.
+
+2. **HIGH — the calibration split was asked to do two jobs that break each
+   other.** `calib` was fitting isotonic calibration AND supplying the
+   conformal quantile. Split conformal validity requires the quantile's
+   scores to be exchangeable with the test-time score; once isotonic has
+   been fit on a row, that row's score is no longer an honest out-of-sample
+   residual. The failure mode is prediction sets narrower than the stated
+   95%, which fire the singleton `{WONT_PAY}` off-ramp *more* often than
+   the guarantee permits — the exact harm the conformal gate exists to
+   prevent — while a reliability diagram fit and read on the same rows
+   would still look diagonal. *Fix:* `src/model/splits.py`'s `split()` now
+   returns **four** frames — `(train, calib_iso, calib_conf, test)` at
+   **70/10/10/10** (changed from PLAN_DETAIL.md's literal 3-tuple
+   interface; the guarantee could not be delivered otherwise). `calib_iso`
+   fits isotonic (B6); `calib_conf`, a disjoint mandate set, supplies the
+   conformal quantile. At ~1,769 mandates each lands near 175-180, clearing
+   conformal's n≥19 bare validity floor with margin. Bare `assert`s (which
+   `python -O` strips) replaced with a real `SplitIntegrityError`.
+
+3. **HIGH — the exploring policy didn't explore late-slot timing, and the
+   sizing diagnostic couldn't see it.** Slot 4 had **zero** in-salary-window
+   rows across the whole corpus (slot 3 had 21/898). Mechanically forced:
+   with `on_day` strictly increasing and the salary window a one-time,
+   absolute, cycle-start range (never recurring), `day4 <= 5` requires
+   `day2`, `gap_2_3`, and `gap_3_4` all tiny simultaneously — vanishingly
+   rare under independent wide-range draws. Separately, `cell_counts()`
+   only created a dict key for a cell that occurred at least once, so
+   `thin_cells()` — which just filters `counts.items()` — could never
+   report the one case that actually mattered: a cell with a true zero
+   count never became a key to filter. *Fix:* `_draw_schedule()` is now a
+   two-component mixture — with probability `COMPRESSED_FRAC=0.30`, the
+   whole three-attempt schedule is drawn as three distinct days within the
+   first 7 days (the only way slot 3/4 can land in-window at all), otherwise
+   the original wide independent-gap draw (preserving `days_since_last_attempt`'s
+   broad variety). `cell_counts()` now initializes the full 18-cell
+   (3 causes × 3 slots × 2 buckets) grid to 0 before counting, so an
+   uncovered cell is visible. `generate()` now calls `thin_cells(..., threshold=1)`
+   on its own output and **raises** if any cell is truly empty
+   (`check_coverage: bool = True`, opt-out only for small deliberately-partial
+   `seeds` subsets used to test something else, e.g. namespacing).
+   *Residual, disclosed, not fixed further:* slot-4-in-window is real but
+   thin even after the fix — 7 (CANT_PAY_EVER), 14 (CANT_PAY_NOW), 11
+   (WONT_PAY) observations, all clearing zero but none clearing
+   `MIN_CELL_COUNT=20`. This is a structural consequence of strictly-
+   increasing `on_day` against a non-recurring window, not a remaining bug;
+   pinned by `tests/eval/test_corpus.py::test_generate_default_corpus_residual_thin_cells_are_disclosed`
+   so a future change that reduces it further is caught, not silently
+   accepted.
+
+4. **MEDIUM — 9% of the frozen evaluation batch has no training analog.**
+   The AFA-cliff exclusion is correct on its own terms (verified: under
+   `nominal`, `_draw_outcome` never reads `amount_paise`/`category`, so the
+   exclusion is MCAR with respect to outcome), but it means 18/200
+   mandates in the frozen batch (`subscription` above ₹15,000) never appear
+   in training, while `eval/baseline_ladder.py` scores them with no filter.
+   *Resolution, not a code change to this block:* the correct fix is at
+   B8 — the allocator must apply the identical `afa_free_limit_paise()`
+   filter before ever consulting the hazard model, routing these straight
+   to `Action.REAUTH`. `baseline_ladder.py` not filtering them is faithful
+   to the real, documented incumbent (no AFA-aware routing either), not a
+   bug to fix here. Flagged inline at `reports/gates.md`'s B8 entry.
+   *Least-confident assumption, stated plainly:* the "exclusion doesn't
+   bias hazards" argument is a property of `nominal` specifically and does
+   NOT hold for `coupled`, where recovery depends on `household_balance`
+   versus `mandate.amount_paise` directly — training on `coupled` would
+   make this exclusion a real selection-on-outcome bias. Training on
+   `nominal` only is what currently keeps this safe; documented in
+   `eval/corpus.py`'s module docstring so a future session doesn't extend
+   training to `coupled` without re-deriving this.
+
+**Minor findings, also fixed:** `person_period.py`'s `_apply_dtypes`
+docstring claimed `outcome` keeps enum MEMBERS as category values; verified
+false (`Outcome` is an `IntEnum`, pandas/numpy silently unbox it to
+`numpy.int64` when building the categorical — `df.outcome ==
+Outcome.RECOVERED` still works via int equality, but `.name` access would
+raise `AttributeError`). `censor_reason` (`str, Enum`) genuinely does keep
+enum members. Docstring corrected to state the actual, verified mechanism
+for each. Dead-code note added: the zero-attempt (`WINDOW_CLOSED` before
+slot 2) branch is unreachable under `generate()`'s current defaults
+(`day2 <= 20 < MAX_DAY = 40`) — exercised only by hand-built tests, which
+is fine (a future `max_day`/schedule change could make it reachable, and
+`build()` must keep handling it correctly regardless).
+
+**Test-writer bugs found and fixed by hand, not routed around.** Three
+genuine defects in the generated test suite, found by actually running it
+rather than trusting the subagent's summary: (1)
+`test_spec_columns_equals_emitted_plus_unsourced` computed "emitted" as a
+set-difference against `build()`'s columns, which excludes any column
+`featurize()` legitimately carries through unchanged (`amount_paise`,
+`ceiling_paise`, `category`) — unconditionally false for any correct
+implementation; fixed to intersect with `SPEC_COLUMNS` instead. (2)
+`test_no_forbidden_columns_survive_featurize` asserted ALL nine `FORBIDDEN`
+members are present in `build()`'s output — four are simulator-internal
+oracle fields that never become person-period columns at all; loosened to
+a non-vacuous, non-universal check. (3) A keyword-argument typo
+(`Outcome=` instead of `outcome=`) would have raised `TypeError` before the
+test body ran. Also closed two coverage gaps the generated suite missed:
+`validate()`'s missing-required-column branch, and a rejection shape it
+never exercised (a group whose last row is not marked `is_terminal` at
+all, distinct from "terminal row followed by another row").
+
+**Direct empirical re-verification of finding 1's fix**, not just asserted:
+fit the same kind of pooled multinomial logit on the real corpus two ways
+— all rows, and `df[df.estimable]` only. All-rows reproduced the
+reviewer's measurement closely (`days_since_last`→RECOVERED +0.121 vs
+their +0.101; `prior_failures`→RECOVERED +0.735 vs their +0.750), and
+critically showed the actual separation *signature*: `in_salary_window`'s
+coefficient was nearly uniform across RECOVERED/DEAD/OPTED_OUT alike
+(2.03/1.87/1.52) — nonsensical, since only `CANT_PAY_NOW`'s recovery
+should see a salary-window effect. Filtered to `estimable` rows, the same
+coefficient dropped to 0.47/0.13/0.12 — concentrated on RECOVERED
+specifically, consistent with the true DGP diluted by pooling across
+causes (this toy check has no per-cause hazard, which is B5's job). Both
+the magnitude and the qualitative pattern change exactly as the fix
+predicts.
+
+**Verification.** 311/311 tests pass (245 pre-B4 + 66 new/updated), 98%
+coverage (the ~8 uncovered lines are defensive belt-and-braces checks in
+`features.py`/`splits.py` that cannot be reached by any current valid or
+invalid input — they guard against a future bug in those functions' own
+logic, not a gap in test design). `guard_invariants.py` clean against every
+changed file, checked explicitly by path (not `--all`, per the known B3
+tooling gap). Full pipeline verified at real scale: `generate(TRAIN_SEEDS)`
+→ 1,769/2,000 mandates survive the AFA filter → 4,785 person-period rows
+(1,769 non-estimable slot-1 + 3,016 estimable) → `featurize()` → `split()`
+→ 1238/177/177/177 mandates (70.0/10.0/10.0/10.0% almost exactly) → target
+cleanly re-joinable by `row_id`, filtered to `estimable` rows, matching
+B5's intended usage pattern exactly.
