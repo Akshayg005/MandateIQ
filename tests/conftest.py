@@ -69,8 +69,40 @@ class PgScratchSchema:
     schema: str
 
 
+@pytest.fixture(scope="session")
+def _pg_reachable() -> tuple[bool, str]:
+    """Whether Postgres is reachable at all, checked ONCE per test session
+    -- pytest caches a session-scoped fixture's return value automatically,
+    so no manual cache is needed here.
+
+    Why this exists: `pg_schema` below is function-scoped and used by 61
+    test items across 6 files; each independently made its own fresh
+    `psycopg.connect()` attempt, and on this machine `localhost` resolves
+    to both `::1` and `127.0.0.1` -- psycopg/libpq tries each address in
+    turn, each with the full `connect_timeout`, so a single "Postgres is
+    down" attempt costs ~2x connect_timeout (measured: 6.03-6.06s), summing
+    to ~370s across all 61 items (measured directly, DECISIONS.md,
+    2026-08-29). This fixture pays that cost at most once per session.
+
+    Deliberately narrow: only the negative "is anything even listening"
+    case is cached. `pg_schema` still opens its OWN connection when
+    Postgres IS reachable -- every test needs an isolated schema-scoped
+    connection for real work, and this fixture does not attempt to share
+    or pool live connections across tests. That would be the fixture-
+    architecture change this one-fixture addition is deliberately not.
+    """
+    if psycopg is None:
+        return False, "psycopg is not installed"
+    try:
+        probe = psycopg.connect(dsn(), connect_timeout=3)
+        probe.close()
+        return True, ""
+    except Exception as exc:
+        return False, str(exc)
+
+
 @pytest.fixture
-def pg_schema():
+def pg_schema(_pg_reachable):
     """
     Creates a throwaway schema, applies schema.sql into it with search_path
     pointed there, yields a PgScratchSchema(conn, schema_name), and drops
@@ -79,11 +111,15 @@ def pg_schema():
     Two distinct failure modes, not to be confused:
     - Postgres itself is unreachable (Docker not running, wrong
       DATABASE_URL) -> pytest.skip. An environment problem, not a code one.
+      Checked via the session-cached `_pg_reachable` first, so 60 of 61
+      Postgres-dependent tests skip immediately rather than each re-probing
+      an already-known-down Postgres.
     - schema.sql is missing or broken -> let it raise. That is the thing
       under test.
     """
-    if psycopg is None:
-        pytest.skip("psycopg is not installed")
+    reachable, reason = _pg_reachable
+    if not reachable:
+        pytest.skip(f"Postgres unavailable: {reason}")
 
     try:
         conn = psycopg.connect(dsn(), autocommit=True, connect_timeout=3)

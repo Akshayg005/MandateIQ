@@ -2131,3 +2131,110 @@ considered and also left alone, for the same reason: it was set
 deliberately by an earlier session, not an oversight, and tightening it
 risks trading a slow-but-safe timeout for false skips against a Postgres
 that is merely slow to accept a connection rather than actually down.
+
+*(Correction, same day: the "~35 tests / ~210s" figure above was read off
+the visible top of a `--durations=40` report, not summed. The real count
+and total, and the fix, are two entries below.)*
+
+### 2026-08-29 · infra · Decision: wire no `Stop` hook
+
+Raised alongside the two fixes above: whether to also wire an actual
+`Stop` hook in `.claude/settings.json` to run `ci` automatically, given
+`run.ps1`'s own help text has described `ci` as "what the Stop hook runs"
+since the scaffold commit despite no such hook ever existing.
+
+**Decided: do not wire one.** `PostToolUse`'s `guard_invariants.py` already
+catches invariant violations at edit time, before they can accumulate;
+`/checkpoint` already runs `/verify-invariants` at the end of every block,
+when attention is actually on the result; and a session-end check costing
+the better part of a block's *first two minutes* would very quickly be the
+thing skipped rather than the thing enforced -- a hook nobody trusts to be
+fast is a hook that gets routed around within days, which is a worse
+failure mode than having no hook and relying on `/checkpoint`'s discipline
+honestly. Revisit if `test-fast` ever drops under 30s, at which point the
+cost argument against it no longer holds.
+
+*(That threshold is crossed by the very next entry, same day — test-fast
+reaches 21.59s below. Left as an open question for the human rather than
+silently reopened, since the decision above was made on a promise about
+future speed, not a promise about this same session immediately meeting
+it.)*
+
+### 2026-08-29 · infra · Diagnosed before rewriting: the Postgres overhead was a per-test reachability re-check, not schema setup -- fixed in ~35 lines, not a fixture rewrite
+
+Follow-up, same day: asked to diagnose the "~210s Postgres overhead"
+disclosed two entries above before committing to any fixture-architecture
+rewrite, with three specific questions answered by measurement, not
+inference.
+
+**1. What exactly is the cost?** First, a correction to the earlier
+estimate: "~35 tests / ~210s" was read off the visible top of a
+`--durations=40` report, not summed -- the real number, measured by
+running the six Postgres-dependent files alone with `--durations=0`
+(nothing truncated): **61 skipped items, total 369.97s, mean 6.065s/item.**
+100% of it is connection establishment. `pg_schema`'s own code calls
+`pytest.skip()` inside the `except` block around `psycopg.connect()`,
+before `CREATE SCHEMA` or `schema.sql` are ever reached -- schema
+create/drop, data seeding, and transaction setup contribute exactly zero,
+confirmed by the fixture's own control flow, not assumed. Isolated
+single-call timing pinned the mechanism precisely: `localhost` resolves to
+both `::1` and `127.0.0.1` on this machine, and psycopg/libpq tries each
+address in turn, each carrying the full `connect_timeout=3` -- 5 runs
+against `localhost` averaged 6.04s; the identical call against `127.0.0.1`
+directly averaged 3.04s, a clean half. Two addresses, one timeout each,
+sequential -- the entire mechanism, and the same mechanism (at libpq's
+*unbounded* default, before the earlier entry's fix) that produced the
+original 260s single-test bug.
+
+**2. How many tests need Postgres?** 61 of 537 collected items (~11%) --
+53 unique test functions (some parametrized into multiple items) across 6
+files, counted by parsing every test function's argument list with `ast`
+and cross-checked against the live skip count (61, exact match once
+`test_deps.py`'s one non-fixture-based Postgres test is included). A clear
+minority, confirming a `db`-marker exclusion was a viable cheap fix --
+richness below is why it was not the one taken.
+
+**3. Is the check repeated per test?** Yes -- `pg_schema` carries no
+`scope=` argument, so it defaults to function scope: all 61 items each
+made their own independent `psycopg.connect()` attempt against an
+already-known-down Postgres.
+
+**Fix: a session-scoped `_pg_reachable` fixture in `tests/conftest.py`**
+(one real connection attempt, `pytest.fixture(scope="session")` -- pytest
+caches a session-scoped fixture's return value automatically, so no manual
+cache was needed) that `pg_schema` and `test_deps.py`'s one non-fixture
+test both consult first, skipping immediately on a cached negative rather
+than each re-probing. ~35 lines, one file plus the one standalone test
+that bypasses `pg_schema` by design (its own docstring explains why: it
+exists to exercise the real, non-overridden `get_conn()`). Deliberately
+narrow: only the negative "is anything even listening" case is cached --
+`pg_schema` still opens its own connection when Postgres IS reachable,
+since every test needs an isolated schema-scoped connection for real work;
+no connection pooling or sharing was added. This is the actual boundary of
+"session-scoped cache, not an architecture change": every test's real
+behavior when Postgres is up is completely unchanged.
+
+**Why not the `db`-marker instead, given question 2 confirmed a
+minority:** the cache fixes the same root cause in one file with the fast
+path still exercising every one of the 61 tests' real assertions the
+moment Postgres is available (e.g., the moment `docker compose up` is run
+locally) -- marker-exclusion would instead remove those 61 tests from
+`test-fast` permanently, trading away real DB-backed coverage in the fast
+loop even in a properly running dev environment, to fix a cost that is
+purely an artifact of Postgres being *down*. The cache fixes the artifact;
+the marker would have fixed around it.
+
+**Measured after, re-timed as asked:**
+- The six Postgres-dependent files alone: 369.97s -> **6.45s** (one ~6.05s
+  probe, 61 items skip near-instantly off the cached result).
+- `.\run.ps1 test-fast`: **21.59s** (475 passed, 61 skipped, 1 deselected)
+  -- well under the 60s target, from the original 656.30s baseline: a 30x
+  reduction, entirely from two one-file fixes (`connect_timeout` default,
+  this cache) plus one `slow` marker. No `db` marker needed; the 60s floor
+  was reached without it.
+- `.\run.ps1 ci`: **22.70s**, exit 0, guard clean.
+
+No fixture-architecture rewrite was required, matching the instruction not
+to do one unless (1) and (3) showed it was genuinely necessary -- they
+showed the opposite: a fixture-architecture rewrite would have spent
+effort solving a problem two much smaller, targeted fixes already solved.
