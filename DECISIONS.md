@@ -2287,10 +2287,46 @@ exit **2**, stderr showing `ci failed (exit 1) -- fix before ending this
 session:` followed by pytest's real failure output. Probe test removed
 immediately after, confirmed via `git status`.
 
-**Requirement #1 (must actually fire, shown to the human) is confirmed by
-this session ending** -- the hook fires on every `Stop` event, including
-the one that closes this response. Nothing further to demonstrate from
-inside the session that triggers it.
+**Requirement #1 (must actually fire, shown to the human) was claimed
+here as "confirmed by this session ending" -- that claim was wrong,
+corrected the same day, then actually resolved the same day.** Sequence,
+recorded rather than only the outcome:
+
+1. Checked against Claude Code's own docs after the user asked how they
+   would actually know: a passing (exit 0) Stop hook is documented as
+   completely silent, and a blocking (exit 2) hook has no distinct marker
+   either per the docs -- "it just looks like Claude decided to keep
+   talking." The session continuing normally after a turn is therefore
+   not evidence the hook fired by itself.
+2. `/debug` was enabled mid-session to check the documented file-based
+   log. Dead end in this environment: no `debug/` directory was ever
+   created under `~/.claude/` despite `/debug` being active across
+   multiple real `Stop` events -- the documented file logging appears to
+   be a standalone-CLI mechanism that does not produce a file inside this
+   VSCode-extension session. Not pursued further; a different route to
+   the same answer existed and was taken instead.
+3. **Resolved empirically, definitively, the same way PostToolUse was
+   resolved above: forced a real `ci` failure and watched what happened.**
+   Planted `tests/_scratch_stop_hook_probe_test.py` with a deliberate
+   `assert False`, confirmed it broke `ci` (`pytest` exit 1), then ended
+   the turn without fixing it -- the broken state deliberately left to
+   persist across the stop boundary, the one thing every other probe this
+   session did not need to do. The hook fired, translated `ci`'s real
+   exit 1 to exit 2, and the next turn opened with the harness's own
+   label: `"Stop hook feedback: [powershell -NoProfile -File scripts/
+   stop_hook_ci.ps1]: ci failed (exit 1) -- fix before ending this
+   session:"` followed by the real pytest failure output naming the
+   planted test exactly. This is a stronger result than the docs
+   predicted -- they describe no distinct marker at all ("just looks like
+   Claude decided to keep talking"), but this integration surfaces an
+   explicit, labeled "Stop hook feedback" block, more visible than the
+   general contract promised. Probe file removed immediately after,
+   confirmed via `git status`; `ci` reconfirmed green (545 passed, 1
+   deselected, exit 0).
+
+**Requirement #1 is now genuinely confirmed, by the mechanism the hook
+was built to provide** -- not inferred, not assumed from a silent turn
+boundary.
 
 ### 2026-08-29 · infra · PostToolUse empty-input visibility resolved empirically: exit 2 is loud, guard_invariants now returns 2 not 0 on empty input
 
