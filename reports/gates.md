@@ -65,7 +65,18 @@ written and its gate unmet counts as zero.
            DECISIONS.md, 2026-08-28, the two B6 entries. Does not touch
            eval/frozen/. -->
 
-- [ ] **B7** ★ policy foundation: every constant cites its clause; both profiles instantiate; compliance-auditor all-VERIFIED
+- [x] **B7** ★ policy foundation: every constant cites its clause; both profiles instantiate; compliance-auditor all-VERIFIED
+      <!-- 2026-08-29: compliance-auditor, fresh context, returned all 8
+           checklist clauses VERIFIED (constants cited, both AFA limits,
+           4(c) ceiling, NPCI cap, no-cancellation invariant, both profiles
+           reachable and neither hard-coded) plus 3 NOT COVERED items
+           (24h-lag enforcement, attempt-cap enforcement, contact-frequency/
+           quiet-hours) correctly attributed to B8/B9's scope, not this
+           block's -- B7 defines constants and profile dispatch, it does not
+           enforce them at runtime. Zero VIOLATED. Full report and the three
+           B7 design decisions (likelihood inversion, overconfidence
+           disclosed not damped, cause-conditioned-hazard Protocol) in
+           DECISIONS.md, 2026-08-29. Does not touch eval/frozen/. -->
 - [ ] **B8** ★ allocator + stopping + off-ramp: 2-slot brute-force equivalence test passes; zero constraint violations across the eval; both profiles produce numbers
       <!-- flagged at B4, 2026-08-28, from stats-reviewer's B4 finding 4: the
            allocator MUST apply src.policy.constraints.afa_free_limit_paise()
@@ -76,7 +87,22 @@ written and its gate unmet counts as zero.
            Rs 15,000), and the model has zero support for them. Scoring one
            through the CIF/backward-induction path anyway is out-of-support
            extrapolation, not a compliance nuance. Logged in DECISIONS.md,
-           does not touch eval/frozen/. -->
+           does not touch eval/frozen/.
+           2026-08-29, from B7: PLAN_DETAIL.md section 4's Q(b, ATTEMPT)
+           assumes a CAUSE-CONDITIONED hazard, h(outcome | cause, slot, day,
+           amount) -- B5 shipped hazards MARGINAL over cause instead, and
+           Cause has no production label, ever, so no fit can close that gap
+           (see DECISIONS.md, 2026-08-28, B6). B7 adds
+           src/policy/hazards.py's CauseConditionedHazard Protocol -- a type
+           declaration only, not an implementation -- so the allocator must
+           name its hazard source in the type system rather than silently
+           defaulting to a cause-marginal substitution. OPEN QUESTION FOR
+           THIS GATE, not settled at B7: whether the allocator instead
+           avoids the gap by design -- Cause entering only through action
+           gating (REAUTH when CANT_PAY_EVER dominant, OFFER on a singleton
+           conformal set) rather than the hazard arithmetic itself. Decide
+           and record the reasoning here when B8 answers it. Full writeup:
+           DECISIONS.md, 2026-08-29, B7. Does not touch eval/frozen/. -->
 - [ ] **B9** ★ executor + idempotency: keys test passes (no clock/uuid/pid); **an opt-out arriving inside the 24h window is honoured**; `UNCONFIRMED` has a resolution path that is actually reachable
 - [ ] **B10** chaos: 50 induced kills; zero double-charges; zero lost jobs; ledger complete; **the denominator is reported** — how many kills landed inside the unsafe window
 - [ ] **B11** ∥ LLM edge + golden set: golden set passes; no LLM import in core; normaliser output is versioned in the ledger before it can touch a belief

@@ -24,8 +24,24 @@ def dsn() -> str:
     return os.environ.get("DATABASE_URL", DEFAULT_DSN)
 
 
+
+# Postgres genuinely being unreachable (Docker down, wrong DATABASE_URL)
+# must fail fast, not hang. libpq's own default connect_timeout is
+# unbounded, so a caller that forgets to pass one -- src/ingest/deps.py's
+# get_conn() did, until this was found by profiling the test suite
+# (DECISIONS.md, 2026-08-29) -- blocks for however long the OS takes to
+# give up on a dead TCP connection, which on Windows measured ~260s for
+# one request. Matches tests/conftest.py's own pg_schema fixture, which
+# already passes connect_timeout=3 explicitly to psycopg.connect()
+# directly (that call bypasses this function and is unaffected either way).
+DEFAULT_CONNECT_TIMEOUT_SECONDS = 3
+
+
 def connect(**kwargs) -> psycopg.Connection:
     """Open a new connection to dsn(). Callers own the connection's
     lifecycle -- closing it, autocommit, isolation level -- this only
-    resolves which database to talk to."""
+    resolves which database to talk to. Defaults connect_timeout to
+    DEFAULT_CONNECT_TIMEOUT_SECONDS so an unreachable Postgres fails fast;
+    pass connect_timeout explicitly to override."""
+    kwargs.setdefault("connect_timeout", DEFAULT_CONNECT_TIMEOUT_SECONDS)
     return psycopg.connect(dsn(), **kwargs)

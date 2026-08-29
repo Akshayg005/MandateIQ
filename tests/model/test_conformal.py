@@ -306,6 +306,7 @@ def test_calibrate_allows_underpowered_class_with_mondrian_false():
 
 # === Exact Coverage on Continuous Scores (Textbook Guarantee) =================
 
+@pytest.mark.slow
 def test_exact_coverage_on_continuous_exchangeable_scores():
     """Split conformal on continuous scores from exchangeable distribution.
 

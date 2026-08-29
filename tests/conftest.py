@@ -13,6 +13,14 @@ up through normal pytest fixture resolution -- a conftest.py in tests/ledger/
 is invisible to sibling test packages. Behaviour is unchanged from the
 original: same scratch-schema naming, same skip-vs-raise split (see the
 pg_schema docstring below).
+
+Also registers the `chaos` and `slow` markers `run.ps1`'s $TestFastFilter
+excludes from the default (`test-fast`, `ci`) path -- registered here rather
+than left implicit so an unmarked typo raises `--strict-markers`-style
+attention instead of silently matching nothing. `slow`: a real simulation of
+meaningful size runs inside the test (not a fixture query, not a unit
+computation) -- see DECISIONS.md, 2026-08-29, for which tests earned it and
+why. `chaos`: reserved for B10's induced-kill tests, none exist yet.
 """
 from __future__ import annotations
 
@@ -22,6 +30,15 @@ import uuid
 from dataclasses import dataclass
 
 import pytest
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    config.addinivalue_line(
+        "markers", "slow: real simulation of meaningful size, excluded from test-fast/ci"
+    )
+    config.addinivalue_line(
+        "markers", "chaos: induced-kill fault injection (B10), excluded from test-fast/ci"
+    )
 
 _ROOT = pathlib.Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:

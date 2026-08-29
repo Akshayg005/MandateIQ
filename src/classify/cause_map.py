@@ -3,8 +3,21 @@ causes. Doubles as the P(e|c) likelihood term the allocator's belief update
 will consume (PLAN_DETAIL.md Sec 4: `update(b,e)[c] ~ b[c]*P(e|c)`, comment
 "P(e|c) from cause_map.prior()") -- exact under Bayes' rule only given a
 flat prior over causes, an explicit, disclosed simplification appropriate
-for a hand-authored starting point. B5/B6 supersede this with fitted
-hazards; nothing downstream of B5 should still be reading this file.
+for a hand-authored starting point.
+
+B5/B6 supersede this file's OUTCOME-HAZARD role -- nothing downstream of B5
+should read this file as a source of P(outcome | slot, ...) the way
+person_period.py / paths.py / competing_risks.py are read; that fitted role
+belongs entirely to them now. This narrows an earlier, broader version of
+this paragraph ("B5/B6 supersede this with fitted hazards; nothing
+downstream of B5 should still be reading this file") that was written
+specifically about that outcome-hazard role and, read literally, forbade
+every downstream read -- which turned out to contradict PLAN_DETAIL.md
+section 4:999's own comment above naming `cause_map.prior()` as the belief
+update's likelihood source. src/policy/belief.py reads `prior()` at B7,
+explicitly, to invert it into a cause-conditioned likelihood -- that is the
+one permitted exception this narrowing carves out, not a violation of the
+sentence it replaces. Full reasoning: DECISIONS.md, 2026-08-29, B7.
 
 Every distribution sums to 1.0 and names all three Cause members, even
 where one is near-zero -- a partial dict here would be silently

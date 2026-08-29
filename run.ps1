@@ -32,6 +32,12 @@ if (-not (Test-Path $Py)) {
     exit 1
 }
 
+# Single source of truth for the fast-path test filter, so `test-fast` and
+# `ci` cannot drift apart into two different definitions of "fast." `chaos`
+# (B10) and `slow` (real-simulation tests, see DECISIONS.md 2026-08-29) are
+# both excluded from the default frequent-run path.
+$TestFastFilter = "not chaos and not slow"
+
 function Invoke-Step([string]$Label, [scriptblock]$Block) {
     Write-Host "`n== $Label" -ForegroundColor Cyan
     & $Block
@@ -49,9 +55,11 @@ switch ($Task.ToLower()) {
 Mandate Recovery Engine -- tasks
 
   .\run.ps1 test              full test suite with coverage
-  .\run.ps1 test-fast         unit tests only, skips chaos
+  .\run.ps1 test-fast         unit tests only, skips chaos and slow/simulation
   .\run.ps1 lint              invariant guards across all tracked python
-  .\run.ps1 ci                what the Stop hook runs (test-fast + lint + eval-quick)
+  .\run.ps1 ci                test-fast + lint. Does NOT run eval -- eval.run
+                               is B13's file (PLAN_DETAIL.md:518) and has
+                               never existed; see DECISIONS.md, 2026-08-29
 
   .\run.ps1 eval              full eval, all regimes, both compliance profiles
   .\run.ps1 eval-quick        nominal regime only, strict profile
@@ -72,7 +80,7 @@ Mandate Recovery Engine -- tasks
     }
 
     "test"      { & $Py -m pytest -q --cov=src --cov-report=term-missing }
-    "test-fast" { & $Py -m pytest -q -m "not chaos" }
+    "test-fast" { & $Py -m pytest -q -m $TestFastFilter }
 
     "lint" {
         Invoke-Step "invariant guards" { & $Py scripts\guard_invariants.py --all }
@@ -89,9 +97,13 @@ Mandate Recovery Engine -- tasks
     }
 
     "ci" {
-        Invoke-Step "tests"  { & $Py -m pytest -q -m "not chaos" }
+        # No eval step. eval-quick (below) calls eval.run, which is B13's
+        # file (PLAN_DETAIL.md:518) and has never existed -- not since B4,
+        # since the scaffold commit, 2026-08-25. Putting it in `ci` meant
+        # this target could not pass from day one. Removed 2026-08-29;
+        # DECISIONS.md has the full reasoning. Re-add once B13 lands.
+        Invoke-Step "tests"  { & $Py -m pytest -q -m $TestFastFilter }
         Invoke-Step "guards" { & $Py scripts\guard_invariants.py --all }
-        Invoke-Step "eval"   { & $Py -m eval.run --config eval/frozen/sim_config.yaml --regime nominal --profile strict --quiet }
     }
 
     "eval" {

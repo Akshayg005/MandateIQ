@@ -1852,3 +1852,282 @@ holds reasonably per-class under exchangeability, but the sets are almost
 always uninformative at this model's resolution — which correctly routes
 the real work (a design matrix with enough resolution to ever produce a
 singleton) to B8, rather than a passing number hiding it.
+
+### 2026-08-29 · B7 · Explicit likelihood inversion for the belief update; cause_map.py's docstring narrowed, not deleted
+
+`src/policy/belief.py`'s `update(b, obs)` needs `P(decline | cause)`, the
+likelihood Bayes' rule actually multiplies by. Nothing in the repo fits
+this direction: `src/classify/cause_map.prior()` is the opposite direction,
+`P(cause | decline)`, a hand-authored table whose own docstring says it is
+exact "only given a flat prior over causes" — using it directly as a
+likelihood would be exact today (the current prior over causes happens to
+be uniform) and silently wrong the moment `init()` is ever called with a
+non-flat starting prior, which is precisely the case B7 exists to support
+(e.g. chaining a mandate's belief from a previous cycle's posterior).
+
+**Chosen: read `cause_map.prior()` and invert it explicitly** through a
+named `REFERENCE_PRIOR = (1/3, 1/3, 1/3)` constant, carrying its own
+`REFERENCE_PRIOR_VERSION = "ref-v1"`:
+
+    likelihood(dc)[c] = cause_map.prior(dc)[c] / REFERENCE_PRIOR[c]
+
+left deliberately unnormalised — any `dc`-only factor cancels inside
+`update()`'s renormalisation, so normalising here would be pure busywork.
+`Belief.provenance` composes `cause_map.PRIOR_VERSION` (currently `"v2"`)
+with `REFERENCE_PRIOR_VERSION`, so a belief written to `plan.belief_json`
+is traceable to both tables that produced it — what B11's gate ("normaliser
+output is versioned in the ledger before it can touch a belief") requires.
+
+Two alternatives were considered and rejected. A second, independently
+hand-authored `P(decline | cause)` table living in `belief.py` avoids the
+inversion but creates two tables related by Bayes' rule with nothing
+forcing them to agree — drift between them would be invisible to any test
+that checks each table alone, the same duplicated-source-of-truth failure
+mode `AFA_FREE_LIMIT_PAISE` already avoids by having exactly one home. And
+the new table would carry no `PRIOR_VERSION`, leaving B11's gate nothing to
+thread. Deferring `belief.py` to B8 was also rejected — it would move the
+hardest remaining modelling decision into the block that already carries
+backward induction and the allocator.
+
+**The anti-drift test.** `tests/policy/test_belief.py::
+test_inversion_round_trips_to_prior_exactly`, parametrized over every
+`DeclineClass`: invert `prior(dc)` to a likelihood, re-apply Bayes with
+`REFERENCE_PRIOR`, and recover `prior(dc)` exactly. The identity holds for
+*any* `REFERENCE_PRIOR`, not just the current uniform one, so it breaks the
+moment the two representations drift apart rather than merely today.
+Verified: passes for all 7 `DeclineClass` members, `abs=1e-9`.
+
+**`cause_map.py`'s docstring narrowed, not deleted.** Its original text
+read, verbatim:
+
+> "B5/B6 supersede this with fitted hazards; nothing downstream of B5
+> should still be reading this file."
+
+This was written specifically about the file's **outcome-hazard** role —
+at the time, `person_period.py`/`paths.py`/`competing_risks.py` had just
+taken over producing `P(outcome | slot, ...)`, and the sentence meant
+"stop reading this file as *that*." Read literally, though, it forbids
+*every* downstream read, which contradicts `PLAN_DETAIL.md` section
+4:999's own comment — present since the file's B3 authoring, unchanged —
+naming `cause_map.prior()` as the belief update's likelihood source. No
+belief coefficient of any kind existed when this sentence was written; the
+contradiction was latent until B7 needed to actually call `prior()`.
+
+New text narrows rather than deletes: it still forbids a downstream reader
+from treating this file as an outcome-hazard source (that prohibition
+stands, unchanged in force), and names the one permitted exception —
+`src/policy/belief.py` reading `prior()` itself, explicitly, for the
+inversion above. A specific prohibition was narrowed to carve out one
+named exception; it was not turned into a general permission.
+
+### 2026-08-29 · B7 · Static-cause belief update is measurably overconfident relative to cause persistence — disclosed, not damped
+
+`eval/frozen/protocol.md` (lines 153-159, pre-registered at B2, before any
+file under `src/policy/` existed) already flagged this: `cause_switch_prob`
+"intended target is the *within-mandate* stationarity assumption the
+belief update ... relies on ... expect this arm to stress B7/B8 more than
+B5." B7 measures the stress rather than assuming it away.
+
+**Measured** (`tests/policy/test_belief.py`, exact arithmetic, `abs=1e-9`):
+three identical `INSUFFICIENT_FUNDS` declines from a flat prior drive
+`update()`'s belief to **0.996108949416** confidence in `CANT_PAY_NOW`
+(`(0.8^3)/(0.8^3+0.1^3+0.1^3) = 256/257`). `sim_config.yaml:99`'s
+`cause_switch_prob: 0.15` on the `misspecified` arm means the probability
+the mandate's cause even *stayed the same* across those same three attempts
+is only **0.614125** (`0.85^3`). The gap — **0.381983949416** — is the
+overconfidence: `update()` behaves as if it were far more certain than the
+generative process it will be evaluated against actually allows.
+
+**Decision: `update()` stays pure static Bayes — `b[c] * likelihood(dc)[c]`,
+renormalised, nothing else. No damping, no tempering, no cause-switch-leak
+parameter, not even one that defaults to off.** Two alternatives were
+considered and rejected, both for the same underlying reason:
+
+- **A `switch_eps` parameter mixing the stationary distribution back in
+  each update, defaulting to `0.0`.** This is the principled model — it is
+  literally the HMM transition `cause_switch_prob` describes. Rejected
+  anyway: a parameter that exists, defaults to zero, and is documented as
+  "B8/B13 can turn it on with evidence" *will* be turned on, using results
+  measured on the very arm it was built to fix. That is the same shape as
+  B5's stop-threshold scalar and the paired-criterion reversal logged
+  2026-08-28 — a dial pre-aimed at the grading axis before any honest
+  measurement exists to aim it. This is the third instance of that pattern
+  in this project; declined on the same grounds each time.
+- **Picking a damping constant now, before B8 has measured anything.** An
+  unattributed tuning constant chosen to improve results ahead of any
+  evidence is exactly what `src/policy/CLAUDE.md` rules out for this
+  layer — it belongs in a config file, chosen with evidence, not silently
+  embedded in the update rule.
+
+If B8's allocator shows this overconfidence materially hurts recovered
+money, mandates preserved, or the off-ramp's false-positive rate, that is a
+**finding to report** against the frozen eval, not a defect in `belief.py`
+to quietly patch. `test_static_cause_belief_is_overconfident_relative_to_
+cause_persistence` pins both numbers and the gap so the finding, if it
+comes, is a comparison against a known baseline rather than a surprise.
+
+### 2026-08-29 · B7 · Cause-conditioned hazard gap named as a Protocol, not closed
+
+`PLAN_DETAIL.md` section 4's `Q(b, ATTEMPT(d,m))` sums over causes using
+`h_rec(c,d,m,ctx)`, `h_opt(c,d,m,ctx)`, `h_dead(c,d,m,ctx)` — hazards
+conditioned on a *specific* cause `c`. B5 shipped hazards marginal over
+cause instead (`competing_risks.hazards()`'s signature has no cause
+argument at all), and it could not have done otherwise: `Cause` is latent
+with no production label, ever (2026-08-28, B6 entry above), so nothing
+exists to fit `P(outcome | cause, slot, day, amount)` against. This gap is
+therefore permanent, not a B7 shortcut to close later with more data.
+
+**Decision: `src/policy/hazards.py` defines a `CauseConditionedHazard`
+Protocol at B7, and implements nothing.** A dated comment alone (the
+`reports/gates.md` B4/B5/B6 amendment pattern) was judged insufficient on
+its own here — a comment in another file is read at gate-check time,
+*after* B8 is already written, and does not constrain the code while it is
+being written. Every genuine save in this project so far has come from a
+mechanical constraint (`guard_frozen.py`, the ledger's `plan` foreign key,
+`guard_invariants.py`), not from a note read later. The Protocol makes
+substituting cause-marginal hazards an explicit, visible act in B8's own
+type signature, rather than a silent default. Both the Protocol and the
+documentation trail ship together, as complements, not alternatives — see
+the dated amendment on B8's gate in `reports/gates.md`, 2026-08-29.
+
+Bounded deliberately: type declaration only, no logic, no default
+implementation, no helper functions. If it acquires one, that is B8's work
+leaking into B7.
+
+**Explicitly left open, for B8 to decide with the allocator in front of
+it, not settled here:** whether the allocator resolves this gap by fitting
+something new, or by having `Cause` enter only through *which actions are
+legal* — `REAUTH` when `CANT_PAY_EVER` dominates the belief, `OFFER` only
+on a singleton conformal set — rather than through the hazard arithmetic
+itself. That would be a real narrowing of section 4's `Q`-function, and
+deciding it now, at B7, to make the handoff tidier would be deciding it
+without the allocator's actual constraints in view. Recorded as an open
+question on B8's gate rather than pre-answered.
+
+### 2026-08-29 · infra · `eval-quick` removed from `ci`; it was never buildable this early, and it was never "since B4"
+
+Raised as a pre-B8 concern: `.\run.ps1 ci` — the target intended to be the
+Stop hook's gate — had failed every session since B4 with
+`ModuleNotFoundError: No module named eval.run`, training the habit of
+ignoring a red hook that also carries `guard_invariants`.
+
+**Two corrections to the premise, checked before acting on it rather than
+assumed:**
+
+1. **No `Stop` hook is actually wired.** `.claude/settings.json` defines
+   only `PreToolUse` (`guard_frozen.py`), `PostToolUse` (`guard_invariants.py`),
+   and `SessionStart` (`show_state.py`) — no `Stop` entry exists. `run.ps1`'s
+   own help text calls `ci` "what the Stop hook runs," but that wiring was
+   never implemented, only documented as intent. No session has actually
+   been blocked by a red `Stop` hook; `ci` has been red whenever a human or
+   session ran it directly. Left for a separate decision — this entry fixes
+   `ci`'s content, not whether to wire a hook that runs it automatically.
+2. **It was never "since B4."** `git log -p -- run.ps1` shows both `ci` and
+   `eval-quick` were introduced in the scaffold commit itself (`d1acbe4`,
+   2026-08-25) — before B0 closed. `eval.run` has never existed at any point
+   in this repository's history. The condition is four days and seven
+   blocks (B0–B7) older than believed.
+
+**Decision: remove the eval step from `ci`; do not build a minimal
+`eval/run.py` now.** `eval/run.py` is not undifferentiated "infrastructure"
+— it is explicitly **B13's** file (`PLAN_DETAIL.md:518`, entry gate B8 +
+B10 + B12), a batch driver over all arms × regimes × profiles that records
+which `ConformalGate` was active. At B7 there is no allocator (B8), no
+chaos-hardened executor (B9/B10), no benchmark (B12), and no regime file
+(`eval/regimes.py`, also B13) for it to drive. A "minimal" version now
+would either silently re-implement `eval/baseline_ladder.py` (already
+built, already gated, at B2) under a different name, or need to reach into
+B8's allocator to have anything real to call — scope creep into the block
+this was raised specifically to protect. Rejected for the same reason
+option (a) was rejected when proposed: it competes with B8, the hardest
+remaining block, for the same session's attention.
+
+`ci` is now `test-fast` + `guard_invariants.py --all` only — the two checks
+that have been real and green since B1. `eval-quick` remains runnable
+standalone (`.\run.ps1 eval-quick`) and still fails the same way; it is
+simply no longer in the gate. This brings it in line with how `golden`,
+`bench`, `chaos`, `eval` (full), and `report` were already correctly
+excluded from `ci` as not-yet-built. `verify-invariants`'s SKILL.md step 5
+updated to match: report the expected failure, do not stop the sequence on
+it (previously it would have silently prevented step 6, the freeze-hash
+check, from ever running).
+
+**No gate between B4 and B7 claimed an eval check as part of its
+verification.** `reports/gates.md`'s B4, B5, B6, and B7 gate conditions —
+dated 2026-08-27 through 2026-08-29 — cite tests, `stats-reviewer`,
+`compliance-auditor`, and specific measured numbers; none cite `ci`,
+`eval-quick`, or any eval-harness output. Stated here explicitly so the
+absence is a checked fact, not an assumption carried over from the
+original premise.
+
+### 2026-08-29 · infra · The 11-minute suite was a missing connect_timeout, not real simulations -- one line fixed it, `test-fast` was a no-op until today
+
+Raised alongside the `ci` fix, same session: `.\run.ps1 test` takes ~11
+minutes and `/checkpoint` runs it every block. Asked to find the cause,
+mark real-simulation tests `slow`, exclude them from the default path, and
+report before/after timings. The stated hypothesis was that simulations
+were the cost.
+
+**Two findings, checked by profiling (`pytest --durations=40`) rather than
+guessed:**
+
+1. **`run.ps1 test-fast` already existed** (`-m "not chaos"`) but **nothing
+   has ever been marked `chaos`** -- no marker of any kind was registered
+   in the suite (`config.addinivalue_line` appeared nowhere), so the filter
+   silently matched everything and `test-fast` ran the identical ~11
+   minutes as `test`, every time it was ever invoked.
+2. **The hypothesis was mostly wrong.** Of 656.30s (`pytest -q
+   --durations=40`, no coverage instrumentation, 476 passed / 61 skipped),
+   one single test —
+   `tests/ingest/test_deps.py::test_get_conn_yields_an_autocommit_connection`
+   — cost **260.14s by itself, 40% of the entire suite.** Only one test
+   fits the "real simulation" description at all:
+   `tests/model/test_conformal.py::test_exact_coverage_on_continuous_
+   exchangeable_scores` (n_cal=2000, n_test=20000, swept over 20 seeds,
+   18.67s, correctly slow -- this test's own docstring already explains why
+   a single seed isn't adequate). Everything else was ~35 Postgres-backed
+   tests each paying an independent ~6.0–6.13s fixture-setup tax (below).
+
+**The 260s test was a real bug, not a slow test to mark and hide.**
+`src/ingest/deps.py::get_conn()` calls `src.core.db.connect(autocommit=True)`
+with no `connect_timeout` -- unlike `tests/conftest.py`'s `pg_schema`
+fixture, which already passes `connect_timeout=3` explicitly to its own
+direct `psycopg.connect()` call. libpq's default connect timeout is
+unbounded; against an unreachable Postgres (Docker down, as in this
+session throughout), the OS's own TCP-level give-up governs instead of the
+application, and on Windows that measured ~260s for this one connection
+attempt. This is not just a test-speed problem: `get_conn()` is the real
+FastAPI dependency every ingest request opens a connection through — the
+same unbounded wait would hang a live production request for however long
+Windows (or whatever OS the deployment target runs) takes to notice a dead
+socket, with no application-level control over it at all.
+
+**Fix: `src/core/db.py::connect()` now defaults `connect_timeout` to 3
+seconds** (`DEFAULT_CONNECT_TIMEOUT_SECONDS`, matching the value
+`pg_schema` already chose independently) via `kwargs.setdefault(...)`, so
+any caller that does pass its own value is unaffected. One call site fixed
+by this (`src/ingest/deps.py::get_conn()`); a second
+(`scripts/decline_coverage.py`) picks up the same fix for free, having had
+no timeout either. `tests/conftest.py`'s `pg_schema` fixture bypasses
+`db.connect()` entirely (calls `psycopg.connect()` directly) and is
+unaffected either way.
+
+**Measured after:** `.\run.ps1 test-fast` -- **420.08s (7:00)**, 475 passed
+/ 61 skipped / 1 deselected (the conformal test, now marked `slow`). Down
+236.22s (36%) from the 656.30s baseline, from a one-line fix plus one
+marker -- not from excluding real work.
+
+**What remains, disclosed rather than silently left:** the ~35 Postgres-
+backed tests each still pay their own ~6.0–6.13s `pg_schema` fixture setup
+independently -- roughly 210s of the remaining 420s, the largest cost left.
+Each test's fixture makes its own fresh `psycopg.connect()` attempt against
+an unreachable database rather than sharing one session-level reachability
+check. Not fixed here: collapsing this to a single cached probe is a real
+change to a fixture every Postgres-backed test already depends on, not a
+one-line default -- a decision surfaced for the human to make, not one to
+take silently while already mid-flight on two other fixes in the same
+session. Shortening `pg_schema`'s existing `connect_timeout=3` further was
+considered and also left alone, for the same reason: it was set
+deliberately by an earlier session, not an oversight, and tightening it
+risks trading a slow-but-safe timeout for false skips against a Postgres
+that is merely slow to accept a connection rather than actually down.
