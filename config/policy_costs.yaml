@@ -1,0 +1,51 @@
+# Non-RBI tuning parameters for the B8 allocator's Q-function and stopping
+# rules.
+#
+# src/policy/constraints.py's own module docstring assigns their placement
+# to B8 and forbids them living in constraints.py: "Attempt-cost,
+# mandate-LTV, re-auth cost, quiet hours, and contact-frequency caps carry
+# no RBI clause and do NOT belong in this file -- B8 owns where they land."
+# This file is where they land -- a data file, not a constant silently
+# embedded in allocator.py itself. Same discipline DECISIONS.md 2026-08-29
+# (B7) required of belief.py's declined switch_eps parameter: a tuning
+# dial must be visible and swappable, never buried in code where changing
+# it means a diff to the decision logic itself.
+#
+# All money is integer paise. Every value here is a placeholder pending
+# real merchant data -- this project's numbers are illustrative, not
+# fitted; see DECISIONS.md for the B8 entry noting this plainly.
+
+# Flat operational cost charged against every ATTEMPT's expected value
+# (notification + gateway cost). Small relative to any realistic recovered
+# amount, so it never dominates the decision on its own.
+attempt_cost_paise: 50
+
+# Value assumed preserved when a mandate is kept alive rather than lost --
+# charged as a cost against Q(ATTEMPT) via h_opt (6(c): opt-out is
+# terminal), and what OFFER's construction treats as retained rather than
+# lost ("deferred revenue, not lost: pause/downgrade retain LTV",
+# PLAN_DETAIL.md section 4). Placeholder: roughly 12 monthly cycles at a
+# representative below-AFA-cliff amount.
+mandate_ltv_paise: 180000
+
+# Cost of soliciting a fresh AFA re-authorisation from the customer
+# (clause 8(a)/8(b) path) -- SMS/app-notification plus the friction of a
+# fresh auth flow.
+reauth_cost_paise: 200
+
+# Placeholder completion rate for a re-authorisation request. Not fitted;
+# a conservative guess pending real merchant re-auth funnel data.
+reauth_success_prob: 0.35
+
+# No contact between 21:00 and 08:00 local time. Not tied to a specific
+# RBI clause -- root CLAUDE.md's consumer-protection context (CCPA's
+# Guidelines for Prevention and Regulation of Dark Patterns, 2023) is why
+# this project applies a quiet-hours norm even though the circular itself
+# is silent on time-of-day.
+quiet_hours_start: 21
+quiet_hours_end: 8
+
+# Contact-frequency cap per cycle. Equal to MAX_ATTEMPTS (src/policy/
+# constraints.py): one notification per attempt slot, no additional
+# nagging beyond what the attempt budget itself already allows.
+max_contacts_per_cycle: 4

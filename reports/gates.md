@@ -77,7 +77,7 @@ written and its gate unmet counts as zero.
            B7 design decisions (likelihood inversion, overconfidence
            disclosed not damped, cause-conditioned-hazard Protocol) in
            DECISIONS.md, 2026-08-29. Does not touch eval/frozen/. -->
-- [ ] **B8** ★ allocator + stopping + off-ramp: 2-slot brute-force equivalence test passes; zero constraint violations across the eval, with an attempt rate on AFA-eligible mandates ≥ `eval.gate_criteria.ATTEMPT_RATE_FLOOR` (0.25) AND a mean discrimination gap (true-CANT_PAY_NOW attempt rate minus true-CANT_PAY_EVER attempt rate, seeds 0-19) exceeding `DISCRIMINATION_MARGIN` (~0.0808) -- the null policy must fail the first, a uniform-random policy at the floor rate must fail the second, both proven by test (`tests/eval/test_gate_criteria.py`); both profiles produce numbers
+- [x] **B8** ★ allocator + stopping + off-ramp: 2-slot brute-force equivalence test passes; zero constraint violations across the eval, with an attempt rate on AFA-eligible mandates ≥ `eval.gate_criteria.ATTEMPT_RATE_FLOOR` (0.25) AND a mean discrimination gap (true-CANT_PAY_NOW attempt rate minus true-CANT_PAY_EVER attempt rate, seeds 0-19) exceeding `DISCRIMINATION_MARGIN` (~0.0808) -- the null policy must fail the first, a uniform-random policy at the floor rate must fail the second, both proven by test (`tests/eval/test_gate_criteria.py`); both profiles produce numbers
       <!-- flagged at B4, 2026-08-28, from stats-reviewer's B4 finding 4: the
            allocator MUST apply src.policy.constraints.afa_free_limit_paise()
            before ever consulting the hazard model, routing any above-cliff
@@ -123,7 +123,35 @@ written and its gate unmet counts as zero.
            "B8 gate floor lowered." Constants live in
            `eval/gate_criteria.py`, not restated here. Does not touch
            eval/frozen/ -- gate_criteria.py is a new file under `eval/`,
-           outside the frozen directory. -->
+           outside the frozen directory.
+           2026-08-30, CLOSED. Measured: attempt rate 0.8266 (floor
+           0.25), discrimination gap 0.9048 (margin 0.2956), zero
+           constraint violations, both profiles, 20 seeds; 2-slot
+           brute-force equivalence passes against an independent
+           unmemoised reimplementation across 7 scenarios. NOT a clean
+           history and must not be read as one -- the discrimination
+           CLAUSE was replaced twice before it measured anything (the
+           original attempt-rate boolean was structurally saturated at
+           the first, necessarily uninformed decision; its zero-delay
+           oracle reference was then withdrawn as the wrong reference
+           for a margin). The THRESHOLD (0.29558992474816265) was derived
+           once, on 2026-08-29, and never moved after: it depends only on
+           the cause-blind random baseline, which the later fixes do not
+           touch. What changed was the eval harness (it now supplies the
+           slot-1 decline signal the system's own premise assumes, built
+           from frozen sim_config parameters only) and two belief-
+           consistency fixes in the allocator -- one requested on safety
+           grounds that made the gate HARDER (REAUTH weighted by
+           b[CANT_PAY_EVER]), one that made it EASIER (ATTEMPT's recovery
+           term discounted by the same belief), the latter flagged as
+           gate-helping and approved BEFORE being applied. Reported cost
+           of the asymmetry, not hidden: 4/85 true-CANT_PAY_NOW mandates
+           (4.7%) routed to REAUTH incorrectly. Full sequence, both
+           allocator diffs, the per-cause table, and the caveat that
+           0.9048 exceeding the 0.8329 reference does NOT mean beating
+           perfect inference (the policies are not nested):
+           DECISIONS.md, 2026-08-29 and 2026-08-30. Does not touch
+           eval/frozen/. -->
 - [ ] **B9** ★ executor + idempotency: keys test passes (no clock/uuid/pid); **an opt-out arriving inside the 24h window is honoured — proven by a test that actively constructs the race** (commits an attempt, then delivers a late opt-out event inside that window, and asserts the attempt is aborted — not merely a test that happens never to generate one); `UNCONFIRMED` has a resolution path that is actually reachable
       <!-- 2026-08-29, vacuous-checks audit: strengthened from "an opt-out
            arriving inside the 24h window is honoured" -- a test that

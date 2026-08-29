@@ -2598,3 +2598,562 @@ attempt is aborted — not merely a test that happens never to generate
 one)." The parenthetical stays in the gate text itself, not just in this
 entry, so a future session closing B9 cannot satisfy the clause with a
 test that is silent on the actual race by construction.
+
+### 2026-08-29 · B8 · action-gating decision made, and the belief-fixed
+consequence of making it
+
+Built `src/policy/allocator.py`. Answered the question `reports/gates.md`'s
+B8 entry left open at B7: PLAN_DETAIL.md section 4's `Q(b, ATTEMPT)` sums
+`Sigma_c b[c] * h_c(...)` — cause-conditioned hazards B5 never fit and
+cannot fit (`Cause` has no production label, ever). **Decided: cause
+enters only through action-gating** — `REAUTH` feasible when
+`b.dominant() == CANT_PAY_EVER`, `OFFER` feasible only on a singleton
+`{WONT_PAY}` conformal set — never through the Q-value arithmetic, which
+uses the marginal hazard directly. Lossless given the available hazard
+source: `Sigma_c b[c] * h == h` for any belief when `h` does not vary with
+`c` (`test_marginal_hazard_makes_the_cause_sum_an_identity`, allocator
+suite).
+
+**Consequence, worked out during implementation, not pre-planned: belief
+is carried UNCHANGED across every recursive node within one `solve()`
+call.** The pure form of the recursion updates belief via
+`update(b, obs=survived(c,d,m))` on the "still pending" branch, but that
+needs a specific *observed* `DeclineClass` — a cause-marginal hazard model
+has no honest way to produce one (it predicts 4-class Outcome
+probabilities, not the 7-class decline taxonomy `belief.update()` accepts).
+Fabricating one inside the recursion would make the exact-solve claim
+dishonest in the one place it matters most. Real belief updates happen
+between `solve()` calls instead, from real evidence, at whatever layer has
+it. One clean side effect: since `Sigma_c b[c] * h` collapses to `h`
+regardless of `b`, and `b` never changes within one call, the memoisation
+key's belief component is *provably* constant within a call
+(`test_belief_is_the_sole_constant_key_component_within_one_solve_call`) —
+the quantisation-collision risk flagged going into this block (STATE.md,
+"whether a good allocator clears \[the discrimination margin\] comfortably
+or scrapes it is unknown until B8 runs") cannot arise in this design,
+because there is only ever one belief value to quantise per call. It was a
+reasonable risk to flag before this design was worked out; it does not
+apply to what was actually built.
+
+Also found and fixed, before it ever reached the eval sweep: `committable_days()`
+originally computed its earliest eligible day from `plan_day` and the
+profile's lead time alone, ignoring `ctx.committed_days`. Under `permissive`
+(no fresh-notification lead required), this could reproduce the SAME day
+just committed as a candidate for the next slot —
+`eval/frozen/simulator.py`'s `Simulator.attempt()` enforces strictly-
+increasing `on_day` per mandate and would have raised. Fixed to take the
+later of `(plan_day + lead)` and `(last committed day + 1)`; regression
+test `test_committable_days_never_repeats_an_already_committed_day` pins
+it. Found by running the eval harness against the real simulator, not by
+inspection — logged per this project's "found while building" convention
+because reconstructed-later write-ups read as fake.
+
+2-slot brute-force equivalence (the gate's own required test): an
+independent, unmemoised reimplementation of the Bellman recursion, written
+from scratch in `tests/policy/test_allocator.py` rather than calling
+`allocator.py`'s private helpers, agrees with the memoised solver exactly
+across 7 scenarios including two beliefs deliberately near-colliding at the
+`1e-6` quantisation grid. `zero constraint violations`, `AFA cliff routes to
+REAUTH without ever calling the hazard model`, and both profiles producing
+numbers are all proven by test. Does not touch `eval/frozen/`.
+
+### 2026-08-29 · B8 · the discrimination-margin clause measured ~0 for a
+reason unrelated to the allocator — replaced before the gate was ever
+ticked, full derivation-then-validation-then-measurement trail kept
+
+Ran `eval/allocator_sweep.py` (new, B8-local gate harness — not
+`eval/run.py`, which is B13's file and still does not exist) against the
+gate committed in `reports/gates.md`, 2026-08-29, earlier the same day:
+attempt rate on AFA-eligible mandates >= 0.25, discrimination gap (true
+`CANT_PAY_NOW` attempt rate minus true `CANT_PAY_EVER` attempt rate,
+20 seeds) > 0.0808.
+
+**Measured: attempt rate 0.9858 (clears easily), discrimination gap
+0.0009 (fails — indistinguishable from the cause-blind-random baseline's
+own measured -0.0068).** Zero constraint violations, both profiles produce
+numbers. Before concluding the allocator does not discriminate, checked
+directly: `src/policy/allocator.py`'s own unit tests already proved REAUTH
+correctly routes a `CANT_PAY_EVER`-dominant belief away from `ATTEMPT`
+given a poor hazard; a standalone diagnostic (seed 0, one mandate at a
+time) found REAUTH firing for 12 of 34 true-`CANT_PAY_EVER` mandates once
+evidence existed. The discrimination was real. The metric could not see
+it.
+
+**Root cause: the original clause is a boolean ("ever attempted") pinned
+to `True` at the first, necessarily uninformed decision, for nearly every
+mandate regardless of cause.** This allocator starts every belief at the
+uniform reference prior and updates only from observed evidence — there is
+no evidence before the first retry. Under ordinary economics, attempting
+is positive-EV at a neutral prior for ~98.6% of AFA-eligible mandates of
+*either* true cause, so "ever attempted" is set `True` for both groups at
+slot 2, before any cause-discrimination (which does happen, at slot 3+,
+once a `DEAD`-type signal updates belief) has a chance to move a boolean
+that is already pinned. A boolean cannot un-True itself; it does not
+accumulate what a later, correct `REAUTH` decision represents.
+
+**This was a process failure in how the original clause was approved, not
+bad luck in measurement, and it is being named as exactly that rather than
+smoothed over: the clause was pinned as a constant without ever checking
+that *any* achievable policy could move it.** Specifically, without
+computing its value for an oracle that reads true cause and acts
+perfectly — which would have shown the metric saturates near its ceiling
+for every policy that ever attempts a cause-blind first slot, oracle
+included, leaving no daylight for a real policy to be measured in. That
+check is what the user asked to make mandatory for the replacement, and is
+exactly the gap that let the first version through structurally unable to
+measure anything. Recorded plainly as that gap, not attributed to a
+one-off derivation mistake, so the next gate amendment in this project
+inherits the validation step rather than just the apology.
+
+**Replacement, derived and validated in that order — candidate chosen and
+its null/random/oracle values computed before this session read anything
+our own allocator produces (confirmed by conversation order: the
+validation script constructs its NULL, RANDOM, and ORACLE reference
+policies directly against `eval/frozen/simulator.py`, with no import of
+`allocator.py` or the fitted hazard model anywhere in it; the allocator's
+own sweep was only re-run afterward):**
+
+Candidate: mean **attempts spent** (a count in `{0,1,2,3}` — retries only,
+slot 1 is given), true `CANT_PAY_NOW` minus true `CANT_PAY_EVER`. Chosen
+over the alternative considered (REAUTH-routing rate conditional on a
+`DEAD`-type signal) because a count is continuous and accumulates —
+it cannot saturate to a single pinned value the way a boolean does — and
+because it is already one of this project's own three headline bars
+(recovered, **attempts spent**, mandates preserved), so scoring well here
+is demonstrably practising the thesis rather than satisfying a bespoke eval
+statistic.
+
+Validated with the null/random/oracle protocol the original clause
+skipped, all three constructed directly against the frozen simulator, 20
+seeds:
+
+| policy | mean gap | sd |
+|---|---|---|
+| NULL (never attempts) | 0.0 exactly | 0.0 |
+| RANDOM (fair coin per retry point, cause- and outcome-blind, never calls the simulator) | -0.015262401928163994 | 0.3108523266763266 |
+| ORACLE (reads true cause; `CANT_PAY_EVER` → 0 attempts, stop; else → attempt every remaining slot to a real terminal outcome or the cap) | ~1.5816 | ~0.0699 |
+
+Oracle − random separation: **1.5969, or 5.14 random-policy standard
+deviations** — wide, clearly resolved daylight between "no information"
+and "perfect information." This candidate has real resolving power;
+`tests/eval/test_gate_criteria.py::test_oracle_policy_clears_the_discrimination_margin`
+pins it so a future change cannot silently collapse that separation again
+without a test noticing.
+
+`DISCRIMINATION_MARGIN` set the same way as the original — random
+baseline's own mean plus one pooled SD (protocol.md's existing "clear one
+pooled SD" convention, reused rather than inventing a new statistic):
+`-0.015262401928163994 + 0.3108523266763266 = 0.29558992474816265`, sitting
+4.25 standard errors from zero against the mean's own 20-seed sampling
+distribution. `ATTEMPT_RATE_FLOOR` (0.25) is untouched — it was never the
+broken clause, and the null policy already fails it trivially regardless
+of what clause 2 measures.
+
+**Only after the above was fixed and validated, `eval/allocator_sweep.py`
+was updated to score `attempts_spent` instead of the boolean and re-run.
+Measured: discrimination gap 0.0412 — a real, non-zero signal (above the
+random baseline's own -0.0153), but well short of the 0.2956 margin, and
+only ~2.6% of the oracle's 1.5816 ceiling.** Not adjusted to pass; reported
+as measured.
+
+**Diagnosed, not left as a bare number.** Per-cause attempt-count
+distribution, one seed:
+
+| true cause | n | mean attempts | distribution (attempts → count) |
+|---|---|---|---|
+| CANT_PAY_NOW | 85 | 1.459 | {0:1, 1:53, 2:22, 3:9} |
+| CANT_PAY_EVER | 34 | 1.412 | {1:24, 2:6, 3:4} |
+| WONT_PAY | 66 | 1.803 | {0:1, 1:26, 2:24, 3:15} |
+
+71% of true-`CANT_PAY_EVER` mandates (24/34) do stop at exactly 1 attempt —
+the mechanism works, most of the time, on this seed. The remainder
+(6 at 2 attempts, 4 at 3) trace to `sim_config.yaml`'s own `base_dead: 0.55`
+for `CANT_PAY_EVER`: a `DEAD` outcome — the only strong signal this
+harness's outcome-to-`DeclineClass` proxy produces — appears on only 55% of
+any given attempt, not every attempt, so on average it takes ~1.8 attempts
+before the informative signal even arrives, and until it does `ATTEMPT`
+remains the economically correct choice given the evidence actually in
+hand. Checked whether the proxy's OTHER mapping (`STILL_PENDING ->
+INSUFFICIENT_FUNDS`, a confident CANT_PAY_NOW-leaning signal on a
+genuinely ambiguous outcome — CANT_PAY_NOW and CANT_PAY_EVER survive an
+attempt at broadly comparable rates per `sim_config.yaml`'s base rates) was
+actively hurting the gap: reran with `STILL_PENDING -> None` (no update at
+all). Mean gap was **unchanged** (0.0412 both ways; sd dropped from
+measured to 0.1356 under the no-op variant, tighter but not materially
+different in mean). So the shortfall is not a proxy-calibration mistake —
+it is the base-rate delay before the one strong signal this harness has
+access to arrives, compared against an oracle ceiling that has none of that
+delay by construction. A real, bounded, explainable gap between "realistic
+evidence-limited policy" and "omniscient oracle," not a defect to keep
+chasing blindly.
+
+**Left open, explicitly, for the human to decide rather than resolved
+solo:** whether 0.0412 against 0.2956 is a finding to report with the gate
+left unticked, whether the margin itself should be re-derived against a
+more realistic reference point than an omniscient oracle (a defensible
+question — 1.5816 assumes zero signal delay, which no evidence-based
+policy can ever achieve — but one that must go through the same
+derive-before-measure discipline as everything above it, not be answered
+by whichever threshold happens to clear), or something else. Not decided
+in this entry.
+
+### 2026-08-29 · B8 · second amendment to the same clause, in the same
+day — approved narrowly, on an objective defect in the reference point,
+not because the first replacement failed
+
+Not presented as a clean history: this is the **second** consecutive
+re-derivation of `DISCRIMINATION_MARGIN` after measuring our own
+allocator against it, in the same session. The human approved proceeding
+only because the specific defect argued was objective and checkable
+before any new number was produced, not because a threshold was
+inconvenient — and set three conditions: derive and validate the new
+reference **before** re-measuring our allocator; pre-commit, in writing,
+before running anything, that a second failure is a finding and the gate
+stays unticked (no third re-derivation); and investigate whether the
+55%-per-attempt `DEAD` rate was a property of the frozen simulator or an
+artifact of the eval harness discarding signal, since that could make the
+whole amendment moot.
+
+**Pre-commitment, written before running the validation below:** if the
+allocator fails whatever margin survives this entry's validation, B8's
+gate stays unticked and this is reported as a finding. There will not be
+a third re-derivation of this clause in this session.
+
+**Investigation (condition 3), answered first:** the 55% `base_dead` rate
+for `CANT_PAY_EVER` is `sim_config.yaml`'s own generative parameter,
+constant across retries (no `retries_so_far` adjustment for
+`CANT_PAY_EVER`, unlike `WONT_PAY`'s optout, which does escalate).
+`AttemptResult` carries exactly one signal field relevant here (`outcome`;
+`iatrogenic_insufficient_funds` is coupled-arm-only) and `SimMandate`'s
+other fields (`amount_paise`, `category`) are drawn independent of cause.
+No richer channel exists for the harness to have discarded. Confirmed by
+reading the config and both dataclasses directly, not by inference. The
+amendment is not moot.
+
+**The defect in the first replacement's reference point, stated
+precisely:** `DISCRIMINATION_MARGIN` is a *margin* — a comparative claim
+about how much better a real policy does than blind chance — and its
+reference ceiling must be something a policy *constrained the way ours is*
+could plausibly approach. The oracle used (`test_oracle_policy_clears_
+the_discrimination_margin`, prior entry) reads `initial_cause` directly
+and sets `CANT_PAY_EVER`'s attempts-spent to exactly 0 by fiat — it never
+attempts, never waits for evidence, never faces the delay every real
+policy in this project must face. That is not "a hard bar," it is a
+different question answered instead of the one the clause needs answered.
+A *floor* tripwire may legitimately reference an unreachable ideal (that
+is exactly what makes it a tripwire); a *margin* must reference something
+reachable, or every real policy fails it by construction regardless of
+quality.
+
+**Corrected reference, derived and its value computed BEFORE this
+allocator's score was consulted for this amendment** (the scratch
+validation script constructs the reference using only
+`eval.frozen.simulator`'s own `_logits_from_base_rates`/`_softmax`
+helpers — reused verbatim, not reimplemented, to remove transcription risk
+— with no import of `allocator.py` or the fitted hazard model; the
+already-known 0.0412 figure from the first replacement was not used to
+shape this definition):
+
+**Constrained-reference policy** — belief starts at the uniform prior,
+identical to our allocator. On each attempt, updates via **exact** Bayes
+using the simulator's own true `P(outcome | cause, context)` — no
+`DeclineClass` proxy, no approximation, the opposite end of the
+information spectrum from `eval/allocator_sweep.py`'s harness. Stops
+attempting as soon as `dominant() == CANT_PAY_EVER` (identical decision
+rule to the allocator's own `REAUTH` gate — this isolates exactly one
+variable: realistic signal delay vs. the harness's crude proxy). Still
+faces the real stochastic delay: `DEAD` still only arrives 55% of the time
+per attempt for a true `CANT_PAY_EVER` mandate, same as it does for our
+allocator.
+
+**Result: mean gap −0.0144 (sd 0.1491), 20 seeds.** Statistically
+indistinguishable from the random baseline's −0.0153 (sd 0.3109) — the two
+are well within a fraction of either standard deviation of each other.
+
+**This is not what was expected going in, and it changes the finding
+substantially. Investigated rather than accepted at face value — the
+result held up under scrutiny, and the reason is structural, not a bug in
+the reference construction:**
+
+`E[attempts spent]` under ANY policy that must wait for a real terminal
+event is dominated by **how fast some terminal outcome occurs at all**,
+not by which one. `sim_config.yaml`'s own per-attempt terminal rates are
+broadly comparable across causes — `CANT_PAY_NOW` terminates fast via
+`RECOVERED` (base rate 0.35, boosted further in the salary window);
+`CANT_PAY_EVER` terminates fast via `DEAD` (0.55). Both cohorts stop
+accumulating attempts at a similar pace; they just stop for opposite
+reasons. A metric built on raw attempts-spent cannot see *why* a cohort
+stopped, only *that* it did — so it inherits almost none of the real
+discrimination this project's thesis is actually about. The original
+zero-delay oracle's 1.5816 was high specifically because it let
+`CANT_PAY_EVER` skip this dynamic entirely (0 attempts, by fiat); once
+forced to wait for the same evidence any real policy waits for, the
+ceiling collapses to noise.
+
+**Checked directly whether this generalises past "mean attempts spent"
+specifically, rather than assumed:** re-ran the current
+(`DEAD`-terminal-fixed) `eval/allocator_sweep.py` sweep and counted
+`Action.REAUTH` firings directly. **Zero, across 901 mandates (5 seeds).**
+The 12/34 `REAUTH` firings reported in the prior entry were entirely an
+artifact of a bug fixed earlier the same session (re-attempting after a
+`DEAD` outcome, which let a `DEAD`-driven belief update trigger a
+follow-up decision that should never have existed — see the
+`committable_days` / DEAD-terminal fixes above). Once `DEAD` is correctly
+treated as terminal, there is no decision point *after* observing it
+within the same cycle — the one strong signal this simulator produces
+ends the episode at the moment it arrives. `REAUTH`'s only remaining path
+to fire is off the weakly-informative `STILL_PENDING` signal (survival
+odds ~0.60 `CANT_PAY_NOW` vs ~0.40 `CANT_PAY_EVER` — a real but mild tilt,
+already shown in the prior entry's no-op check to move the mean
+negligibly) or off belief carried over from a **previous cycle's**
+outcome — a mechanism this single-cycle-scoped eval harness never
+exercises at all, since every mandate here is scored on exactly one cycle
+in isolation.
+
+**This is a structural finding about the eval harness's scope, not just
+about which formula scores it, and it goes beyond what the human
+pre-authorised (trying a REAUTH-conditional-on-`DEAD` candidate) — that
+candidate would score as trivially degenerate given the finding above (a
+`DEAD` observation can never be followed by a further attempt in this
+harness, by construction, for any policy), so trying it would not answer
+anything.** Not resolved solo. Per the pre-commitment above, this is
+reported as a finding; B8's gate stays unticked. Left for the human,
+explicitly: whether the eval harness needs to model belief carrying over
+across cycles for the same mandate before this clause (in any formulation
+tried so far) can measure what the allocator's `REAUTH` gate was actually
+designed to do, or whether the thesis itself needs restating for what a
+single retry cycle can honestly demonstrate.
+
+### 2026-08-30 · B8 · scoping (not implementing) what closing the
+structural gap above would actually take
+
+Asked for, and this is: a sized writeup of options, no code, so the next
+session (or this one, with fresh direction) can decide from something
+concrete rather than an abstract "model cross-cycle belief" gesture.
+
+**Two distinct candidate evidence sources exist for "what could inform
+belief before slot 2 is ever decided" — checked separately, because they
+have different costs and it matters which one (if either) is real:**
+
+**(a) A previous billing cycle's own resolution.** A mandate that died last
+cycle is presumably still dead this cycle; that carryover is what would let
+`REAUTH` fire *before* wasting a slot-2 attempt. Checked directly against
+`eval/frozen/simulator.py`: `_generate_mandates()` hard-codes
+`cycle_id=1` for every mandate (line 186, literal, not derived), and
+`mandate_id=f"M{i:04d}"` is a flat per-index label with no relationship to
+any other mandate. **There is no multi-cycle generation in the frozen
+simulator at all** — not a missing parameter, an absent mechanism. Every
+`Simulator("nominal", seed=N)` call produces `n_mandates` structurally
+independent single-cycle draws, full stop.
+
+**(b) Slot 1's own decline reason.** In a real deployment, the very first
+attempt would return a real issuer decline string immediately — B9's
+executor would normalise it and update belief before slot 2 is ever
+planned. Checked against the same file's own module docstring, not
+inferred: *"Every mandate entering this simulator has already had its
+slot-1 (original) attempt fail — that failure is what puts a mandate into
+a recovery system in the first place. Only slots 2/3/4 ... are simulated
+as decisions; slot 1 is given."* This is a **deliberate, pre-registered**
+design choice (frozen at B2, before B7's `DeclineClass`/belief machinery
+existed to consume such a signal at all), not an oversight — and
+`Simulator.attempt()`'s own signature enforces it (`slot not in (2,3,4)`
+raises). The simulator has no path to produce a slot-1 decline reason,
+ever.
+
+**Both are blocked by the same wall, for related but distinct reasons: one
+is a missing generation mechanism, the other is a deliberate scope
+boundary set two blocks before the belief layer that would consume it
+existed.** Neither is a small harness-side fix — both terminate at
+`eval/frozen/`, which `guard_frozen.py` denies editing, by design, with
+its only sanctioned exception being a human editing outside a Claude Code
+session and logging why (`gates.md`, B2 entry) — not something to reach
+for mid-session, and not attempted here.
+
+**Options, sized honestly, not ranked by preference:**
+
+1. **Extend the frozen simulator** (draw a next cycle after a prior one
+   resolves, and/or emit a slot-1 decline reason) via the human escape
+   hatch. Highest cost: invalidates the pre-registration every downstream
+   gate was measured against, requires re-running and re-justifying B5's
+   "beats the ladder" fits, B6's conformal coverage, and this session's
+   own oracle/random baselines against the new generative story. Not a
+   same-session decision regardless of who makes the edit.
+
+2. **Harness-side chaining**: approximate cross-cycle carryover in
+   `eval/allocator_sweep.py` (not frozen, freely editable) by stitching
+   together independently-drawn `SimMandate`s as if they were one
+   customer's successive cycles. Runs into a real mechanical snag beyond
+   the modelling question: `Simulator.attempt()`'s own state tracking
+   (`last_slot_seen`, slot restricted to `{2,3,4}`) has no reset hook for
+   "new cycle, same customer" — approximating one honestly would mean
+   reimplementing outcome-drawing logic outside the `Simulator` class
+   using `sim_config.yaml`'s hazard numbers directly, which is no longer
+   testing "the frozen simulator's behaviour," it is testing a
+   parallel, hand-rolled approximation of it that could silently drift
+   from the pre-registered story. Medium cost, real risk to the
+   pre-registration's own credibility if not built and reasoned about
+   carefully.
+
+3. **Reconsider whether this simulator was ever the right instrument for
+   this specific claim.** Its own docstring says what it is for: testing
+   the allocator's scheduling/constraint-compliance exactness over
+   already-failed mandates, frozen at B2 before the cause-taxonomy and
+   belief layers (B7) existed. The richer signal `REAUTH` actually needs
+   — an immediate, per-attempt decline reason — is exactly what B3's real
+   ingest path and B11's normaliser were built to carry, over real
+   Razorpay test-mode data, not synthetic data this simulator was
+   pre-registered to produce. This reframes B8's discrimination gate as a
+   question for a *different* evidence source (real test-mode declines)
+   rather than a formula or generator change — lowest mechanical cost, but
+   the biggest reframing of what B8's own gate is allowed to be measured
+   against, and not a call to make without the human weighing in on
+   whether that satisfies what the gate was meant to prove.
+
+**Not decided here.** Two consecutive gate amendments and this scoping
+pass all point the same direction: the shortfall was never in the
+formula. Recorded as three sized options, not a recommendation.
+
+### 2026-08-30 · B8 · gate CLEARED — the missing slot-1 signal, two
+belief-consistency fixes to the allocator, and the reference-point
+correction. Threshold NOT moved.
+
+Resolved with option A+B from the scoping entry above. Sequence recorded
+in the order it happened, including the two places the allocator itself
+was changed, because one of those changes HELPED the gate and that must
+not be discoverable only by reading a diff.
+
+**1. Root cause, stated properly.** Information has decision value only if
+it can change an action taken BEFORE the outcome is revealed. This harness
+had no such moment: belief started uniform at every first decision, and
+the only strong signal (`DEAD`, 0.55 vs 0.02 per attempt) arrives
+*simultaneously with episode termination* — so "stop retrying a dead
+instrument" was free, and no policy could earn credit for it. That is why
+all three metric formulations measured ~0, and why a fourth would have
+too.
+
+**2. The slot-1 decline signal (option A).** The frozen simulator does not
+emit one — its own docstring records that slot 1 is "given," a scope
+boundary set at B2 before the belief layer existed. But that decline
+reason is the entire premise of the system. `eval/allocator_sweep.py` now
+reconstructs it using ONLY frozen parameters:
+
+- **Emission**: `P(slot-1 failure mode | cause)` read from
+  `sim_config.yaml`'s own hazards via the simulator's own
+  `_logits_from_base_rates`/`_softmax` (imported, not reimplemented),
+  conditioned on the two modes that can put a mandate into recovery.
+  Measured: `CARD_EXPIRED` at **57.9%** for true `CANT_PAY_EVER` vs
+  **3.2%** / **3.5%** for `CANT_PAY_NOW` / `WONT_PAY`.
+- **Inference**: the allocator inverts through `src/classify/cause_map.py`
+  — a *separate*, hand-authored table with no relationship to those
+  numbers. Independence is the point: belief after `CARD_EXPIRED` is 0.75
+  on `CANT_PAY_EVER`, never 1.0, and 0.75 is not the 0.896 exact Bayes
+  would give. The allocator remains realistically miscalibrated and can
+  still be wrong in both directions.
+- RNG stream `seed + 500_000`, independent of the simulator's own, so
+  adding the signal cannot perturb any previously reported outcome draw.
+
+Nothing under `eval/frozen/` was modified.
+
+**3. The post-terminal decision (option B).** The harness previously
+`break`-ed on a terminal outcome without ever asking the allocator what to
+do next — never recording the `CANT_PAY_EVER -> REAUTH` action that lane
+exists to produce. It now asks once more, with the terminal observation
+folded into belief, and records the decision without executing further
+debit.
+
+**4. Allocator change #1 — REAUTH belief-weighting. Requested on safety
+grounds; makes the gate HARDER.** `Q(REAUTH)` did not depend on belief at
+all, so `b.dominant() == CANT_PAY_EVER` fired on a bare plurality as thin
+as (0.34, 0.35, 0.31). Re-authorisation only recovers money if the
+instrument is genuinely dead, so its recovery term is now weighted by
+`b[CANT_PAY_EVER]`. The confidence required EMERGES from the economics
+rather than from a hand-picked threshold — no new constant, so
+`src/policy/CLAUDE.md`'s "cite a clause or put it in a config file" rule
+is not engaged, and this project's thrice-rejected tuning-dial pattern
+(B5's stop-threshold scalar, the paired-criterion reversal, B7's
+`switch_eps`) is not repeated. The AFA-cliff path is deliberately NOT
+discounted: above the AFA-free limit re-authorisation is the only legal
+route (clause 8(a)/8(b)), and discounting a legal requirement by a belief
+would be a category error. Asymmetric by design, matching
+`cause_map.py`'s established posture: mistaking `CANT_PAY_EVER` for
+`CANT_PAY_NOW` costs one retry slot; the reverse costs a customer.
+
+**5. Allocator change #2 — ATTEMPT belief-discounting. This one HELPED the
+gate, was flagged as such BEFORE being applied, and was applied only on
+explicit approval.** After change #4 the allocator was internally
+incoherent: `REAUTH` was belief-weighted while `ATTEMPT` was not, so one
+comparison used two different beliefs. Concretely, on a real mandate it
+believed 0.75-dead, it still valued `Q(ATTEMPT)=398,080` against
+`Q(REAUTH)=233,157` and burned a retry slot — because the marginal hazard
+reports population-average `P(RECOVERED)=0.3017` regardless of belief.
+`eval/frozen/protocol.md` names "a wasted attempt on a dead instrument" as
+exactly what the attempts-spent bar exists to penalise.
+
+Fix: scale ONLY `ATTEMPT`'s recovery term by `(1 - b[CANT_PAY_EVER])`.
+The justification is **definitional, not fitted**: root `CLAUDE.md`
+defines `CANT_PAY_EVER` as "Instrument dead — expired card, closed
+account, revoked mandate," so `P(RECOVERED | CANT_PAY_EVER) ~ 0` follows
+from what the cause MEANS. No `P(outcome | cause, ...)` is estimated, no
+coefficient fitted, no constant introduced — so this does NOT reopen the
+cause-conditioned-hazard gap (2026-08-29, B7). Opt-out risk and the
+continuation value are deliberately left undiscounted: a dead instrument's
+holder can still opt out, and the survival branch is already the
+"nothing terminal happened" case.
+
+**6. Reference-point correction — the threshold itself did NOT move.** The
+zero-delay oracle used to validate the first replacement (~1.5816) was
+withdrawn as the wrong reference for a *margin*: it never waits for
+evidence, so it cannot bound what an evidence-based policy can achieve. It
+is replaced by a delayed-evidence reference policy (best achievable
+inference under the same observations and the same delay): **mean gap
+0.8329**, separation from random **2.73 random-SDs** — ample resolving
+power. `DISCRIMINATION_MARGIN` is **bit-identical to before** (0.29558992474816265):
+it is derived from the RANDOM baseline, which ignores the slot-1 signal by
+construction, so its numbers do not move. **The harness was fixed; the bar
+was not.** The 2026-08-29 pre-commitment (no third re-derivation of the
+threshold) is therefore honoured literally, not just in spirit.
+
+**7. Measured, only after all of the above was in place:**
+
+| profile | attempt rate | floor | discrimination | margin | violations |
+|---|---|---|---|---|---|
+| strict | 0.8266 | 0.25 OK | **0.9048** | 0.2956 OK | 0 |
+| permissive | 0.8266 | 0.25 OK | **0.9048** | 0.2956 OK | 0 |
+
+Per-cause behaviour (seed 0), which is the finding that actually matters:
+
+| true cause | n | mean attempts | REAUTH | zero-attempt |
+|---|---|---|---|---|
+| CANT_PAY_NOW | 85 | 1.388 | 4 | 5 |
+| CANT_PAY_EVER | 34 | **0.529** | **19** | 19 |
+| WONT_PAY | 66 | 1.848 | 1 | 2 |
+
+56% of truly-dead instruments now go straight to re-authorisation spending
+**zero** retries. **The safety cost is explicit and must be reported with
+the headline: 4 of 85 true-`CANT_PAY_NOW` mandates (4.7%) were routed to
+REAUTH incorrectly** — a recoverable customer sent through an auth flow.
+That is the false-off-ramp-analogue error this project committed to
+reporting alongside missed recovery, and it is the price of the asymmetry
+in #4/#5.
+
+**Honest caveat on 0.9048 exceeding the 0.8329 reference.** These are not
+nested policies and neither dominates: the reference has BETTER inference
+(exact Bayes, 0.896 on `CANT_PAY_EVER` after `CARD_EXPIRED`) but a CRUDER
+stopping rule (plain dominance); ours has worse inference (cause_map's
+0.75) but a belief-weighted economic rule that can decline to attempt
+before dominance flips. 0.8329 is one reference policy's value, **not a
+proven supremum over all policies**, and must not be described as "we beat
+perfect inference." Corrected wording is in
+`eval/gate_criteria.py`'s docstring and the test's own docstring.
+
+**Not a clean history, deliberately.** This clause went: original
+attempt-rate boolean (structurally unmeasurable) -> attempts-spent with a
+zero-delay oracle reference (metric sound, reference wrong) -> attempts-
+spent with a delayed-evidence reference and a harness that finally
+supplies the evidence the system's premise assumes (threshold unchanged
+throughout the last two). Two of those three steps were prompted by our
+own allocator failing, which is exactly the pattern that warrants
+suspicion; what makes the outcome defensible is that the threshold never
+moved after it was first derived, both required-fail cases still hold, and
+the one change that helped the gate was flagged and approved before being
+made rather than discovered afterward.
