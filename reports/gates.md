@@ -77,7 +77,7 @@ written and its gate unmet counts as zero.
            B7 design decisions (likelihood inversion, overconfidence
            disclosed not damped, cause-conditioned-hazard Protocol) in
            DECISIONS.md, 2026-08-29. Does not touch eval/frozen/. -->
-- [ ] **B8** ★ allocator + stopping + off-ramp: 2-slot brute-force equivalence test passes; zero constraint violations across the eval; both profiles produce numbers
+- [ ] **B8** ★ allocator + stopping + off-ramp: 2-slot brute-force equivalence test passes; zero constraint violations across the eval, with an attempt rate on AFA-eligible mandates ≥ `eval.gate_criteria.ATTEMPT_RATE_FLOOR` (0.25) AND a mean discrimination gap (true-CANT_PAY_NOW attempt rate minus true-CANT_PAY_EVER attempt rate, seeds 0-19) exceeding `DISCRIMINATION_MARGIN` (~0.0808) -- the null policy must fail the first, a uniform-random policy at the floor rate must fail the second, both proven by test (`tests/eval/test_gate_criteria.py`); both profiles produce numbers
       <!-- flagged at B4, 2026-08-28, from stats-reviewer's B4 finding 4: the
            allocator MUST apply src.policy.constraints.afa_free_limit_paise()
            before ever consulting the hazard model, routing any above-cliff
@@ -102,8 +102,37 @@ written and its gate unmet counts as zero.
            gating (REAUTH when CANT_PAY_EVER dominant, OFFER on a singleton
            conformal set) rather than the hazard arithmetic itself. Decide
            and record the reasoning here when B8 answers it. Full writeup:
-           DECISIONS.md, 2026-08-29, B7. Does not touch eval/frozen/. -->
-- [ ] **B9** ★ executor + idempotency: keys test passes (no clock/uuid/pid); **an opt-out arriving inside the 24h window is honoured**; `UNCONFIRMED` has a resolution path that is actually reachable
+           DECISIONS.md, 2026-08-29, B7. Does not touch eval/frozen/.
+           2026-08-29, vacuous-checks audit: this gate's original text --
+           "zero constraint violations across the eval" -- is trivially
+           satisfiable by an allocator that never attempts anything (B5's
+           null-policy finding, DECISIONS.md 2026-08-28, recurring here).
+           Amended, before any allocator code exists, to add an attempt-
+           rate floor and a discrimination-margin clause, both derived
+           from the frozen simulator's own generative parameters (seeds
+           0-19) rather than chosen by hand, and both proven to reject a
+           real failing case by test, not asserted. Original headline
+           text: "★ allocator + stopping + off-ramp: 2-slot brute-force
+           equivalence test passes; zero constraint violations across the
+           eval; both profiles produce numbers." New text is the gate
+           line above. Full derivation, including 48.86% (the true
+           CANT_PAY_NOW fraction) measured and DELIBERATELY REJECTED as
+           the floor value in favour of 25%, and the uniform-random
+           baseline simulation the discrimination margin is derived from:
+           DECISIONS.md, 2026-08-29, two entries, "B8 gate amended" and
+           "B8 gate floor lowered." Constants live in
+           `eval/gate_criteria.py`, not restated here. Does not touch
+           eval/frozen/ -- gate_criteria.py is a new file under `eval/`,
+           outside the frozen directory. -->
+- [ ] **B9** ★ executor + idempotency: keys test passes (no clock/uuid/pid); **an opt-out arriving inside the 24h window is honoured — proven by a test that actively constructs the race** (commits an attempt, then delivers a late opt-out event inside that window, and asserts the attempt is aborted — not merely a test that happens never to generate one); `UNCONFIRMED` has a resolution path that is actually reachable
+      <!-- 2026-08-29, vacuous-checks audit: strengthened from "an opt-out
+           arriving inside the 24h window is honoured" -- a test that
+           simply never generates a late opt-out would satisfy that text
+           by construction, without ever exercising the actual race. No
+           executor code exists yet; this amendment is made before B9
+           starts, the same standard as the other gate amendments this
+           block. Full reasoning: DECISIONS.md, 2026-08-29. -->
+
 - [ ] **B10** chaos: 50 induced kills; zero double-charges; zero lost jobs; ledger complete; **the denominator is reported** — how many kills landed inside the unsafe window
 - [ ] **B11** ∥ LLM edge + golden set: golden set passes; no LLM import in core; normaliser output is versioned in the ledger before it can touch a belief
 - [ ] **B12** ∥ benchmark + shadow: benchmark table in DECISIONS.md including the variance column; shadow mode produces a delta log over the full batch

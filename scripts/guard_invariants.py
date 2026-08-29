@@ -130,15 +130,24 @@ def main() -> int:
         paths, source = resolve_paths()
 
     if not paths:
-        # Never silently pass. If the hook could not see its input, say so
-        # loudly rather than exiting 0 and implying everything is fine.
+        # Never silently pass. Previously returned 0 here despite this
+        # comment already saying not to -- the intent was right, the
+        # return value contradicted it (found in the 2026-08-29 vacuous-
+        # checks audit, DECISIONS.md). Confirmed empirically the same day:
+        # a genuine violation's exit-2 stderr surfaces fully as a
+        # PostToolUse:Write hook message; there is no equivalent proof
+        # exit 0 would have been seen at all, and the Stop hook's own
+        # documented contract (exit 0 -> debug log only, never shown) is
+        # the same family of risk. Exit 2 here now, so "nothing was
+        # checked" gets the same loud treatment as "a violation was found"
+        # rather than being the one path that stays quiet.
         print(
             "guard_invariants: no files resolved (argv/env/stdin/git all empty). "
             "Nothing was checked. If this repeats, the hook is not wired correctly "
             "-- run: python scripts/guard_invariants.py --all",
             file=sys.stderr,
         )
-        return 0
+        return 2
 
     problems = [f"{norm(p)}: {msg}" for p in paths for msg in check(p)]
 

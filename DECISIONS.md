@@ -2238,3 +2238,327 @@ No fixture-architecture rewrite was required, matching the instruction not
 to do one unless (1) and (3) showed it was genuinely necessary -- they
 showed the opposite: a fixture-architecture rewrite would have spent
 effort solving a problem two much smaller, targeted fixes already solved.
+
+### 2026-08-29 · infra · Stop hook wired: declined at 656s, wired at 21.59s -- the sequence, not just the outcome
+
+Two entries above, this session first declined a `Stop` hook: "a slow
+session-end check gets bypassed within two days," revisit if `test-fast`
+ever dropped under 30s. The very next entry dropped it to 21.59s, in the
+same session. Asked to honour the pre-stated trigger rather than argue
+around it after the fact -- done, not re-litigated.
+
+**The literal command specified did not actually satisfy its own stated
+requirement.** Verified against Claude Code's hooks reference before
+wiring anything (not inferred): a `Stop` hook is blocking, and its stderr
+shown to Claude, **only on exit code 2 specifically** -- every other
+non-zero exit is silently non-blocking, the same family of risk as every
+other finding in this session's vacuous-checks audit. `pwsh -NoProfile
+-File run.ps1 ci` fails this two ways, both checked empirically, not
+assumed:
+
+1. **`pwsh` does not exist on this machine at all** (`where pwsh` -> no
+   match; only `powershell.exe` 5.1 is installed, confirmed directly).
+   The hook would fail on "command not found" before ever reaching `ci`.
+2. **`ci`'s own exit code on a real failure is not 2.** Forced a genuine
+   test failure and confirmed pytest exits **1**, which `run.ps1 ci`
+   propagates unchanged (`Invoke-Step`'s `exit $LASTEXITCODE`). Per the
+   verified contract, exit 1 is non-blocking -- Claude is never told, and
+   the turn ends anyway, exactly the vacuous-check pattern this audit
+   exists to catch.
+
+**Fix: `scripts/stop_hook_ci.ps1`**, a thin wrapper, not a fixture/`ci`
+rewrite. Reads stdin for `stop_hook_active` and exits 0 immediately on a
+repeat (avoids spending Claude Code's own 8-block cap re-running an
+already-known-broken `ci`). Spawns `run.ps1 ci` as a **genuinely separate
+process** via `powershell.exe -NoProfile -File` -- not `& $runPs1 ci`
+in-process, which was tried first and found broken: `Invoke-Step`'s `exit
+$LASTEXITCODE` on a failing step would terminate the wrapper's own process
+in-process, before the translation logic below it ever ran. On `ci`
+success: exit 0. On `ci` failure: **exit 2** with the real failure detail
+on stderr -- the one code the verified contract actually blocks on.
+`run.ps1 ci` itself is untouched; the translation lives only in the
+wrapper, so every other caller (`/verify-invariants`, a human at the
+terminal) still sees `ci`'s real, meaningful exit code.
+
+**Both paths tested manually before wiring into `.claude/settings.json`:**
+success path, piping `{}` on stdin, exit 0 in ~31s (a real `ci` run, not
+short-circuited). Failure path, with a deliberately failing probe test:
+exit **2**, stderr showing `ci failed (exit 1) -- fix before ending this
+session:` followed by pytest's real failure output. Probe test removed
+immediately after, confirmed via `git status`.
+
+**Requirement #1 (must actually fire, shown to the human) is confirmed by
+this session ending** -- the hook fires on every `Stop` event, including
+the one that closes this response. Nothing further to demonstrate from
+inside the session that triggers it.
+
+### 2026-08-29 · infra · PostToolUse empty-input visibility resolved empirically: exit 2 is loud, guard_invariants now returns 2 not 0 on empty input
+
+Highest-severity unknown from the vacuous-checks audit: does
+`guard_invariants.py`'s "no files resolved" warning (previously exit 0)
+actually reach anyone, or is it swallowed the way a `Stop` hook's exit-0
+stdout is (confirmed the same session, entry above)?
+
+**Resolved empirically, not from docs, as asked.** Wrote
+`src/model/_scratch_probe.py` containing `import anthropic` -- a real
+invariant 1 violation -- via the Write tool, letting the real `PostToolUse`
+hook fire for real. Its stderr **appeared in full**, unambiguously, as a
+"PostToolUse:Write hook blocking error" message quoting the exact
+violation text. The write itself was not undone -- confirms exit 2 is
+loud but not destructive for this hook type. Probe file deleted
+immediately after, confirmed via `git status`.
+
+This does not, by itself, prove exit 0 is swallowed (the empty-input path
+is a different exit code and could not be forced through a normal
+Edit/Write -- `hookio.py`'s git-diff fallback means the empty-input branch
+is a defensive rare case, not something that fires on ordinary edits with
+a dirty working tree). The decision to change it anyway rests on: (a) the
+now twice-confirmed pattern across two hook types (`Stop`: exit 0 -> debug
+log only, never shown; `PostToolUse`: exit 2 -> shown in full, just
+demonstrated) makes exit 0 the consistently risky code across this
+project's hooks; (b) `guard_invariants.py`'s own existing comment already
+said "never silently pass... say so loudly rather than exiting 0" --
+the code just didn't match its own stated intent; (c) a false-fail (loud
+when it didn't strictly need to be) is a categorically safer failure mode
+here than a false-pass (the primary guard silently examining nothing on
+every edit).
+
+**Fix:** `guard_invariants.py`'s empty-input branch now returns 2, both
+for the bare (`PostToolUse`) path and `--all`. Regression-tested directly
+(`tests/scripts/test_guard_invariants.py`, 3 tests): empty input exits 2
+in both modes; a real, clean, resolvable file still exits 0 -- confirms
+the fix is scoped to the empty case, not an overcorrection.
+
+### 2026-08-29 · infra · Three more audit fixes: live-key scan, checkpoint.py's swallowed returncode, verify-invariants exit-code assertions
+
+Three more of the four items authorized from the same audit, each
+mechanical once diagnosed:
+
+**Live-key scan, two locations.** `run.ps1 lint` and `verify` check 3 both
+printed a clean pass when `Get-ChildItem` resolved zero files -- the
+security check meant to be hardest to fool was the easiest, in two
+places sharing the same shape. Both now assert a non-zero file count
+before trusting an empty `$hits`/`$lk`; both now also report the file
+count on success (`"no live keys: OK (242 files scanned)"`), so a passing
+run states what it actually examined rather than a bare "OK."
+
+**`checkpoint.py::sh()` never checked `returncode`.** A genuine pytest
+crash (no parseable "passed"/"failed"/"error" line anywhere in its output)
+and a merely-slow run produced the identical benign message: `"{n}
+collected, run inconclusive."` `sh()` now returns `(stdout, returncode)`;
+every call site updated. `test_status()` now distinguishes: no parseable
+summary AND non-zero returncode -> `"TEST RUN FAILED (exit N): <last
+line>"`; no parseable summary but returncode 0 (genuinely still running
+long, not crashed) -> the original "run inconclusive" wording, now
+actually meaning what it says. Verified both branches by monkeypatching
+`sh()` directly (forcing a real pytest crash to order was impractical) --
+a simulated `INTERNALERROR` correctly surfaces as `TEST RUN FAILED (exit
+3): INTERNALERROR> some plugin crashed`; a simulated subprocess exception
+(`sh()`'s own except-branch shape, `("", 1)`) correctly surfaces as `TEST
+RUN FAILED (exit 1): (no output captured)`.
+
+**Marker drift fixed in the same pass.** `checkpoint.py::test_status()`
+hard-coded `-m "not chaos"`, missing `"and not slow"` -- its own reported
+test count silently diverged from what `test-fast`/`ci` actually run.
+Fixed by threading `run.ps1`'s `$TestFastFilter` through as `checkpoint.py`
+argv[2] (a `DEFAULT_TEST_FILTER` constant remains for standalone
+invocation, explicitly commented as a fallback whose text must be kept in
+sync by hand, not the source of truth). Confirmed: before the fix,
+checkpoint reported "537 passed" with the slow-marked conformal test
+silently included; after, "539 passed, 1 deselected" (539 = 536 + the 3
+new `test_guard_invariants.py` tests added this session), matching
+`test-fast`/`ci`'s selection exactly.
+
+**`/verify-invariants` steps 1, 3, 4 had no exit-code assertion in the
+skill's own text.** Relied on the operator noticing -- "the exact pattern
+this audit was looking for," per the instruction. All three now state the
+required exit code explicitly in `SKILL.md` (step 1 and 3: must exit 0;
+step 4: must exit 0), each with a one-line note on what a pass now also
+guarantees (step 1: empty input is a failure too, per the entry above;
+step 3: the live-key scan's own file count, per the entry above).
+
+### 2026-08-29 · infra · Remainder of the vacuous-checks audit: known and accepted for now, not fixed
+
+Explicitly left alone this session, per instruction -- logged so the
+choice not to act is a decision, not an oversight:
+
+- **`test`/`test-fast`'s exit-5 partial protection.** A filter matching
+  zero tests makes pytest exit 5 (non-zero, so a caller checking
+  `$LASTEXITCODE` is protected), but nothing prints a distinct failure
+  banner the way `Invoke-Step`'s tasks do -- the visual signal is real but
+  easy to miss reading raw scrollback. Accepted: `ci`'s own tests step
+  *is* wrapped in `Invoke-Step` and would still hard-fail correctly; only
+  the bare, unwrapped `test`/`test-fast` invocations carry this residual
+  risk.
+- **`slow`/`chaos` marker scope drift.** Nothing asserts the *count* of
+  tests carrying either marker stays sane -- a future session mismarking
+  an entire file `slow` would silently shrink `test-fast`'s real coverage
+  with no alarm.
+- **`eval`'s ungated sequencing.** `eval.run` and `eval.report` run as two
+  bare, unconditional commands with no exit-code gate between them --
+  irrelevant today (`eval.run` doesn't exist, so it crashes loudly every
+  time before `eval.report` gets a chance to run against stale or
+  non-existent input), but latent once B13 builds both files for real.
+  **Fixed at B13**, when that harness actually exists to gate -- not
+  speculatively now, against a file that isn't written yet.
+
+### 2026-08-29 · B8 gate amended · "zero constraint violations" was vacuously satisfiable by an allocator that never attempts anything
+
+From the vacuous-checks audit, same day: B8's gate is B5's null-policy
+finding (2026-08-28) recurring in the block about to start. "Zero
+constraint violations across the eval" is trivially true of a policy that
+takes no action at all -- an allocator that never attempts violates
+nothing, by never doing anything. Amended before any allocator code
+exists (`src/policy/allocator.py` does not exist; nothing under
+`src/policy/` implements backward induction yet), the same standard as
+every previous gate amendment this project has made.
+
+**Original text** (`reports/gates.md`, unchanged since PLAN_DETAIL.md v2):
+
+> "★ allocator + stopping + off-ramp: 2-slot brute-force equivalence test
+> passes; zero constraint violations across the eval; both profiles
+> produce numbers"
+
+**Two clauses added**, both derived from the frozen simulator's own
+generative parameters rather than chosen by hand:
+
+1. **An attempt-rate floor** -- the allocator must attempt on at least a
+   stated minimum fraction of AFA-eligible mandates. A null policy attempts
+   0%, failing trivially.
+2. **A discrimination clause** -- the allocator's mean attempt rate on
+   true `CANT_PAY_NOW` mandates must exceed its mean attempt rate on true
+   `CANT_PAY_EVER` mandates (ground truth, eval-only, never read by the
+   allocator under test) by a stated margin. Added because clause 1 alone
+   is vacuous in a subtler way: a policy attempting the floor fraction
+   *uniformly at random*, ignoring cause entirely, clears it while
+   demonstrating nothing this project's thesis claims. This is the clause
+   that actually tests the thesis -- that knowing WHY a payment failed
+   changes what you do.
+
+**First floor value proposed and computed, seeds 0-19** (matching
+`protocol.md`'s own "beats the ladder" seed sweep), using `Simulator` +
+`src.policy.constraints.afa_free_limit_paise()` -- the same AFA-cliff
+filter B8's gate already requires the allocator apply before consulting
+any model:
+
+| | count | fraction |
+|---|---|---|
+| Total mandates (200 x 20 seeds) | 4000 | -- |
+| AFA-cliff excluded (routes to REAUTH, never ATTEMPT) | 398 | 9.95% |
+| AFA-eligible remainder | 3602 | -- |
+| -- true `CANT_PAY_NOW` (correct action: ATTEMPT, unambiguous) | 1760 | **48.86%** |
+| -- true `CANT_PAY_EVER` (correct action: REAUTH) | 765 | 21.24% |
+| -- true `WONT_PAY` (correct action: OFFER, not live at B8 -- B6's `FullSetGate` stub) | 1077 | 29.90% |
+
+Identical across all three frozen arms -- `cause_mix`/`amount_paise` are
+shared in `sim_config.yaml`; only the link function and coupling differ.
+
+Proposed initially: floor = 48.86%, the exact measured `CANT_PAY_NOW`
+fraction. **Rejected before implementation** -- see the next entry, same
+day, for why, and for the value actually used.
+
+### 2026-08-29 · B8 gate floor lowered to 25%, discrimination margin added and derived · sequence recorded, not just the outcome
+
+**The 48.86% floor proposed in the entry above was rejected on review,
+before any code was written against it.** Reason: the allocator does not
+observe cause, only a belief. It will never partition its attempts at
+exactly the true `CANT_PAY_NOW` fraction. A correct policy that declines a
+handful of true-`CANT_PAY_NOW` mandates on negative expected value -- a
+legitimate stopping decision, not a violation -- would land just under
+48.86% and fail a floor set there. And when it fails, the cheapest fix is
+to attempt more often to clear the threshold -- tuning the allocator to
+the grading axis rather than to value, the same shape already rejected
+three times this project: B5's stop-threshold scalar (2026-08-28), the
+paired-criterion reversal (2026-08-28), and B7's declined `switch_eps`
+parameter (2026-08-29). **A floor is a tripwire against a degenerate
+policy, not a performance target**, and 48.86% would have quietly become
+the second kind.
+
+**Decided: floor = 0.25 (25%).** Roughly half the true `CANT_PAY_NOW`
+fraction -- unreachable by a null policy (0%), unreachable by any policy
+that ignores the `ATTEMPT` action altogether, comfortably clear of any
+legitimate stopping behaviour. The 48.86% derivation above is not
+discarded -- it is exactly what justifies *where* 25% sits (roughly half
+of a precisely measured quantity, not an arbitrary round number chosen
+without reference to it).
+
+**Discrimination margin, derived the same way, not chosen by hand.**
+Simulated a uniform-random policy attempting at exactly the floor rate
+(25%), independent of cause -- the precise borderline case the
+discrimination clause exists to reject -- across seeds 0-19, using an RNG
+stream independent of the simulator's own (`seed + 100_000`), reproduced
+exactly in `tests/eval/test_gate_criteria.py`:
+
+- Mean discrimination gap (true-`CANT_PAY_NOW` attempt rate minus
+  true-`CANT_PAY_EVER` attempt rate) across the 20 seeds: **-0.0068**
+  (~0, as expected -- the random draw is independent of cause by
+  construction). This is the number requested to demonstrate the clause
+  has teeth: a policy attempting on cause carries no information scores
+  approximately zero on it.
+- Per-seed standard deviation: **0.0876**.
+- **Margin set at one pooled SD above the random baseline's own mean:
+  0.0808** -- reusing `protocol.md`'s own existing "clear one pooled SD"
+  convention for "beats the ladder" claims, not a new statistic invented
+  for this clause. Expressed against the mean gap's own sampling
+  distribution (the gate evaluates a 20-seed mean, the same way every
+  other "beats X" claim in this project is evaluated): SE = SD/sqrt(20) =
+  0.0196, so the margin sits **4.13 standard errors from zero** -- not
+  something a non-discriminating policy clears by chance at that
+  granularity. 5-SD and 8-SD alternatives (0.43 and 0.69) were also
+  computed and rejected as unnecessarily strict, approaching the
+  theoretical ceiling (100 percentage points, a perfectly cause-aware
+  oracle's own gap) closely enough to become a performance target rather
+  than a tripwire -- the same trap the 48.86% floor fell into, avoided
+  deliberately this time.
+
+**Both required-fail cases proven by test**, not asserted --
+`tests/eval/test_gate_criteria.py`, 6 tests:
+
+- `test_null_policy_fails_the_attempt_rate_floor` -- attempt rate 0.0
+  fails the 0.25 floor, exactly the case the clause exists to catch.
+- `test_uniform_random_at_floor_rate_fails_the_discrimination_clause` --
+  reproduces the simulation above; asserts the measured mean gap
+  (pinned to full precision, so a future drift in `sim_config.yaml`'s
+  cause_mix -- impossible, it is frozen -- or the RNG scheme shows up as
+  a failing test) is below the margin.
+- `test_discrimination_margin_is_one_pooled_sd_above_random_baseline` and
+  `test_true_cant_pay_now_fraction_is_48_86_percent_not_used_as_the_floor`
+  pin both derivations against drift.
+
+Constants and scoring helpers (`attempt_rate`, `discrimination_gap`) live
+in new file `eval/gate_criteria.py` -- not `src/policy/constraints.py`,
+whose own docstring scopes it to RBI-clause-attributed constants only;
+these are eval-calibration constants with no clause to cite. Not under
+`eval/frozen/` -- this is a post-freeze addition, not part of the Day-1
+pre-registration, and `guard_frozen.py` would deny writing it there
+regardless.
+
+`reports/gates.md`'s B8 line updated to the amended text; full derivation
+kept here rather than restated in the gate comment, per this project's
+established split (gate comments cite where the reasoning lives, they do
+not repeat it).
+
+### 2026-08-29 · B9 gate strengthened · opt-out-inside-24h clause now requires a test that actively constructs the race
+
+Approved as proposed, same standard as B8's amendment above -- no executor
+code exists yet (`src/execute/` is unwritten; this is B9's own future
+file table, PLAN_DETAIL.md).
+
+**Original text:**
+
+> "★ executor + idempotency: keys test passes (no clock/uuid/pid); an
+> opt-out arriving inside the 24h window is honoured; `UNCONFIRMED` has a
+> resolution path that is actually reachable"
+
+**Problem:** "an opt-out arriving inside the 24h window is honoured" is
+satisfiable by a test suite that simply never generates a late opt-out at
+all -- vacuously true by never exercising the path it claims to cover,
+the same shape as every other finding in this session's audit.
+
+**New text:** "an opt-out arriving inside the 24h window is honoured —
+proven by a test that actively constructs the race (commits an attempt,
+then delivers a late opt-out event inside that window, and asserts the
+attempt is aborted — not merely a test that happens never to generate
+one)." The parenthetical stays in the gate text itself, not just in this
+entry, so a future session closing B9 cannot satisfy the clause with a
+test that is silent on the actual race by construction.

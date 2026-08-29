@@ -85,15 +85,25 @@ Mandate Recovery Engine -- tasks
     "lint" {
         Invoke-Step "invariant guards" { & $Py scripts\guard_invariants.py --all }
         Write-Host "== live-key scan" -ForegroundColor Cyan
-        $hits = Select-String -Path (Get-ChildItem -Recurse -File -Exclude *.zip |
-                Where-Object { $_.FullName -notmatch '\\(\.venv|node_modules|\.git)\\' }
-            ).FullName -Pattern "rzp_live_[A-Za-z0-9]{10,}" -ErrorAction SilentlyContinue
+        $scanFiles = Get-ChildItem -Recurse -File -Exclude *.zip |
+            Where-Object { $_.FullName -notmatch '\\(\.venv|node_modules|\.git)\\' }
+        # Found in the 2026-08-29 vacuous-checks audit (DECISIONS.md): an
+        # empty $scanFiles (wrong cwd, permissions) made Select-String
+        # match nothing and this printed "OK" having examined nothing --
+        # the security check that should be hardest to fool was the
+        # easiest. Assert a non-zero file count before trusting a clean
+        # $hits.
+        if (-not $scanFiles) {
+            Write-Host "   FAILED -- zero files found to scan (wrong directory?)" -ForegroundColor Red
+            exit 1
+        }
+        $hits = Select-String -Path $scanFiles.FullName -Pattern "rzp_live_[A-Za-z0-9]{10,}" -ErrorAction SilentlyContinue
         if ($hits) {
             Write-Host "LIVE KEY FOUND:" -ForegroundColor Red
             $hits | ForEach-Object { Write-Host "  $($_.Path):$($_.LineNumber)" }
             exit 1
         }
-        Write-Host "   no live keys: OK" -ForegroundColor Green
+        Write-Host "   no live keys: OK ($($scanFiles.Count) files scanned)" -ForegroundColor Green
     }
 
     "ci" {
@@ -126,7 +136,11 @@ Mandate Recovery Engine -- tasks
     }
 
     "checkpoint" {
-        if ($Day) { & $Py scripts\checkpoint.py $Day } else { & $Py scripts\checkpoint.py }
+        # $TestFastFilter threaded through explicitly so checkpoint.py's
+        # own test count cannot silently diverge from what test-fast/ci
+        # actually run -- it previously hard-coded "not chaos" only,
+        # missing "and not slow" (DECISIONS.md, 2026-08-29).
+        if ($Day) { & $Py scripts\checkpoint.py $Day $TestFastFilter } else { & $Py scripts\checkpoint.py "" $TestFastFilter }
     }
 
     "state" { & $Py scripts\show_state.py }
@@ -152,11 +166,17 @@ Mandate Recovery Engine -- tasks
         else { Write-Host "   FAIL" -ForegroundColor Red; $fail = 1 }
 
         Write-Host "== 3. no live keys" -ForegroundColor Cyan
-        $lk = Get-ChildItem -Recurse -File -Include *.py,*.md,*.json,*.yaml,*.yml,*.ps1,*.env* -ErrorAction SilentlyContinue |
-              Where-Object { $_.FullName -notmatch '\\(\.venv|node_modules|\.git)\\' } |
-              Select-String -Pattern "rzp_live_[A-Za-z0-9]{10,}" -ErrorAction SilentlyContinue
-        if ($lk) { Write-Host "   FAIL -- live key found" -ForegroundColor Red; $fail = 1 }
-        else { Write-Host "   PASS" -ForegroundColor Green }
+        $scanFiles3 = Get-ChildItem -Recurse -File -Include *.py,*.md,*.json,*.yaml,*.yml,*.ps1,*.env* -ErrorAction SilentlyContinue |
+              Where-Object { $_.FullName -notmatch '\\(\.venv|node_modules|\.git)\\' }
+        # Same vacuous shape as lint's scan (DECISIONS.md, 2026-08-29):
+        # zero files found must FAIL, not print PASS having checked nothing.
+        if (-not $scanFiles3) {
+            Write-Host "   FAIL -- zero files found to scan" -ForegroundColor Red; $fail = 1
+        } else {
+            $lk = $scanFiles3 | Select-String -Pattern "rzp_live_[A-Za-z0-9]{10,}" -ErrorAction SilentlyContinue
+            if ($lk) { Write-Host "   FAIL -- live key found" -ForegroundColor Red; $fail = 1 }
+            else { Write-Host "   PASS ($($scanFiles3.Count) files scanned)" -ForegroundColor Green }
+        }
 
         Write-Host "== 4. postgres reachable" -ForegroundColor Cyan
         docker exec mrdb pg_isready 2>&1 | Out-Null
