@@ -417,6 +417,50 @@ def test_intent_row_is_committed_before_the_provider_is_ever_called(pg_schema):
     assert len(client.calls) == 1
 
 
+def test_sent_row_is_committed_before_the_provider_is_ever_called(pg_schema):
+    """The write ordering src/execute/recover.py's NEVER_SENT branch is a
+    PROOF about, pinned here rather than asserted there.
+
+    _resolve_never_sent() frees an NPCI slot -- one of only four, ever --
+    on the strength of a single implication: charge() is called only after
+    the SENT row is durably committed, so no SENT row means no call was
+    ever made. That is true of execute() as written. It would silently
+    stop being true if step 3's append were ever moved after the call, or
+    the call hoisted above it, and nothing else in the suite would notice:
+    every other test would still pass, and recovery would begin voiding
+    schedule rows for attempts that may have taken money.
+
+    So this reads the actual call order from inside the provider call,
+    exactly as the INTENT test above does. Added at B10.
+    """
+    attempt = _committed(pg_schema, decision_sha256="d-sent-ordering", committed_at=CYCLE_START)
+    clock.set_frozen(attempt.scheduled_for - timedelta(hours=2))
+
+    conn = pg_schema.conn
+
+    class _SentOrderCheckingClient(_FakeClient):
+        def charge(self, *, amount_paise, receipt, notes):
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT state FROM ledger WHERE idempotency_key = %s ORDER BY ledger_id",
+                    (receipt,),
+                )
+                states_so_far = [r[0] for r in cur.fetchall()]
+            assert "SENT" in states_so_far, (
+                "charge() was called before the SENT row was committed. "
+                "recover._resolve_never_sent() infers 'no SENT row => never "
+                "sent' and frees the NPCI slot on that basis; with this "
+                "ordering reversed, that inference is false and recovery can "
+                "void a schedule row for an attempt that took money."
+            )
+            return super().charge(amount_paise=amount_paise, receipt=receipt, notes=notes)
+
+    client = _SentOrderCheckingClient(charge_response={"id": "pay_sent", "status": "captured"})
+    result = execute(conn, client, attempt, _ctx(mandate_id=attempt.mandate_id), owner="worker-a")
+    assert result.state == "RESULT"
+    assert len(client.calls) == 1
+
+
 # === contract guard ==========================================================
 
 def test_execute_rejects_a_non_attempt_action(pg_schema):

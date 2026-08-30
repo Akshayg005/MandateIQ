@@ -219,7 +219,107 @@ written and its gate unmet counts as zero.
            than on any INTENT row): DECISIONS.md, 2026-08-30, three B9
            entries. Does not touch eval/frozen/. -->
 
-- [ ] **B10** chaos: 50 induced kills; zero double-charges; zero lost jobs; ledger complete; **the denominator is reported** — how many kills landed inside the unsafe window
+- [x] **B10** chaos: 50 induced kills; zero double-charges; zero lost jobs; ledger complete; **the denominator is reported** — how many kills landed inside the unsafe window
+      <!-- 2026-08-30, CLOSED. Measured, seed 0, reproducible by
+           `.\run.ps1 chaos -Kills 50`; full output in reports/chaos.md.
+           50 uniform kills partitioned by the window each ACTUALLY landed
+           in (judged from durable state after the fact, never from where
+           the kill was aimed): pre-INTENT 5, INTENT->lease 5,
+           lease->SENT 18, SENT->ack-not-accepted 9, SENT->RESULT-ACCEPTED
+           4 (the unsafe window), post-RESULT 9. Plus 10 fault-seam runs,
+           reported SEPARATELY and never folded into the 50. Zero
+           double-charges, zero lost jobs, zero ledger violations.
+           TWO LIMITS ON WHAT THE DENOMINATOR MEANS, stated in
+           reports/chaos.md rather than left for a reader to assume.
+           (1) The partition is over DATABASE STATEMENTS plus the provider
+           call -- a reproducible, exhaustively coverable space -- NOT over
+           wall-clock time, which is dominated by the network call. It is
+           the denominator for this sampler and says nothing about
+           production frequency. (2) A kill signal to our own process
+           CANNOT reach the most dangerous state at all: it can only
+           destroy work not yet done, never make the provider accept money
+           and then lose the answer. That is why the FaultSpec seam exists
+           (src/execute/razorpay_client.py, construction guarded outside
+           eval/chaos.py + tests/ by scripts/guard_invariants.py) and why
+           ChaosReport.passed REQUIRES unsafe_window_covered > 0 -- with
+           seed 0 at 24 kills the uniform block drew the unsafe window
+           ZERO times, so the headline would have been an artifact of
+           sampling exactly as PLAN_DETAIL.md section 8.2 finding 2
+           predicts. The gate is met at 50; it was not at 24, by luck.
+           NOT a clean history and must not be read as one. The harness
+           found TWO defects on its FIRST run, both in code whose 82 tests
+           were green:
+           (a) A PERMANENTLY LOST JOB -- POSTMORTEM.md incident 4.
+           recover._dangling_keys() discovered abandoned work by iterating
+           lease.expired(), so it could not see an INTENT row written
+           before the lease was claimed (executor.py writes INTENT at step
+           1 and claims the lease at step 2, so a crash between them
+           leaves an INTENT row and NO lease row at all). Such a key was
+           invisible to both scans forever while step 1's ON CONFLICT DO
+           NOTHING blocked any re-execute: slot consumed, customer never
+           debited, nothing reported. src/execute/lease.py's own docstring
+           names the rule that was broken -- the lease is "an OPTIMISATION
+           over ledger_intent_once, not the concurrency control" -- and
+           recovery had been keyed solely on it. Fixed by scanning the
+           LEDGER and using the lease only to exclude keys a live worker
+           still holds. The regression test was PROVEN discriminating
+           against a verbatim reimplementation of the old algorithm on the
+           same state (old returns [], new returns the key), not merely
+           asserted to be.
+           (b) 23 of 60 NPCI SLOTS BURNED FOR NOTHING -- attempts ending
+           at UNRESOLVED_FINAL with no SENT row, i.e. never sent, each
+           permanently consuming 1 of only 4 lifetime attempts. A fix
+           (recover._resolve_never_sent) was approved, built, cleared by
+           money-auditor AND compliance-auditor, and then REVERTED THE
+           SAME DAY when the chaos-engineer review found it introduced a
+           CROSS-GENERATION DOUBLE CHARGE -- POSTMORTEM.md incident 5.
+           Its proof ("no SENT row means no call was issued") is sound
+           about one process's own state and false about a concurrent
+           one: executor.py never re-validates lease ownership between
+           claiming the lease and charging, so a worker STALLED past its
+           lease TTL (alive, not dead) is indistinguishable from a crash
+           in durable state. Recovery voided a live worker's slot, the
+           worker completed its real charge, and the freed slot was
+           reissued at generation+1 -- a DIFFERENT key -- and charged
+           again. Measured directly, same sequence run both ways: 2
+           charges with the fix, 1 without, so B10 INTRODUCED it rather
+           than inheriting it. Invisible to every oracle in the harness,
+           since both are keyed per receipt and the charges land on
+           different keys. Reverted rather than patched because the slot
+           recovery is an OPTIMISATION and this project's refrain --
+           a double-charge is worse than ten missed recoveries -- decides
+           it; reinstating it needs real lease fencing in executor.py,
+           which is its own scoped work. THE SLOT COST THEREFORE STANDS
+           AT 23/60 and is reported by eval/chaos.py as a standing
+           measurement, not silently accepted.
+           Kept from that attempt because each earned its place
+           independently: the _dangling_keys fix in (a); tests/execute/
+           test_executor.py::test_sent_row_is_committed_before_the_
+           provider_is_ever_called, which pins a write ordering nothing
+           previously tested; and a green regression guard,
+           tests/eval/test_chaos.py::test_a_stalled_worker_cannot_have_
+           its_slot_voided_and_reissued.
+           THE REVIEW LESSON, worth more than the code: money-auditor
+           (twice) and compliance-auditor all cleared the reverted design,
+           both reasoning explicitly about concurrency. What found it was
+           a reviewer asked not "is this correct?" but "what states can
+           this harness NOT construct?" -- the harness is single-threaded
+           and an induced kill can only STOP a process, never DELAY one,
+           so a live-but-slow worker was outside its reachable state space
+           entirely. That limit is now stated in reports/chaos.md as one
+           of three things the report does not license concluding.
+           A third finding, NOT fixed and NOT a defect: UNRESOLVED_FINAL
+           is a permanent dead end (recover._stuck_keys matches
+           reason=UNCONFIRMED only), so a charge that becomes findable
+           after the backoff ends stays misfiled. That is B9's stated
+           design ("terminal and reported") and the slot correctly stays
+           consumed; recorded as POSTMORTEM.md incident 6 and pinned by a
+           test asserting the CURRENT behaviour, so changing it has to be
+           deliberate. Correcting such keys needs a path outside this
+           module (the B3 webhook, or an operator tool) -- B13's.
+           Full reasoning: DECISIONS.md, 2026-08-30, BOTH B10 entries (the
+           second reverses the first); POSTMORTEM.md incidents 4, 5, 6;
+           reports/chaos.md. Does not touch eval/frozen/. -->
 - [ ] **B11** ∥ LLM edge + golden set: golden set passes; no LLM import in core; normaliser output is versioned in the ledger before it can touch a belief
 - [ ] **B12** ∥ benchmark + shadow: benchmark table in DECISIONS.md including the variance column; shadow mode produces a delta log over the full batch
 - [ ] **B13** ★ stress regimes + report: every number reproducible by one command; at least one regime where we lose, explained

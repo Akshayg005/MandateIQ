@@ -55,6 +55,23 @@ LIVE_KEY = re.compile(r"rzp_live_[A-Za-z0-9]{10,}")
 HARD_CANCEL = re.compile(r"\.(cancel_subscription|cancel)\s*\(", re.IGNORECASE)
 OFFRAMP_OK = "src/policy/offramp.py"
 
+# --- B10: the fault seam must not be reachable from production -------------
+# FaultSpec makes a charge that the provider ACCEPTED look like a failure to
+# our own process. That is precisely the state B10 has to prove we survive,
+# and precisely the state no production path may ever be able to manufacture.
+# It is declared in razorpay_client.py (the boundary it acts on) and may be
+# constructed or imported nowhere else except the chaos harness and tests.
+#
+# Matches CONSTRUCTION and IMPORT, never the bare name -- the same reasoning
+# LIVE_KEY above documents. A guard whose own source matches its own pattern
+# can never pass, and this file has to name the symbol to check for it.
+FAULT_SEAM = re.compile(
+    r"(?:\bFaultSpec\s*\()"
+    r"|(?:^\s*from\s+\S+\s+import\s+[^\n]*\bFaultSpec\b)",
+    re.MULTILINE,
+)
+FAULT_SEAM_OK = ("src/execute/razorpay_client.py", "eval/chaos.py")
+
 SKIP = (".venv", "node_modules", ".git", "site\\node_modules", "site/node_modules",
         "dashboard/node_modules", "dashboard\\node_modules", "__pycache__")
 
@@ -101,6 +118,19 @@ def check(path: pathlib.Path) -> list[str]:
                 f"division on a money value: '{m.group(0).strip()}' (invariant 2). "
                 "Use // with an explicit rounding decision, documented."
             )
+
+    if (
+        rel.endswith(".py")
+        and "test" not in rel
+        and not any(ok in rel for ok in FAULT_SEAM_OK)
+        and FAULT_SEAM.search(text)
+    ):
+        problems.append(
+            "FaultSpec named outside the chaos harness (B10). The fault seam makes "
+            "an ACCEPTED charge look like a failure; production code must never be "
+            "able to construct one. Allowed only in "
+            f"{', '.join(FAULT_SEAM_OK)} and tests/."
+        )
 
     if rel.endswith(".py") and OFFRAMP_OK not in rel and "test" not in rel:
         if HARD_CANCEL.search(text):

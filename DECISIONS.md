@@ -3272,3 +3272,158 @@ failure ("Razorpay's actual idempotency semantics may not match what B9
 assumes") and bought it down with the B3 spike — the spike covered
 `Order.create` and correctly told us not to trust provider dedup, but
 nothing had ever exercised the *lookup* half of the same interface.
+
+---
+
+### 2026-08-30 · B10 · Recovery now frees a slot it can prove was never spent — the one non-ambiguous case in an otherwise deliberately paranoid module
+
+*The measurement that prompted it.* The first 50-kill chaos run reported
+**23 of 60 attempts ending at `UNRESOLVED_FINAL` with no `SENT` row in the
+ledger**. Each of those permanently consumed one of only four lifetime NPCI
+attempts, on an attempt that had provably never reached the provider.
+`recover.py` asked five times, missed each time (the modelled Orders index
+lag, measured live at B9), and burned the slot. That is the correct
+behaviour when "we do not know" is the honest answer — and the module is
+built end-to-end on that refrain — but here it is not the honest answer.
+
+*The proof, stated precisely, because everything rests on it.*
+`executor.execute()` writes the `SENT` ledger row (autocommit, durable) and
+only **then** calls `client.charge()`. So `charge() was called` ⟹ `SENT
+committed`. Contrapositive: **no `SENT` row means no provider call was ever
+issued.** A `SENT` insert still in flight when the process died rolls back,
+and `charge()` sits after that append returns, so it was never reached
+either. Absence of a `SENT` row on re-read is therefore evidence, not
+absence of evidence.
+
+*What was built.* `recover._resolve_never_sent()` writes
+`FAILED/NEVER_SENT` and voids the `committed_schedule` row, which clears
+`committed_one_live_per_slot` and lets the allocator reissue at
+generation+1 on the **same `attempt_index`** — so no new NPCI slot is
+spent (the budget counts distinct `attempt_index` values, never distinct
+keys; `void.reissue()` copies it unchanged). Measured effect: 23/60 → 0/60,
+same seed, same window partition. Now a regression guard in
+`ChaosReport.passed`, not merely reported.
+
+*Three things deliberately NOT done, each of which was the tempting version.*
+
+1. **It does not skip the ask.** The first implementation resolved
+   `NEVER_SENT` without calling `find_by_receipt` at all — the proof says
+   there is nothing to find, so why pay for the call? That was wrong, and
+   an existing B9 test caught it: `test_reconcile_resolves_a_dangling_intent
+   _when_the_provider_confirms_it` builds an INTENT-only key whose payment
+   the provider *does* report, and expects `RESULT`. Under the skip-the-ask
+   version that test would have voided a schedule row for an attempt that
+   took money. The order is now: **always ask; use the proof only to decide
+   what a miss means.** "Recovery is by asking" stays unconditional. If the
+   provider ever contradicts our reasoning about our own write ordering, we
+   believe the provider.
+2. **It does not reissue.** Voiding is what *makes* a reissue possible;
+   choosing a new `scheduled_for` is a scheduling decision the allocator
+   owns. Making it here would be precisely the late read that ACTS rather
+   than stops, which PLAN_DETAIL.md §1 forbids this layer.
+3. **It is not generalised beyond the provable case.** A key *with* a
+   `SENT` row still walks the full backoff to `UNRESOLVED_FINAL` and still
+   burns the slot. The discriminating negative control
+   (`test_never_sent_does_not_fire_when_a_sent_row_exists`) is byte-identical
+   setup except for that row.
+
+*Defence in depth, two independent layers, because the failure mode is
+voiding a schedule row for an attempt that moved money.* First, reconcile
+asks the provider before this path is reachable at all, so a payment that
+exists is resolved as found rather than voided. Second, `void()`
+independently refuses any key carrying a `SENT` row — so if the proof were
+somehow wrong, this raises `VoidError` rather than quietly voiding. Note
+that the second layer cannot catch the specific case of "payment exists,
+no SENT row"; that is what the first layer and the ordering test below are
+for.
+
+*The load-bearing dependency, pinned rather than assumed.* This makes
+`recover.py`'s correctness depend on `executor.py`'s write ordering, which
+nothing previously tested directly — reversing step 3's append and the
+charge would leave every existing test green while recovery began voiding
+schedule rows for attempts that may have taken money.
+`tests/execute/test_executor.py::test_sent_row_is_committed_before_the_
+provider_is_ever_called` now reads the actual call order from inside the
+provider call, the same technique the existing INTENT-ordering test uses.
+
+*Test fallout, and why it is not "fixing tests to match the code".* Six
+B9 recover tests built their dangling key as INTENT-only and expected the
+UNCONFIRMED/backoff path. Under the new semantics an INTENT-only key is
+provably-never-sent and correctly resolves without walking the backoff, so
+their *premise* was what changed: the backoff exists for the case where a
+call may have been made, which is the `SENT` case. Each now passes
+`state="SENT"` explicitly at the call site rather than the helper's default
+being flipped, so each test's premise stays visible where it is used. The
+approval for this change was requested and given before any of it was
+written.
+
+---
+
+### 2026-08-30 · B10 · The entry above is REVERSED. NEVER_SENT introduced a double charge and was reverted the same day
+
+*Read the previous entry as a record of what was tried, not of what
+shipped.* Everything it says about the proof is correct as far as it goes,
+and that turned out not to be far enough.
+
+*What the chaos-engineer review found.* The proof — "no `SENT` row means no
+provider call was issued", because `executor.py` writes `SENT` before it
+charges — is sound about **one process's own state** and false about a
+**concurrent** one. `executor.py` never re-validates lease ownership
+between claiming the lease (step 2) and charging (step 3). So a worker that
+STALLS past its lease TTL — alive, not dead; a GC pause, a slow lifecycle
+read, a suspended VM — is indistinguishable from a crash in durable state.
+Recovery voided its slot while it was still running; the worker then
+completed its real charge; the freed slot was reissued at generation+1
+under a **different key** and charged again. Two real charges for one NPCI
+slot, and because the keys differ, invisible to `ChaosClient.accepted` and
+to any receipt-keyed idempotency check at the real Razorpay.
+
+*Whose regression, measured not argued.* The same sequence run twice, once
+with the branch forced off to reproduce B9:
+
+| | charges | reissue succeeded |
+|---|---|---|
+| with `NEVER_SENT` | **2** | yes |
+| B9 behaviour | 1 | no (`VoidError`) |
+
+Introduced by B10, not inherited. Without the void there is no reissue,
+hence no second key. **The 23/60 slot burning that the optimisation
+removed was partly load-bearing.**
+
+*Why reverted rather than patched.* Two fixes were on the table.
+Re-checking for a `SENT` row inside `reissue()` only narrows the window —
+the check still precedes the reissued attempt's own charge, which clause
+6(a) puts at least 24h later. Re-validating lease ownership immediately
+before step 3 is the real fix and is a fencing-token problem: new design
+work on B9's executor, on the money path, after two auditors had signed off
+on a different design. Neither belongs bolted onto the end of this block.
+And the project's own refrain decides it: *a double-charge is worse than
+ten missed recoveries.* The optimisation traded precisely that way. The
+slot recovery is an OPTIMISATION; what it cost is the invariant the module
+exists to hold.
+
+*What remains from the attempt, deliberately.* Three things earned their
+place independently of it: the `_dangling_keys` ledger-scan fix (incident
+4, unrelated to `NEVER_SENT`); `test_sent_row_is_committed_before_the_
+provider_is_ever_called`, which pins a write ordering nothing previously
+tested and which any future fencing work will need; and
+`eval/chaos.py`'s `slots_burned_unsent`, now a standing reported cost
+rather than a pass/fail guard, so the 23/60 is visible instead of quietly
+accepted.
+
+*What it would take to reinstate.* Lease fencing in `executor.py` — a
+token the executor re-validates immediately before step 3, which
+`recover.py` invalidates when it takes over a key — plus a `reissue()`
+re-check as a backstop. That is its own scoped piece of work with its own
+review, not a B10 addendum. Until then the slot cost stands and is
+reported.
+
+*The generalisable lesson, which is why this is logged rather than quietly
+undone.* Two review passes (money-auditor twice, compliance-auditor)
+cleared this design; both reasoned explicitly about concurrency and
+crash-safety, and both concluded the slot-freeing was safe. What found it
+was a reviewer asked a different question — not "is this correct?" but
+"what states can this harness NOT construct?" The harness is single-process
+and single-threaded, and an induced kill can only STOP a process, never
+DELAY one. A live-but-slow worker was outside its reachable state space,
+and that is exactly where the defect lived.

@@ -119,7 +119,36 @@ Order.create, and this is disclosed rather than silently assumed correct.
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
+
+
+@dataclass(frozen=True)
+class FaultSpec:
+    """A TEST-ONLY fault seam (B10). Exists because `kill -9` on our own
+    process reproduces only the BENIGN half of the crash space.
+
+    The dangerous case this project actually has to survive is "the provider
+    ACCEPTED the debit, and the response was lost in flight" -- the customer
+    is charged and our process never learns it. No signal we can send to our
+    own process creates that state, because the state is created on the far
+    side of the network. It has to be injected at the client boundary, which
+    is this module, which is why the seam lives here rather than in the eval
+    harness that uses it.
+
+    `drop_response_after_accept` performs the real create_order and the real
+    createRecurring -- a genuine payment exists at the provider afterwards --
+    and then raises RazorpayClientError instead of returning. That is exactly
+    the wire truth of a lost response, and executor.py's existing AMBIGUOUS
+    branch is what must then hold the line: leave SENT as the last row, do
+    NOT release the lease, let recover.py resolve it by ASKING.
+
+    Reachable only from eval/chaos.py and tests/ -- enforced by
+    scripts/guard_invariants.py, not by trust. A fault seam that production
+    code could construct is a production defect, not a test utility.
+    """
+
+    drop_response_after_accept: bool = False
 
 
 class RazorpayClientError(RuntimeError):
@@ -164,8 +193,19 @@ class RazorpayClient:
     doubles.
     """
 
-    def __init__(self, key_id: str | None = None, key_secret: str | None = None) -> None:
+    def __init__(
+        self,
+        key_id: str | None = None,
+        key_secret: str | None = None,
+        *,
+        fault: FaultSpec | None = None,
+    ) -> None:
         import razorpay  # local import: see class docstring
+
+        # See FaultSpec's docstring. Default None means every production
+        # construction of this class is fault-free by omission, not by
+        # remembering to pass something.
+        self._fault = fault
 
         key_id = key_id if key_id is not None else os.environ.get("RAZORPAY_KEY_ID", "")
         key_secret = (
@@ -207,7 +247,7 @@ class RazorpayClient:
         order = self.create_order(amount_paise=amount_paise, receipt=receipt, notes=notes)
 
         try:
-            return self._client.payment.createRecurring(
+            payment = self._client.payment.createRecurring(
                 {
                     "amount": amount_paise,
                     "currency": "INR",
@@ -220,6 +260,17 @@ class RazorpayClient:
             raise RazorpayDeclined(str(exc)) from exc
         except Exception as exc:  # noqa: BLE001 -- AMBIGUOUS, see RazorpayClientError
             raise RazorpayClientError(f"charge({receipt!r}) failed: {exc}") from exc
+
+        # THE FAULT SEAM. Deliberately placed AFTER the call succeeded: the
+        # payment above is real and the money has moved. Only the answer is
+        # lost. See FaultSpec.
+        if self._fault is not None and self._fault.drop_response_after_accept:
+            raise RazorpayClientError(
+                f"charge({receipt!r}): response dropped in flight after the provider "
+                "accepted (injected fault, B10)"
+            )
+
+        return payment
 
     def pause_subscription(self, subscription_id: str) -> dict:
         try:
