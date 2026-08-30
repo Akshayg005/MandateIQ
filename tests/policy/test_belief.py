@@ -195,7 +195,7 @@ def test_update_result_is_a_valid_distribution():
                        REFERENCE_PRIOR)))
 
     for dc in DeclineClass:
-        b1 = update(b0, dc)
+        b1 = update(b0, dc, source_version="taxonomy=v1")
 
         # Check it's a valid distribution
         for cause in CAUSE_ORDER:
@@ -222,8 +222,8 @@ def test_update_is_order_invariant():
     dc_a = DeclineClass.INSUFFICIENT_FUNDS
     dc_b = DeclineClass.CARD_EXPIRED
 
-    b_ab = update(update(b0, dc_a), dc_b)
-    b_ba = update(update(b0, dc_b), dc_a)
+    b_ab = update(update(b0, dc_a, source_version="taxonomy=v1"), dc_b, source_version="taxonomy=v1")
+    b_ba = update(update(b0, dc_b, source_version="taxonomy=v1"), dc_a, source_version="taxonomy=v1")
 
     for cause in Cause:
         assert b_ab[cause] == pytest.approx(b_ba[cause], abs=1e-9), \
@@ -243,7 +243,7 @@ def test_update_from_flat_prior_equals_the_cause_map_prior():
                        REFERENCE_PRIOR)))
 
     for dc in DeclineClass:
-        b1 = update(b0, dc)
+        b1 = update(b0, dc, source_version="taxonomy=v1")
         expected = cause_map_prior(dc)
 
         for cause in Cause:
@@ -264,7 +264,7 @@ def test_update_never_moves_mass_to_a_zero_probability_cause():
 
     # Update with any decline class
     for dc in [DeclineClass.INSUFFICIENT_FUNDS, DeclineClass.CARD_EXPIRED]:
-        b_updated = update(b, dc)
+        b_updated = update(b, dc, source_version="taxonomy=v1")
         assert b_updated[Cause.WONT_PAY] == pytest.approx(0.0, abs=1e-9), \
             f"update(zero-WONT_PAY, {dc}) resurrected mass: {b_updated[Cause.WONT_PAY]}"
 
@@ -280,7 +280,7 @@ def test_update_returns_a_new_object_and_does_not_mutate_its_input():
 
     b0_before = {c: b0[c] for c in Cause}
 
-    b1 = update(b0, DeclineClass.INSUFFICIENT_FUNDS)
+    b1 = update(b0, DeclineClass.INSUFFICIENT_FUNDS, source_version="taxonomy=v1")
 
     # Check b0 is unchanged
     b0_after = {c: b0[c] for c in Cause}
@@ -289,6 +289,97 @@ def test_update_returns_a_new_object_and_does_not_mutate_its_input():
 
     # Check b1 is distinct
     assert b1 is not b0, f"update() returned the same object, not a new one"
+
+
+def test_update_requires_source_version():
+    """update() must require the source_version keyword argument. Calling
+    update(b, dc) with only two positional args must raise TypeError because
+    source_version has no default -- this enforces that every update is
+    traced to the classifier that produced its observation."""
+    from src.policy.belief import init, update, REFERENCE_PRIOR
+
+    b = init(dict(zip([Cause.CANT_PAY_NOW, Cause.CANT_PAY_EVER, Cause.WONT_PAY],
+                      REFERENCE_PRIOR)))
+
+    # Calling without source_version must raise TypeError
+    with pytest.raises(TypeError):
+        update(b, DeclineClass.INSUFFICIENT_FUNDS)
+
+
+def test_update_rejects_empty_source_version():
+    """update() must reject an empty string for source_version, raising
+    BeliefError. A belief cannot be traced to a non-existent classifier
+    version -- that is the entire reason source_version is required and must
+    be validated at runtime."""
+    from src.policy.belief import init, update, BeliefError, REFERENCE_PRIOR
+
+    b = init(dict(zip([Cause.CANT_PAY_NOW, Cause.CANT_PAY_EVER, Cause.WONT_PAY],
+                      REFERENCE_PRIOR)))
+
+    # Empty string must raise BeliefError
+    with pytest.raises(BeliefError):
+        update(b, DeclineClass.INSUFFICIENT_FUNDS, source_version="")
+
+
+def test_update_provenance_records_which_source_produced_the_observation():
+    """update(b, dc, source_version=v1) and update(b, dc, source_version=v2)
+    produce beliefs with identical probs (source doesn't affect the math) but
+    different provenance strings. The provenance must record which classifier
+    produced the observation, proving that the belief is auditable to a
+    specific normaliser version. This is the traceability property B11's gate
+    requires: 'normaliser output is versioned in the ledger before it can
+    touch a belief ... a belief that cannot be traced to a specific normaliser
+    version is not auditable'."""
+    from src.policy.belief import init, update, REFERENCE_PRIOR
+
+    b = init(dict(zip([Cause.CANT_PAY_NOW, Cause.CANT_PAY_EVER, Cause.WONT_PAY],
+                      REFERENCE_PRIOR)))
+
+    dc = DeclineClass.INSUFFICIENT_FUNDS
+    v1 = "taxonomy=v1"
+    v2 = "normalizer=abc123def456"
+
+    b_v1 = update(b, dc, source_version=v1)
+    b_v2 = update(b, dc, source_version=v2)
+
+    # Probabilities must be identical (source doesn't affect the math)
+    for cause in Cause:
+        assert b_v1[cause] == pytest.approx(b_v2[cause], abs=1e-9), \
+            f"Source version changed the math for {cause}: {b_v1[cause]} vs {b_v2[cause]}"
+
+    # Provenance strings must differ and each contain its own source_version
+    assert b_v1.provenance != b_v2.provenance, \
+        f"Provenance should differ for different source_version values"
+    assert f"source={v1}" in b_v1.provenance, \
+        f"Provenance '{b_v1.provenance}' does not contain 'source={v1}'"
+    assert f"source={v2}" in b_v2.provenance, \
+        f"Provenance '{b_v2.provenance}' does not contain 'source={v2}'"
+
+
+def test_update_provenance_still_contains_cause_map_and_reference_prior_versions():
+    """update() adds source_version to provenance, but must NOT replace the
+    existing cause_map and reference_prior version fields. The provenance is
+    additive: it contains cause_map=<version>, reference_prior=<version>,
+    AND source=<version>, all three pieces of traceability together."""
+    from src.policy.belief import init, update, REFERENCE_PRIOR, REFERENCE_PRIOR_VERSION
+    from src.classify.cause_map import PRIOR_VERSION
+
+    b = init(dict(zip([Cause.CANT_PAY_NOW, Cause.CANT_PAY_EVER, Cause.WONT_PAY],
+                      REFERENCE_PRIOR)))
+
+    b_updated = update(b, DeclineClass.INSUFFICIENT_FUNDS, source_version="taxonomy=v1")
+
+    provenance = b_updated.provenance
+    assert isinstance(provenance, str), \
+        f"provenance is {type(provenance).__name__}, not str"
+
+    # Must contain ALL THREE version fields
+    assert f"cause_map={PRIOR_VERSION}" in provenance, \
+        f"provenance '{provenance}' missing 'cause_map={PRIOR_VERSION}'"
+    assert f"reference_prior={REFERENCE_PRIOR_VERSION}" in provenance, \
+        f"provenance '{provenance}' missing 'reference_prior={REFERENCE_PRIOR_VERSION}'"
+    assert "source=taxonomy=v1" in provenance, \
+        f"provenance '{provenance}' missing 'source=taxonomy=v1'"
 
 
 def test_update_getitem_access_works():
@@ -390,9 +481,9 @@ def test_three_insufficient_funds_declines_reach_99_6_percent():
     b = init(dict(zip([Cause.CANT_PAY_NOW, Cause.CANT_PAY_EVER, Cause.WONT_PAY],
                       REFERENCE_PRIOR)))
 
-    b = update(b, DeclineClass.INSUFFICIENT_FUNDS)
-    b = update(b, DeclineClass.INSUFFICIENT_FUNDS)
-    b = update(b, DeclineClass.INSUFFICIENT_FUNDS)
+    b = update(b, DeclineClass.INSUFFICIENT_FUNDS, source_version="taxonomy=v1")
+    b = update(b, DeclineClass.INSUFFICIENT_FUNDS, source_version="taxonomy=v1")
+    b = update(b, DeclineClass.INSUFFICIENT_FUNDS, source_version="taxonomy=v1")
 
     assert b[Cause.CANT_PAY_NOW] == pytest.approx(0.996108949416, abs=1e-9), \
         f"Three INSUFFICIENT_FUNDS: CANT_PAY_NOW = {b[Cause.CANT_PAY_NOW]}, " \
@@ -444,9 +535,9 @@ def test_static_cause_belief_is_overconfident_relative_to_cause_persistence():
     # Get the belief after 3 identical declines
     b = init(dict(zip([Cause.CANT_PAY_NOW, Cause.CANT_PAY_EVER, Cause.WONT_PAY],
                       REFERENCE_PRIOR)))
-    b = update(b, DeclineClass.INSUFFICIENT_FUNDS)
-    b = update(b, DeclineClass.INSUFFICIENT_FUNDS)
-    b = update(b, DeclineClass.INSUFFICIENT_FUNDS)
+    b = update(b, DeclineClass.INSUFFICIENT_FUNDS, source_version="taxonomy=v1")
+    b = update(b, DeclineClass.INSUFFICIENT_FUNDS, source_version="taxonomy=v1")
+    b = update(b, DeclineClass.INSUFFICIENT_FUNDS, source_version="taxonomy=v1")
 
     belief_confidence = b[Cause.CANT_PAY_NOW]
     cause_survival = 0.614125
@@ -523,7 +614,7 @@ def test_dominant_returns_the_argmax_cause():
                       REFERENCE_PRIOR)))
 
     # After INSUFFICIENT_FUNDS, CANT_PAY_NOW dominates
-    b = update(b, DeclineClass.INSUFFICIENT_FUNDS)
+    b = update(b, DeclineClass.INSUFFICIENT_FUNDS, source_version="taxonomy=v1")
     assert b.dominant() == Cause.CANT_PAY_NOW, \
         f"After INSUFFICIENT_FUNDS, dominant should be CANT_PAY_NOW, got {b.dominant()}"
 
@@ -531,7 +622,7 @@ def test_dominant_returns_the_argmax_cause():
     from src.policy.belief import init
     b2 = init(dict(zip([Cause.CANT_PAY_NOW, Cause.CANT_PAY_EVER, Cause.WONT_PAY],
                        REFERENCE_PRIOR)))
-    b2 = update(b2, DeclineClass.CARD_EXPIRED)
+    b2 = update(b2, DeclineClass.CARD_EXPIRED, source_version="taxonomy=v1")
     assert b2.dominant() == Cause.CANT_PAY_EVER, \
         f"After CARD_EXPIRED, dominant should be CANT_PAY_EVER, got {b2.dominant()}"
 

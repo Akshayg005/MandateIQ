@@ -1,0 +1,50 @@
+{"raw": "INSUFFICIENT FUNDS", "label": "INSUFFICIENT_FUNDS"}
+{"raw": "insufficient_funds: customer did not have enough funds in the account", "label": "INSUFFICIENT_FUNDS"}
+{"raw": "Transaction declined - low balance in linked account", "label": "INSUFFICIENT_FUNDS"}
+{"raw": "NOT SUFFICIENT FUNDS - NSF - bank code 51", "label": "INSUFFICIENT_FUNDS"}
+{"raw": "Insufficient balance to complete this transaction", "label": "INSUFFICIENT_FUNDS"}
+{"raw": "Bal low, txn declined by bank", "label": "INSUFFICIENT_FUNDS"}
+{"raw": "Your account does not have enough funds for this debit", "label": "INSUFFICIENT_FUNDS"}
+{"raw": "insufficient balance - please maintain minimum balance and retry", "label": "INSUFFICIENT_FUNDS"}
+{"raw": "Payment failed: account balance too low for auto-debit amount", "label": "INSUFFICIENT_FUNDS"}
+{"raw": "Customer has revoked the e-mandate at their bank", "label": "MANDATE_REVOKED"}
+{"raw": "mandate_revoked: UMN cancelled by customer", "label": "MANDATE_REVOKED"}
+{"raw": "MANDATE CANCELLED BY CUSTOMER via net banking", "label": "MANDATE_REVOKED"}
+{"raw": "Mandate not found or already withdrawn by the payer", "label": "MANDATE_REVOKED"}
+{"raw": "UPI AutoPay mandate has been revoked", "label": "MANDATE_REVOKED"}
+{"raw": "e-mandate cancelled at issuer end, no further debits permitted", "label": "MANDATE_REVOKED"}
+{"raw": "Customer revoked standing instruction for this merchant", "label": "MANDATE_REVOKED"}
+{"raw": "mandate_revoked", "label": "MANDATE_REVOKED"}
+{"raw": "card_expired: expiry date on file has passed", "label": "CARD_EXPIRED"}
+{"raw": "EXPIRED CARD - error 54", "label": "CARD_EXPIRED"}
+{"raw": "Your card has expired, please update payment method", "label": "CARD_EXPIRED"}
+{"raw": "Card expiry validation failed - card no longer valid", "label": "CARD_EXPIRED"}
+{"raw": "Transaction declined - the card linked to this mandate has expired", "label": "CARD_EXPIRED"}
+{"raw": "card_disabled: this card is not activated for online transactions", "label": "ACCOUNT_CLOSED"}
+{"raw": "account_closed: the beneficiary account is no longer active", "label": "ACCOUNT_CLOSED"}
+{"raw": "Account closed by customer request", "label": "ACCOUNT_CLOSED"}
+{"raw": "A/c closed - cannot process debit", "label": "ACCOUNT_CLOSED"}
+{"raw": "instrument_blocked: card being blocked by issuing bank", "label": "ACCOUNT_CLOSED"}
+{"raw": "This account has been closed at the customer's request", "label": "ACCOUNT_CLOSED"}
+{"raw": "invalid_vpa: not being a valid user for this UPI handle", "label": "ACCOUNT_CLOSED"}
+{"raw": "Do not honour - issuer declined the transaction", "label": "ISSUER_DECLINE"}
+{"raw": "Transaction declined by issuing bank, risk check failed", "label": "ISSUER_DECLINE"}
+{"raw": "authentication_failed: 3DS/AFA validation did not complete", "label": "ISSUER_DECLINE"}
+{"raw": "card_declined: incorrect_cvv provided", "label": "ISSUER_DECLINE"}
+{"raw": "payment_declined by bank due to transaction_limit exceeded", "label": "ISSUER_DECLINE"}
+{"raw": "Issuer declined the recurring payment, reason not further specified", "label": "ISSUER_DECLINE"}
+{"raw": "account_mismatch: name on account does not match mandate details", "label": "ISSUER_DECLINE"}
+{"raw": "credit_failed at the issuing bank, transaction rejected", "label": "ISSUER_DECLINE"}
+{"raw": "Response timed out from bank, no confirmation received", "label": "BANK_TIMEOUT"}
+{"raw": "NPCI unavailable, no response received within time limit", "label": "BANK_TIMEOUT"}
+{"raw": "bank_technical_error: partner_bank downtime reported", "label": "BANK_TIMEOUT"}
+{"raw": "gateway_technical_error - please retry after some time", "label": "BANK_TIMEOUT"}
+{"raw": "collect_request_expired: customer did not respond within time limit", "label": "BANK_TIMEOUT"}
+{"raw": "Transaction timed_out waiting for bank confirmation", "label": "BANK_TIMEOUT"}
+{"raw": "bank_downtime: scheduled maintenance window, try again later", "label": "BANK_TIMEOUT"}
+{"raw": "ERR_9999", "label": "UNKNOWN"}
+{"raw": "@@ chk gw ref 0x1f9a", "label": "UNKNOWN"}
+{"raw": "51", "label": "INSUFFICIENT_FUNDS"}
+{"raw": "U17 - see acquirer for details", "label": "UNKNOWN"}
+{"raw": "N/A", "label": "UNKNOWN"}
+{"raw": "payment_cancelled: customer cancelled the UPI AutoPay mandate approval request", "label": "UNKNOWN"}

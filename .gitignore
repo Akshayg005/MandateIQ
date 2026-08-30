@@ -14,3 +14,9 @@ CLAUDE.local.md
 *.zip
 reports/*.json
 !reports/.gitkeep
+# B11: cached model answers, namespaced by content-hashed prompt version
+# (DECISIONS.md, 2026-08-30). Untracked deliberately -- eval/golden/*.jsonl
+# right next to it is defined by NEVER being generated from model output,
+# and a committed cache would blur that line. Costs one live run on a
+# fresh clone.
+eval/golden/.cache/

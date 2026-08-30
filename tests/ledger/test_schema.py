@@ -95,6 +95,16 @@ def test_schema_sql_never_updates_the_ledger_table():
     assert re.search(r"UPDATE\s+ledger\b", text, re.IGNORECASE) is None
 
 
+def test_schema_sql_never_updates_the_normalized_decline_table():
+    """normalized_decline is append-only by the same construction principle
+    as ledger: every row is immutable, and state changes live in different
+    tables. Enforce this by ensuring schema.sql never contains an UPDATE
+    against normalized_decline."""
+    text = SCHEMA_PATH.read_text(encoding="utf-8")
+    assert re.search(r"UPDATE\s+normalized_decline\b", text, re.IGNORECASE) is None, \
+        "schema.sql must never UPDATE normalized_decline -- it is append-only by construction"
+
+
 # --- applies cleanly -----------------------------------------------------------
 
 def test_schema_applies_cleanly_to_a_scratch_schema(pg_schema):
@@ -153,6 +163,13 @@ def test_attempt_lease_table_exists_with_required_columns(pg_schema):
     assert cols, "attempt_lease table does not exist"
     for col in ("idempotency_key", "owner", "expires_at"):
         assert col in cols, f"attempt_lease.{col} missing"
+
+
+def test_normalized_decline_table_exists_with_required_columns(pg_schema):
+    cols = _columns(pg_schema.conn, pg_schema.schema, "normalized_decline")
+    assert cols, "normalized_decline table does not exist"
+    for col in ("event_id", "value", "normalizer_version", "model_id", "raw_sha256", "created_at"):
+        assert col in cols, f"normalized_decline.{col} missing"
 
 
 # --- FK ordering: plan must exist before ledger can reference it -----------
@@ -229,6 +246,111 @@ def test_committed_schedule_decision_sha256_fk_rejects_unknown_plan(pg_schema):
             scheduled_for=committed_at + timedelta(hours=48),
             decision_sha256="no-such-plan-row-exists",
         )
+
+
+# --- normalized_decline: append-only LLM normalizer outputs ---------------
+
+def test_normalized_decline_composite_pk_allows_multiple_versions_same_event(pg_schema):
+    """normalized_decline has a composite PK of (event_id, normalizer_version).
+    Inserting two rows with the SAME event_id but DIFFERENT normalizer_version
+    must succeed: this is the whole point -- prompt bumps create NEW rows, never
+    destroy old ones. The old fact remains readable for audit trails."""
+    with pg_schema.conn.cursor() as cur:
+        # Insert two rows for the same event_id but different normalizer versions
+        cur.execute(
+            """
+            INSERT INTO ingested_event (event_id, event_type, raw_payload_sha256)
+            VALUES (%s, %s, %s)
+            """,
+            ("evt-norm-v-test", "payment.failed", "a" * 64),
+        )
+    with pg_schema.conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO normalized_decline (event_id, value, confidence, normalizer_version, model_id, raw_sha256)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            """,
+            ("evt-norm-v-test", "INSUFFICIENT_FUNDS", 0.9, "v1", "model-abc", "b" * 64),
+        )
+    with pg_schema.conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO normalized_decline (event_id, value, confidence, normalizer_version, model_id, raw_sha256)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            """,
+            ("evt-norm-v-test", "CARD_EXPIRED", 0.85, "v2", "model-def", "c" * 64),
+        )
+    # Verify both rows exist
+    with pg_schema.conn.cursor() as cur:
+        cur.execute(
+            "SELECT count(*) FROM normalized_decline WHERE event_id = %s",
+            ("evt-norm-v-test",),
+        )
+        count = cur.fetchone()[0]
+    assert count == 2, f"Expected 2 rows for event_id, got {count}"
+
+
+def test_normalized_decline_dedupes_duplicate_event_id_normalizer_version(pg_schema):
+    """Inserting the SAME (event_id, normalizer_version) twice with different
+    values must be a silent no-op (ON CONFLICT DO NOTHING) -- the FIRST write
+    wins, the second is dropped. This is the dedupe discipline every table in
+    this schema uses: a retried normalization request of the same event with
+    the same normalizer version returns the original verdict, never a second
+    row and never an exception."""
+    with pg_schema.conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO ingested_event (event_id, event_type, raw_payload_sha256)
+            VALUES (%s, %s, %s)
+            """,
+            ("evt-norm-dup", "payment.failed", "d" * 64),
+        )
+    # First insert
+    with pg_schema.conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO normalized_decline (event_id, value, confidence, normalizer_version, model_id, raw_sha256)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            ON CONFLICT (event_id, normalizer_version) DO NOTHING
+            """,
+            ("evt-norm-dup", "INSUFFICIENT_FUNDS", 0.9, "v1", "model-abc", "e" * 64),
+        )
+    # Second insert with DIFFERENT value but same key -- should be silently dropped
+    with pg_schema.conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO normalized_decline (event_id, value, confidence, normalizer_version, model_id, raw_sha256)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            ON CONFLICT (event_id, normalizer_version) DO NOTHING
+            """,
+            ("evt-norm-dup", "DIFFERENT_VALUE", 0.4, "v1", "model-xyz", "f" * 64),
+        )
+    # Verify only the FIRST value persists
+    with pg_schema.conn.cursor() as cur:
+        cur.execute(
+            "SELECT value, model_id FROM normalized_decline "
+            "WHERE event_id = %s AND normalizer_version = %s",
+            ("evt-norm-dup", "v1"),
+        )
+        row = cur.fetchone()
+    assert row is not None, "Row should exist"
+    assert row[0] == "INSUFFICIENT_FUNDS", "Value should be from FIRST insert"
+    assert row[1] == "model-abc", "model_id should be from FIRST insert"
+
+
+def test_normalized_decline_fk_rejects_nonexistent_event_id(pg_schema):
+    """normalized_decline.event_id REFERENCES ingested_event(event_id).
+    Attempting to insert a row with an event_id that has no matching
+    ingested_event row must raise ForeignKeyViolation."""
+    with pytest.raises(psycopg.errors.ForeignKeyViolation):
+        with pg_schema.conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO normalized_decline (event_id, value, confidence, normalizer_version, model_id, raw_sha256)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                """,
+                ("evt-norm-fk-missing", "SOME_VALUE", 0.8, "v1", "model-abc", "a" * 64),
+            )
 
 
 # --- attempt_index CHECK: NPCI's 1..4 cap, defense-in-depth at the DB ------

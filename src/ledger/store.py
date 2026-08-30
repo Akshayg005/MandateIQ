@@ -205,3 +205,65 @@ def record_ingested_event(
                 prior_version, amount_paise, raw_payload_sha256,
             ),
         )
+
+
+@dataclass(frozen=True)
+class NormalizedDeclineRow:
+    """A row read back from `normalized_decline`."""
+
+    event_id: str
+    value: str
+    confidence: float
+    normalizer_version: str
+    model_id: str
+    raw_sha256: str
+    created_at: datetime
+
+
+def record_normalized_decline(
+    conn, *, event_id: str, value: str, confidence: float, normalizer_version: str,
+    model_id: str, raw_sha256: str,
+) -> None:
+    """Append one normaliser verdict into `normalized_decline`. ON CONFLICT
+    (event_id, normalizer_version) DO NOTHING, mirroring
+    record_ingested_event's dedup discipline: a retried write under the
+    SAME prompt version is silently a no-op. A write under a NEW
+    normalizer_version is a different row entirely (see schema.sql's
+    comment on this table) -- never an overwrite of the old one.
+
+    confidence is required, not optional: a verdict written without it
+    cannot later be disputed ("why did the model say this?"), which is the
+    same auditability gap this whole table exists to close for the
+    verdict itself -- see schema.sql's comment on the column."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO normalized_decline (
+                event_id, value, confidence, normalizer_version, model_id, raw_sha256
+            ) VALUES (%s, %s, %s, %s, %s, %s)
+            ON CONFLICT (event_id, normalizer_version) DO NOTHING
+            """,
+            (event_id, value, confidence, normalizer_version, model_id, raw_sha256),
+        )
+
+
+def find_normalized_decline(
+    conn, event_id: str, normalizer_version: str,
+) -> NormalizedDeclineRow | None:
+    """Exact (event_id, normalizer_version) lookup -- the read-back path
+    src/policy/belief.update()'s required source_version must come from:
+    never trust an in-memory NormalizedDecline directly, always round-trip
+    it through the ledger first (PLAN_DETAIL.md B11 gate clause 3). None if
+    no row exists for this event under this normaliser version."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT event_id, value, confidence, normalizer_version, model_id,
+                   raw_sha256, created_at
+            FROM normalized_decline
+            WHERE event_id = %s AND normalizer_version = %s
+            """,
+            (event_id, normalizer_version),
+        )
+        row = cur.fetchone()
+    return NormalizedDeclineRow(*row) if row is not None else None

@@ -47,6 +47,17 @@ LLM_IMPORT = re.compile(
     re.MULTILINE,
 )
 
+# B11 extension: protected dirs also cannot import the first-party src.llm
+# package. `from src import llm` bypassed the original single-alternative
+# form (payments-domain review, 2026-08-31) -- the exact same miss the
+# google.genai fix three lines above this one already had to patch for
+# `from google import genai`, reproduced here in the fix meant to close it.
+SRC_LLM_IMPORT = re.compile(
+    r"^\s*(?:import|from)\s+src\.llm\b"
+    r"|^\s*from\s+src\s+import\s+\(?\s*[^\n]*\bllm\b",
+    re.MULTILINE,
+)
+
 # --- invariant 2: money is integer paise -----------------------------------
 FLOAT_MONEY = re.compile(
     r"\b(amount|amt|paise|balance|ltv|revenue|cost|price|fee|ceiling)\w*"
@@ -116,6 +127,13 @@ def check(path: pathlib.Path) -> list[str]:
             problems.append(
                 f"LLM import '{m.group(1)}' in the deterministic core (invariant 1). "
                 "Move this work to src/llm/ and pass the result in as a plain value."
+            )
+        m = SRC_LLM_IMPORT.search(text)
+        if m:
+            problems.append(
+                f"LLM edge import in the deterministic core (invariant 1, B11 extension). "
+                "Protected dirs cannot import src.llm/. The LLM edge is only for "
+                "src/execute/ and the integration boundary -- pass results in as plain values."
             )
         m = FLOAT_MONEY.search(text)
         if m:

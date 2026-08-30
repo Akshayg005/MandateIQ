@@ -418,6 +418,184 @@ def test_record_ingested_event_negative_amount_paise_raises_check_violation(pg_s
         )
 
 
+# --- record_normalized_decline and find_normalized_decline ---------------
+
+def test_record_normalized_decline_then_find_normalized_decline_round_trips(pg_schema):
+    """record_normalized_decline() followed by find_normalized_decline() must
+    round-trip all five fields correctly."""
+    from src.ledger.store import record_normalized_decline, find_normalized_decline
+
+    # First insert an ingested_event so the FK succeeds
+    with pg_schema.conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO ingested_event (event_id, event_type, raw_payload_sha256)
+            VALUES (%s, %s, %s)
+            """,
+            ("evt-normalized-roundtrip", "payment.failed", "a" * 64),
+        )
+
+    # Record a normalized decline
+    record_normalized_decline(
+        pg_schema.conn,
+        event_id="evt-normalized-roundtrip",
+        value="INSUFFICIENT_FUNDS",
+        confidence=0.92,
+        normalizer_version="v1",
+        model_id="model-abc123",
+        raw_sha256="b" * 64,
+    )
+
+    # Find it back
+    row = find_normalized_decline(pg_schema.conn, "evt-normalized-roundtrip", "v1")
+
+    assert row is not None, "Row should be found"
+    assert row.event_id == "evt-normalized-roundtrip"
+    assert row.value == "INSUFFICIENT_FUNDS"
+    assert row.confidence == 0.92
+    assert row.normalizer_version == "v1"
+    assert row.model_id == "model-abc123"
+    assert row.raw_sha256 == "b" * 64
+
+
+def test_record_normalized_decline_duplicate_silent_no_op_first_write_wins(pg_schema):
+    """Calling record_normalized_decline() twice with identical
+    (event_id, normalizer_version) but a DIFFERENT value the second time --
+    the FIRST write wins (ON CONFLICT DO NOTHING means the second is silently
+    dropped). This is intentional dedupe behavior, not a bug: a retried
+    normalization with the same normalizer version returns the original
+    verdict. Verify both by checking fetch and count."""
+    from src.ledger.store import record_normalized_decline, find_normalized_decline
+
+    # Insert ingested_event
+    with pg_schema.conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO ingested_event (event_id, event_type, raw_payload_sha256)
+            VALUES (%s, %s, %s)
+            """,
+            ("evt-norm-dup-wins", "payment.failed", "c" * 64),
+        )
+
+    # First write
+    record_normalized_decline(
+        pg_schema.conn,
+        event_id="evt-norm-dup-wins",
+        value="INSUFFICIENT_FUNDS",
+        confidence=0.9,
+        normalizer_version="v1",
+        model_id="model-first",
+        raw_sha256="d" * 64,
+    )
+
+    # Second write with DIFFERENT value but same key -- silently dropped
+    record_normalized_decline(
+        pg_schema.conn,
+        event_id="evt-norm-dup-wins",
+        value="CARD_EXPIRED",
+        confidence=0.7,
+        normalizer_version="v1",
+        model_id="model-second",
+        raw_sha256="e" * 64,
+    )
+
+    # Verify first value persists
+    row = find_normalized_decline(pg_schema.conn, "evt-norm-dup-wins", "v1")
+    assert row is not None
+    assert row.value == "INSUFFICIENT_FUNDS", "Value should be from FIRST write"
+    assert row.confidence == 0.9, "confidence should be from FIRST write"
+    assert row.model_id == "model-first", "model_id should be from FIRST write"
+
+    # Verify count is exactly 1
+    with pg_schema.conn.cursor() as cur:
+        cur.execute(
+            "SELECT count(*) FROM normalized_decline WHERE event_id = %s AND normalizer_version = %s",
+            ("evt-norm-dup-wins", "v1"),
+        )
+        count = cur.fetchone()[0]
+    assert count == 1, f"Expected 1 row, got {count}"
+
+
+def test_find_normalized_decline_nonexistent_returns_none(pg_schema):
+    """find_normalized_decline() on an (event_id, normalizer_version) pair
+    that was never written must return None, not raise an exception."""
+    from src.ledger.store import find_normalized_decline
+
+    row = find_normalized_decline(pg_schema.conn, "evt-never-seen", "v999")
+
+    assert row is None, "find_normalized_decline should return None for nonexistent row"
+
+
+def test_record_normalized_decline_new_version_leaves_old_version_untouched(pg_schema):
+    """Prompt bump creates a new normalizer_version and a NEW row for the
+    same event_id, without touching or replacing the old row. Both rows must
+    coexist and be readable, proving the full lineage of normalization
+    decisions for audit trails."""
+    from src.ledger.store import record_normalized_decline, find_normalized_decline
+
+    # Insert ingested_event
+    with pg_schema.conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO ingested_event (event_id, event_type, raw_payload_sha256)
+            VALUES (%s, %s, %s)
+            """,
+            ("evt-norm-lineage", "payment.failed", "f" * 64),
+        )
+
+    # v1 normalizer run
+    record_normalized_decline(
+        pg_schema.conn,
+        event_id="evt-norm-lineage",
+        value="INSUFFICIENT_FUNDS",
+        confidence=0.6,
+        normalizer_version="v1",
+        model_id="model-v1",
+        raw_sha256="g" * 64,
+    )
+
+    # v2 normalizer run (prompt bump)
+    record_normalized_decline(
+        pg_schema.conn,
+        event_id="evt-norm-lineage",
+        value="LOW_BALANCE",
+        confidence=0.95,
+        normalizer_version="v2",
+        model_id="model-v2",
+        raw_sha256="h" * 64,
+    )
+
+    # Fetch both explicitly and verify they coexist
+    row_v1 = find_normalized_decline(pg_schema.conn, "evt-norm-lineage", "v1")
+    row_v2 = find_normalized_decline(pg_schema.conn, "evt-norm-lineage", "v2")
+
+    assert row_v1 is not None, "v1 row should still exist"
+    assert row_v2 is not None, "v2 row should exist"
+    assert row_v1.value == "INSUFFICIENT_FUNDS", "v1 should have its original value"
+    assert row_v2.value == "LOW_BALANCE", "v2 should have its new value"
+    assert row_v1.model_id == "model-v1"
+    assert row_v2.model_id == "model-v2"
+
+
+def test_record_normalized_decline_fk_violation_on_nonexistent_event_id(pg_schema):
+    """record_normalized_decline() with an event_id that has no matching
+    ingested_event row must raise the FK constraint violation, proving the
+    referential integrity is enforced."""
+    from src.ledger.store import record_normalized_decline
+    import psycopg
+
+    with pytest.raises(psycopg.errors.ForeignKeyViolation):
+        record_normalized_decline(
+            pg_schema.conn,
+            event_id="evt-norm-fk-fail",
+            value="SOME_VALUE",
+            confidence=0.8,
+            normalizer_version="v1",
+            model_id="model-test",
+            raw_sha256="i" * 64,
+        )
+
+
 # --- source guard: append-only in the code, not just the DB ----------------
 
 def test_store_never_updates_or_deletes_the_ledger_table():
@@ -452,3 +630,18 @@ def test_store_never_updates_or_deletes_new_tables():
     for pattern in banned:
         match = re.search(pattern, text, re.IGNORECASE)
         assert match is None, f"store.py must never UPDATE ingested_event or mandate_lifecycle, found: {match.group(0)!r}"
+
+
+def test_store_never_updates_or_deletes_normalized_decline():
+    """normalized_decline is append-only like ledger. Verify that store.py's
+    source never contains UPDATE or DELETE against normalized_decline."""
+    text = STORE_SRC.read_text(encoding="utf-8")
+    banned = [
+        r'UPDATE\s+normalized_decline\b',
+        r'UPDATE\s+"normalized_decline"',
+        r'DELETE\s+FROM\s+normalized_decline\b',
+        r'DELETE\s+FROM\s+"normalized_decline"',
+    ]
+    for pattern in banned:
+        match = re.search(pattern, text, re.IGNORECASE)
+        assert match is None, f"store.py must never UPDATE/DELETE normalized_decline, found: {match.group(0)!r}"

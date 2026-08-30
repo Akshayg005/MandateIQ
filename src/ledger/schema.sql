@@ -158,3 +158,46 @@ CREATE TABLE ingested_event (
   CHECK (amount_paise IS NULL OR amount_paise >= 0)
 );
 CREATE INDEX ingested_event_mandate ON ingested_event (mandate_id, received_at DESC);
+
+-- B11: one row per (event, normaliser prompt version). Append-only like
+-- every other table here -- no UPDATE, by the same application-layer
+-- discipline this file's header describes for `ledger` -- but for a
+-- DIFFERENT reason than ledger's: a re-normalisation under a NEW
+-- normalizer_version (a prompt edit) is a genuinely NEW fact, not a
+-- correction of the old one, so the primary key includes it. Overwriting
+-- the old row on a prompt change would destroy exactly the audit trail
+-- this table exists to hold -- which prompt version produced which verdict,
+-- on which historical decline. ON CONFLICT DO NOTHING (src/ledger/store.py)
+-- makes a retried write under the SAME version a silent no-op instead.
+--
+-- This table -- not a column added to ingested_event -- because the
+-- normaliser runs strictly AFTER ingest (only on the UNKNOWN it leaves
+-- unresolved, decline_taxonomy.py's own docstring), so filling a column on
+-- an existing row would require an UPDATE, and because ingested_event's
+-- own decline_class must stay the deterministic taxonomy's verdict --
+-- overwriting it would destroy the UNKNOWN rate as a reported metric
+-- (decline_taxonomy.py: "a reported metric, not a swallowed one").
+--
+-- This is the durable form of PLAN_DETAIL.md's B11 gate clause 3:
+-- "normaliser output is versioned in the ledger before it can touch a
+-- belief" -- src/policy/belief.update()'s required source_version
+-- parameter is what a caller must read back FROM this table before a
+-- normalised decline is allowed to update a Belief at all.
+-- confidence: the model's own self-reported confidence for `value`, kept
+-- rather than only consumed and discarded by normalizer.py's UNKNOWN
+-- override. A verdict a merchant can dispute needs to show WHY, not just
+-- what -- "MANDATE_REVOKED, model X, prompt-hash Y" with no confidence is
+-- not disputable (payments-domain review, 2026-08-31). NORMALIZE_TOOL
+-- requires confidence on every call, so NOT NULL rather than nullable.
+CREATE TABLE normalized_decline (
+  event_id           TEXT        NOT NULL REFERENCES ingested_event (event_id),
+  value              TEXT        NOT NULL,   -- DeclineClass.value
+  confidence         DOUBLE PRECISION NOT NULL,
+  normalizer_version TEXT        NOT NULL,
+  model_id           TEXT        NOT NULL,
+  raw_sha256         TEXT        NOT NULL,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (event_id, normalizer_version),
+  CHECK (confidence >= 0.0 AND confidence <= 1.0)
+);
+CREATE INDEX normalized_decline_event ON normalized_decline (event_id, created_at DESC);

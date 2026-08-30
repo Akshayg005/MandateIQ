@@ -86,12 +86,16 @@ class BeliefError(ValueError):
 @dataclass(frozen=True)
 class Belief:
     """probs: the three cause probabilities, positionally indexed by
-    CAUSE_ORDER. provenance: which normaliser and reference-prior versions
-    produced this belief (cause_map.PRIOR_VERSION plus
-    REFERENCE_PRIOR_VERSION) -- what makes a belief written to
-    plan.belief_json traceable, per PLAN_DETAIL.md section 8.1's B11 gate:
-    "a belief that cannot be traced to a specific normaliser version is not
-    auditable"."""
+    CAUSE_ORDER. provenance: which classifier and reference-prior versions
+    produced this belief -- cause_map.PRIOR_VERSION and
+    REFERENCE_PRIOR_VERSION always; from update(), also the required
+    source_version identifying which classifier (deterministic taxonomy or
+    LLM normaliser, and which version of it) produced the DeclineClass
+    observation, as `;source=<source_version>` -- what makes a belief
+    written to plan.belief_json traceable, per PLAN_DETAIL.md section 8.1's
+    B11 gate: "a belief that cannot be traced to a specific normaliser
+    version is not auditable". init() never has an observation to trace,
+    so its provenance omits the source field entirely."""
 
     probs: tuple[float, float, float]
     provenance: str
@@ -120,6 +124,18 @@ class Belief:
 
 def _provenance() -> str:
     return f"cause_map={PRIOR_VERSION};reference_prior={REFERENCE_PRIOR_VERSION}"
+
+
+def _validate_source_version(source_version: str) -> None:
+    if not source_version:
+        raise BeliefError(
+            "source_version is required and must be non-empty -- a Belief "
+            "updated from an observation whose classifier cannot be named is "
+            "not auditable (PLAN_DETAIL.md B11 gate, clause 3). Pass "
+            "decline_taxonomy.TAXONOMY_VERSION for the deterministic path, or "
+            "a NormalizedDecline.normalizer_version read back from the "
+            "ledger's normalized_decline row for the LLM path."
+        )
 
 
 def init(prior: Mapping[Cause, float]) -> Belief:
@@ -153,12 +169,41 @@ def likelihood(dc: DeclineClass) -> tuple[float, float, float]:
     return tuple(p[c] / REFERENCE_PRIOR[i] for i, c in enumerate(CAUSE_ORDER))
 
 
-def update(b: Belief, obs: DeclineClass) -> Belief:
+def update(b: Belief, obs: DeclineClass, *, source_version: str) -> Belief:
     """Bayes' rule on an observed DeclineClass: update(b, obs)[c] is
     proportional to b[c] * likelihood(obs)[c], then renormalised. Pure
     static Bayes -- no damping, no tempering, no cause-switch leak. See this
     module's docstring and DECISIONS.md, 2026-08-29, B7 for why the
-    resulting overconfidence is disclosed, not mitigated."""
+    resulting overconfidence is disclosed, not mitigated.
+
+    source_version is REQUIRED and keyword-only: which classifier produced
+    `obs` -- decline_taxonomy.TAXONOMY_VERSION for the deterministic path,
+    or a NormalizedDecline.normalizer_version (read back from the ledger's
+    normalized_decline row, never passed in directly from src/llm/ -- this
+    module must stay import-free of that package) for the LLM path. Before
+    this parameter existed, a belief updated from an LLM-normalised decline
+    and one updated from the deterministic taxonomy produced byte-identical
+    provenance -- exactly the gap this Belief's own docstring already named
+    as unacceptable ("a belief that cannot be traced to a specific
+    normaliser version is not auditable", PLAN_DETAIL.md B11 gate). Required
+    rather than defaulted so that gap cannot silently reopen: a caller
+    cannot construct a belief without stating where its evidence came from.
+
+    What this DOES NOT prove (payments-domain review, 2026-08-31): that the
+    string is honest. `update(b, nd.value, source_version=nd.normalizer_version)`
+    on an in-memory NormalizedDecline that was never actually written to
+    `normalized_decline` satisfies this signature while defeating the whole
+    point -- the ledger round-trip is a documented caller obligation, not a
+    structural one enforced by a type here. Closing that gap needs the
+    observation and its provenance to arrive as ONE object a ledger read
+    produces (e.g. store.find_normalized_decline's return value, or an
+    equivalent for the deterministic path), not two independent arguments a
+    caller can source separately -- real design work for whichever block
+    wires the executor to this function, deferred rather than guessed at
+    now since update() has no production caller yet to prove the right
+    shape against. See DECISIONS.md, 2026-08-31.
+    """
+    _validate_source_version(source_version)
     lik = likelihood(obs)
     unnorm = tuple(b.probs[i] * lik[i] for i in range(len(CAUSE_ORDER)))
     total = sum(unnorm)
@@ -168,7 +213,8 @@ def update(b: Belief, obs: DeclineClass) -> Belief:
             "is consistent with already had zero prior mass"
         )
     probs = tuple(u / total for u in unnorm)
-    return Belief(probs=probs, provenance=_provenance())
+    provenance = f"{_provenance()};source={source_version}"
+    return Belief(probs=probs, provenance=provenance)
 
 
 def quantised(b: Belief, step: float) -> tuple[int, int, int]:

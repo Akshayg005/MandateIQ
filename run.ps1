@@ -18,7 +18,11 @@ param(
     # and habits keep working.
     [Alias("Block")]
     [string]$Day = "",
-    [int]$Kills = 50
+    [int]$Kills = 50,
+    # golden: bypass eval/golden/.cache/ and force a live call for every
+    # row. The gate should be ticked against a -NoCache run, not a cached
+    # one -- see DECISIONS.md, 2026-08-30.
+    [switch]$NoCache
 )
 
 $ErrorActionPreference = "Stop"
@@ -63,7 +67,8 @@ Mandate Recovery Engine -- tasks
 
   .\run.ps1 eval              full eval, all regimes, both compliance profiles
   .\run.ps1 eval-quick        nominal regime only, strict profile
-  .\run.ps1 golden            golden-set regression on the LLM layer
+  .\run.ps1 golden            golden-set regression on the LLM layer (cached;
+                               -NoCache forces a live call on every row)
   .\run.ps1 bench             LLM vs statistical core benchmark
   .\run.ps1 chaos -Kills 50   induced process kills
   .\run.ps1 report            regenerate all figures and tables
@@ -114,6 +119,17 @@ Mandate Recovery Engine -- tasks
         # DECISIONS.md has the full reasoning. Re-add once B13 lands.
         Invoke-Step "tests"  { & $Py -m pytest -q -m $TestFastFilter }
         Invoke-Step "guards" { & $Py scripts\guard_invariants.py --all }
+
+        # Advisory, not Invoke-Step: a stale golden-set cache should warn,
+        # never block session end. No live API calls -- a file-existence
+        # check against the current prompt-content-hash version, so it's
+        # cheap enough to run every time. This is B11's actual answer to
+        # PLAN_DETAIL.md's "wired into the Stop hook": a full live run would
+        # cost ~5.5 minutes on the first checkpoint after any prompt edit,
+        # which is what caching was built to avoid (DECISIONS.md, 2026-08-30
+        # and 2026-08-31).
+        Write-Host "`n== golden-set cache freshness (advisory)" -ForegroundColor Cyan
+        & $Py eval\golden_check.py --check-freshness
     }
 
     "eval" {
@@ -222,6 +238,11 @@ print(c.order.create({'amount':100,'currency':'INR'})['id'])
     }
 
     "coverage" { & $Py scripts\decline_coverage.py }
+
+    "golden" {
+        if ($NoCache) { & $Py eval\golden_check.py --no-cache }
+        else { & $Py eval\golden_check.py }
+    }
 
     "clean" {
         Get-ChildItem -Recurse -Directory -Filter __pycache__ |
