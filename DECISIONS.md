@@ -3507,3 +3507,52 @@ expiry to check before it is a code bug. Separately, Flash-Lite's
 30-row `intent.jsonl` golden set is for, and it should be read as an open
 question until that set runs, not as an assumption carried over from the
 Haiku plan.
+
+---
+
+## 2026-08-30 — B11 golden set: cached, and the cache key is content-derived
+
+*The deviation.* PLAN.md Day 7 says the golden set is "wired into the `Stop`
+hook so a prompt edit that regresses accuracy fails the build." The Stop hook
+runs `run.ps1 ci`. Measured against the live Gemini key, the edge is limited
+to **~15 requests/minute** (429 `RESOURCE_EXHAUSTED` on call 17, recovering
+in under a minute -- per-minute, not a daily cap, and pooled per model). The
+golden set is 50 declines + 30 intent cases, so an uncached run is **~5.5
+minutes added to every session end**. Chosen instead: cache the model's
+answers and let `ci` call out only for rows whose answer cannot already be
+known. Approved by the human before any B11 code was written.
+
+*What is cached, and what is never cached.* The cache stores **model output**
+keyed by input. It never stores, derives, or touches the hand-written labels
+-- those stay in `declines.jsonl` / `intent.jsonl`, and PLAN_DETAIL's "must
+NOT be regenerated from current model output" is unaffected. `golden_check`
+still compares model answer against hand label on every run; the cache only
+decides whether that answer costs an API call.
+
+*The subtlety that decides whether this works.* The cache key is
+`sha256(raw_input) + normalizer_version + model_id`. If `normalizer_version`
+were a hand-maintained string, a prompt edit with a forgotten version bump
+would silently reuse stale answers and `golden_check` would pass **on the
+exact regression it exists to catch** -- a check that cannot fail, which is
+the failure mode this project has already amended three gates over. So
+`normalizer_version` is **derived from content**, not typed:
+
+        normalizer_version = sha256(system_prompt + tool_schema)[:12]
+
+computed at import. A prompt edit therefore invalidates every affected row
+automatically and forces the full uncached run -- the 5.5 minutes gets spent
+exactly when it is the point, and never otherwise. This also improves clause
+3 of the gate as a side effect: the `normalizer_version` written to the
+ledger becomes a content hash that identifies which prompt produced a value,
+rather than a label someone remembered to increment.
+
+*Two guards against a vacuous pass.* (1) `golden_check` reports cache
+hits/misses and API calls made, so "golden set passes" can never be silently
+read as "the model was consulted" when it was not. (2) A `--no-cache` flag
+forces the full live run, which is what the gate should be ticked against.
+
+*Cache location.* `eval/golden/.cache/`, **gitignored**. A committed cache
+would be a file of model answers living in the repo next to a golden set
+whose defining property is that it was not generated from model answers;
+keeping it untracked keeps that line sharp. Cost is one 5.5-minute run on a
+fresh clone.
