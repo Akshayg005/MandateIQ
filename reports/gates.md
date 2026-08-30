@@ -320,7 +320,74 @@ written and its gate unmet counts as zero.
            Full reasoning: DECISIONS.md, 2026-08-30, BOTH B10 entries (the
            second reverses the first); POSTMORTEM.md incidents 4, 5, 6;
            reports/chaos.md. Does not touch eval/frozen/. -->
-- [ ] **B11** ∥ LLM edge + golden set: golden set passes; no LLM import in core; normaliser output is versioned in the ledger before it can touch a belief
+- [x] **B11** ∥ LLM edge + golden set: golden set passes; no LLM import in core; normaliser output is versioned in the ledger before it can touch a belief
+      <!-- 2026-08-31, CLOSED. All three clauses measured, not asserted.
+           Golden set: aggregate 47/50 (94.0%, floor 90%); ESCALATION-ONLY
+           subset (the 12 rows decline_taxonomy.classify() itself leaves
+           UNKNOWN -- the only rows normalize() actually sees in
+           production, since 38/50 are answered confidently upstream and
+           never reach the LLM) 12/12 (100%), gated independently of the
+           aggregate so the component cannot look fine on average while
+           failing at its actual job. Both zero-tolerance checks clean
+           (0 INSUFFICIENT_FUNDS<->MANDATE_REVOKED confusions, 0 any-label
+           false MANDATE_REVOKED). Intent 29/30 (96.7%, floor 85%), 0 false
+           HIGH on LOW-labeled (false off-ramp risk, the safety-critical
+           direction). guard_invariants.py denies src.llm from all four
+           PROTECTED_DIRS, transitively (both `import src.llm.x` and
+           `from src import llm` forms). belief.update()'s source_version
+           is a required keyword-only parameter, no default -- a belief
+           cannot be constructed without naming which classifier version
+           produced its observation.
+           NOT a clean history. money-auditor cleared the ledger/belief
+           changes outright (zero findings). payments-domain -- this
+           block's specified review, PLAN_DETAIL.md -- found NINE real
+           problems on the classify/llm boundary, each independently
+           reverified (a probe script or a live measurement) before being
+           acted on: two golden-set labels were wrong, not model errors
+           (grounded against decline_taxonomy.py's own keyword rules and
+           standard ISO 8583 banking codes); three intent labels were
+           wrong, the worst literally reading "can you pause it for a
+           month or two" and labeled LOW (stay in the retry lane) when it
+           is a direct request for the off-ramp's own first stage; the
+           narrator's claims guard was ANTI-CORRELATED WITH TRUTH -- tested
+           against 8 legitimate off-ramp sentences and 9 real false-agency
+           claims, it blocked 4/8 of the first group and missed 8/9 of the
+           second -- rebuilt as a SAFE-then-DANGER design, 0/0 on both sets
+           after; a guard bypass (`from src import llm`) reproduced a hole
+           the same file had already closed for `from google import genai`
+           three lines above it; the zero-tolerance decline check only
+           caught one symmetric swap and missed exactly what the live run
+           produced (payment_cancelled -> MANDATE_REVOKED, the adversarial
+           case lifted from decline_taxonomy.py's own documented finding),
+           widened to any false MANDATE_REVOKED; confidence was computed,
+           used, then discarded -- now persisted to
+           normalized_decline.confidence, its missing-key default flipped
+           from the most permissive value (1.0) to the safest (0.0); the
+           cache-busting version hash covered the prompt but not the model
+           id or the confidence floor, so an env override could report
+           PASSED on a different model's stale answers -- both folded into
+           the hash.
+           Two follow-on findings were investigated and confirmed
+           genuinely blocked, not forced: belief.update()'s honesty gap
+           (source_version proves something was supplied, not that it was
+           honest) needs a fix living in src/execute/, not src/policy/ --
+           PLAN_DETAIL.md section 6's own dependency graph draws ledger/
+           and policy/ as siblings that never point at each other,
+           converging only at the executor, which does not exist for this
+           purpose yet. intent_score()'s float has no defined path into
+           src/policy/gate.py's ConformalGate anywhere in this codebase --
+           the real gate takes a Belief built from payment data and the
+           fitted predictor consumes nonconformity scores, neither of
+           which intent_score() produces -- inventing a threshold to close
+           the item would have meant fabricating unreviewed statistical
+           machinery in the exact path CLAUDE.md's safety design section
+           requires split-conformal rigor for. Both left as real design
+           work for whichever block does the relevant wiring, not guessed
+           at here.
+           Full reasoning, every fixed/disagreed/deferred item, and the
+           exact repository citations for both blocked findings:
+           DECISIONS.md, 2026-08-31, two entries. Does not touch
+           eval/frozen/. -->
 - [ ] **B12** ∥ benchmark + shadow: benchmark table in DECISIONS.md including the variance column; shadow mode produces a delta log over the full batch
 - [ ] **B13** ★ stress regimes + report: every number reproducible by one command; at least one regime where we lose, explained
 - [ ] **B14** ∥ dashboard: merchant + acquirer views; per-mandate drill-down shows belief, chosen slot, binding constraint, conformal set, ledger trail
