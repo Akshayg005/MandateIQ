@@ -152,14 +152,72 @@ written and its gate unmet counts as zero.
            perfect inference (the policies are not nested):
            DECISIONS.md, 2026-08-29 and 2026-08-30. Does not touch
            eval/frozen/. -->
-- [ ] **B9** ★ executor + idempotency: keys test passes (no clock/uuid/pid); **an opt-out arriving inside the 24h window is honoured — proven by a test that actively constructs the race** (commits an attempt, then delivers a late opt-out event inside that window, and asserts the attempt is aborted — not merely a test that happens never to generate one); `UNCONFIRMED` has a resolution path that is actually reachable
+- [x] **B9** ★ executor + idempotency: keys test passes (no clock/uuid/pid); **an opt-out arriving inside the 24h window is honoured — proven by a test that actively constructs the race** (commits an attempt, then delivers a late opt-out event inside that window, and asserts the attempt is aborted — not merely a test that happens never to generate one); `UNCONFIRMED` has a resolution path that is actually reachable
       <!-- 2026-08-29, vacuous-checks audit: strengthened from "an opt-out
            arriving inside the 24h window is honoured" -- a test that
            simply never generates a late opt-out would satisfy that text
            by construction, without ever exercising the actual race. No
            executor code exists yet; this amendment is made before B9
            starts, the same standard as the other gate amendments this
-           block. Full reasoning: DECISIONS.md, 2026-08-29. -->
+           block. Full reasoning: DECISIONS.md, 2026-08-29.
+           2026-08-30, CLOSED. All three clauses met, 719 tests green,
+           guard_invariants exit 0 (--all AND explicitly by path for the
+           new untracked files, per the known B3 issue), eval/frozen/
+           untouched. money-auditor: zero findings. compliance-auditor:
+           10/10 VERIFIED, zero VIOLATED, zero NOT COVERED -- including
+           the three items B7 had to leave NOT COVERED and attribute
+           forward (24h-lag enforcement, attempt-cap enforcement,
+           contact-frequency/quiet-hours), all of which land here.
+           Clause 1 (keys): key_for() delegates to core/ids and a
+           source-level test asserts keys.py imports no time/uuid/os/
+           random. Clause 2 (the 6(c) race): shipped as a DISCRIMINATING
+           PAIR -- a positive case (commit, advance the frozen clock to
+           scheduled_for-2h, deliver a REVOKED lifecycle event with
+           effective_at inside the window, assert INTENT->FAILED with no
+           SENT row, provider never called, schedule row voided) and a
+           byte-identical negative control WITHOUT the opt-out that must
+           REACH the provider. The pair was additionally mutation-tested
+           before ticking: emptying _TERMINAL_LIFECYCLE_STATES made the
+           identical positive setup reach the provider, proving the abort
+           is caused by the lifecycle read specifically and not by the
+           test's own setup. That probe was temporary and deleted; it is
+           described here rather than kept, since a permanent test that
+           monkeypatches the module under test would itself be the kind
+           of check this project distrusts. Clause 3 (UNCONFIRMED):
+           driven all the way to UNRESOLVED_FINAL across four reconcile
+           passes by test, with UNRESOLVED_FINAL asserted terminal-and-
+           reported, never silently dropped.
+           NOT a clean history, and must not be read as one. The FIRST
+           LIVE test-mode call ever made through razorpay_client.py --
+           the last verification step, run after all 78 B9 tests were
+           green and guards were clean -- found find_by_receipt() DEAD ON
+           ARRIVAL: it filtered PAYMENTS by `receipt`, which the API
+           rejects outright ("receipt is/are not required and should not
+           be sent") because receipt is an ORDER field. Since B3 proved
+           `receipt` does not dedupe Order.create, that method is the
+           ENTIRE recover-by-asking path, so clause 3 was false against
+           the real API while every test passed. Fixed by anchoring the
+           ATTEMPT path to an Order (charge() creates the order carrying
+           the key as receipt FIRST, then the recurring payment against
+           that order_id; find_by_receipt() became an indexed two-step),
+           chosen over a verified-but-pagination-fragile alternative and
+           approved before being applied. A second measured finding: the
+           Orders list endpoint LAGS INDEXING (count=0 at 0s/3s/8s,
+           resolved ~30s later), so None means "not found YET", never
+           "never sent" -- which is what recover.py's backoff already
+           assumed, so the lag strengthened that design rather than
+           changing it. charge()'s own field shape remains UNVERIFIED
+           against live traffic (test mode will not mint a recurring
+           token on demand) and stays disclosed in the module docstring,
+           not assumed correct. Guard added: scripts/live_smoke_b9.py --
+           fake-based tests guard behaviour, only a live call guards wire
+           format, and a fake accepts whatever shape it is handed. Full
+           incident: POSTMORTEM.md incident 3. Full reasoning, both
+           measured alternatives, and the two spec contradictions
+           resolved before coding (the missing commit path -> commit.py
+           as a seventh file; void() refusing only on a SENT row rather
+           than on any INTENT row): DECISIONS.md, 2026-08-30, three B9
+           entries. Does not touch eval/frozen/. -->
 
 - [ ] **B10** chaos: 50 induced kills; zero double-charges; zero lost jobs; ledger complete; **the denominator is reported** — how many kills landed inside the unsafe window
 - [ ] **B11** ∥ LLM edge + golden set: golden set passes; no LLM import in core; normaliser output is versioned in the ledger before it can touch a belief

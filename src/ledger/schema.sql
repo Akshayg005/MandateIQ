@@ -59,12 +59,28 @@ CREATE INDEX ledger_key ON ledger (idempotency_key);
 -- cannot prove committed_at was honestly "now" when the row was written --
 -- that honesty is an executor-discipline invariant, reviewed at B9, not
 -- something this schema can enforce without a trigger.
+-- decision_sha256 (B9): added when src/execute/commit.py was written --
+-- committed_schedule is the only durable record an executor process (which
+-- may be a different process than the one that called solve(), any amount
+-- of time later, per the crash-recovery design this whole layer exists
+-- for) reads before writing a `ledger` row -- and `ledger.decision_sha256`
+-- is NOT NULL REFERENCES plan. Without this column here, attaching the
+-- correct plan to a ledger row would mean joining plan and
+-- committed_schedule by (mandate_id, cycle_id) and nearest committed_at,
+-- which is exactly the kind of timing-heuristic join B1's plan table
+-- exists to make unnecessary -- two solve() calls in the same cycle (or
+-- the same frozen-clock instant, which tests can and do produce) would
+-- make that join ambiguous. A direct FK column is unambiguous. Logged in
+-- DECISIONS.md, 2026-08-30, B9 -- schema.sql is not eval/frozen/ and this
+-- is an additive column, not a rewrite of anything B1's gate certified
+-- (money/clock/ids tests, no UPDATE path on ledger); both still hold.
 CREATE TABLE committed_schedule (
   idempotency_key TEXT PRIMARY KEY,
   mandate_id TEXT NOT NULL, cycle_id INT NOT NULL, attempt_index SMALLINT NOT NULL,
   generation SMALLINT NOT NULL DEFAULT 0,
   action TEXT NOT NULL, amount_paise BIGINT NOT NULL,
   profile TEXT NOT NULL,
+  decision_sha256 TEXT NOT NULL REFERENCES plan (decision_sha256),
   scheduled_for TIMESTAMPTZ NOT NULL, committed_at TIMESTAMPTZ NOT NULL,
   notification_sent_at TIMESTAMPTZ,
   voided_at TIMESTAMPTZ, void_reason TEXT,

@@ -3157,3 +3157,118 @@ suspicion; what makes the outcome defensible is that the threshold never
 moved after it was first derived, both required-fail cases still hold, and
 the one change that helped the gate was flagged and approved before being
 made rather than discovered afterward.
+
+### 2026-08-30 · B9 · `committed_schedule.decision_sha256` — a column added to a passed gate's artifact
+
+`schema.sql` is B1's gate artifact and B1 is closed, so adding to it needs
+saying out loud rather than doing quietly.
+
+`committed_schedule` gained `decision_sha256 TEXT NOT NULL REFERENCES plan`.
+The reason is structural, not convenience: `committed_schedule` is the only
+durable record an executor process reads before writing a `ledger` row, and
+`ledger.decision_sha256` is `NOT NULL REFERENCES plan`. The executor may be
+a different process than the one that called `solve()`, running any amount
+of time later — that separation is the whole point of the crash-recovery
+design. Without the column, attaching the right plan to a ledger row means
+joining `plan` and `committed_schedule` on `(mandate_id, cycle_id)` and
+nearest `committed_at`, which is exactly the timing-heuristic join B1's
+`plan` table exists to make unnecessary. Two `solve()` calls in one cycle —
+or in one frozen-clock instant, which the tests do produce — make that join
+ambiguous. A direct FK is unambiguous.
+
+*What this does and does not reopen.* Additive column, no rewrite. B1's gate
+certified money/clock/ids tests and "ledger DDL has no UPDATE path"; both
+still hold, and `ledger` itself is untouched. `schema.sql` is not under
+`eval/frozen/`, so no freeze rule is involved.
+
+### 2026-08-30 · B9 · Two spec contradictions in PLAN_DETAIL, resolved before any executor code
+
+Both were found while planning, and both were put to the human and approved
+before implementation rather than settled unilaterally in code.
+
+**1 — no commit path existed.** The gate requires a test that "commits an
+attempt, then delivers a late opt-out." Nothing in the repo wrote `plan` or
+`committed_schedule`: B8's `solve()` returns a `Plan` object and stops.
+PLAN_DETAIL's B9 file table lists six files and none of them is a writer.
+Resolution: `src/execute/commit.py`, a seventh file, as production code
+rather than a test fixture — `schema.sql`'s own comment requires
+`committed_at` to come from `src/core/clock.now()` and not Postgres's wall
+clock, and only a real module can honour that. A fixture-only writer would
+also have to be rebuilt by B10 and B12 independently.
+
+**2 — `void.py`'s must-not contradicted §3's write ordering.** PLAN_DETAIL
+says void must never touch a key that already has an INTENT row ("that
+attempt is resolved by asking, never by voiding"); §3 step 2a has the late
+lifecycle read "abort and void", which happens *after* INTENT is written.
+Read literally, the abort path could never void.
+
+Resolution: **`void()` refuses only when a `SENT` row exists.** The
+asymmetry is about who is asking, not about which rows exist. The executor's
+pre-call abort holds the lease and wrote that INTENT row itself, in this
+process, and has issued no provider call — that is first-hand knowledge.
+`recover.py` is a *different* process inferring from rows, and it keeps the
+strict rule: it must never treat INTENT-without-SENT as proof nothing was
+sent, and always asks the provider. The literal reading was rejected because
+it leaves a live schedule row on a revoked mandate forever, and pollutes
+`UNCONFIRMED` with cases we know for certain were never sent.
+
+### 2026-08-30 · B9 · The recovery interface was dead on arrival — found by the first live call, not by the suite
+
+Full incident: POSTMORTEM.md incident 3. Recorded here for the design
+consequence.
+
+`find_by_receipt()` — the entire "recover by asking, never by resending"
+path — called `payment.all({"receipt": ...})`. Razorpay rejects that
+outright: *"receipt is/are not required and should not be sent."* `receipt`
+is an Order field; Payments have none. The method could never have returned
+anything, for any input. All 78 B9 tests were green and
+`guard_invariants --all` was clean at the time.
+
+*Why the original reasoning was right and still failed.* The docstring
+argued recovery must search the entity the ambiguous call actually creates,
+and `charge()` (`payment.createRecurring`) creates a Payment, not an Order —
+so searching Orders would be recovering against the wrong record. That
+reasoning is sound. The mechanism it assumed simply does not exist. An
+earlier draft that searched Orders had been "caught and fixed before merge";
+the fix was the bug.
+
+*Measured, both live, before choosing.* `order.all({"receipt": R})` works
+and is server-side indexed — three known receipts each returned exactly
+their own order, count=1. A bounded-window `payment.all({from,to})` scan
+with a client-side `notes` match also works (verified against B3's real
+payment). The first was chosen and the human approved it: the second caps at
+100 payments per page and degrades on a busy account precisely when recovery
+matters most.
+
+*Consequence.* `charge()` now creates an order carrying the idempotency key
+as its receipt, then creates the recurring payment against that `order_id` —
+which is how Razorpay itself models recurring debits. `find_by_receipt()` is
+an indexed two-step. The order is created FIRST so that a crash between the
+two calls still leaves a receipt-addressable record.
+
+*A second finding from the same probe, and why it changes nothing.* The
+Orders list endpoint **lags indexing** — an order queried by its own receipt
+at 0s, 3s and 8s after creation returned count=0, appearing later (~30s in
+the smoke run). So `None` from this method cannot distinguish "never
+created", "created but no payment", and "not indexed yet". That is exactly
+what `recover.py` was already built for: a miss becomes `UNCONFIRMED` and is
+asked again on backoff, never treated as proof nothing was sent, and the
+slot stays consumed throughout. The lag strengthened the backoff's
+rationale rather than changing its design.
+
+*What is still unverified, and stays disclosed.* `charge()` itself. Driving
+`payment.createRecurring` needs a real saved token or active mandate, which
+test mode will not mint on demand. The module docstring's existing
+disclosure stands, and is now the only remaining one on this path.
+
+*The generalisable lesson, which is the point of logging it.* Every test in
+`tests/execute/test_razorpay_client.py` fakes the SDK, deliberately and with
+good reason. A fake accepts whatever parameter shape it is handed, so no
+fake-based test can ever catch a wrong shape. Fake-based tests guard
+behaviour; only a live call guards wire format. `scripts/live_smoke_b9.py`
+now does the latter, and the two are documented as separate risks that do
+not substitute for one another. PLAN.md §5 risk 3 predicted this class of
+failure ("Razorpay's actual idempotency semantics may not match what B9
+assumes") and bought it down with the B3 spike — the spike covered
+`Order.create` and correctly told us not to trust provider dedup, but
+nothing had ever exercised the *lookup* half of the same interface.

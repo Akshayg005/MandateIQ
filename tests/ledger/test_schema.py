@@ -58,7 +58,7 @@ def _insert_ledger_row(conn, *, key, state, decision_sha256, mandate_id="M-TEST"
 
 
 def _insert_committed_schedule_row(conn, *, key, committed_at, scheduled_for,
-                                    mandate_id="M-TEST", cycle_id=1,
+                                    decision_sha256, mandate_id="M-TEST", cycle_id=1,
                                     attempt_index=1, action="ATTEMPT",
                                     amount_paise=10000, profile="strict"):
     with conn.cursor() as cur:
@@ -66,12 +66,12 @@ def _insert_committed_schedule_row(conn, *, key, committed_at, scheduled_for,
             """
             INSERT INTO committed_schedule (
                 idempotency_key, mandate_id, cycle_id, attempt_index,
-                action, amount_paise, profile, scheduled_for, committed_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                action, amount_paise, profile, decision_sha256, scheduled_for, committed_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING idempotency_key
             """,
             (key, mandate_id, cycle_id, attempt_index, action, amount_paise,
-             profile, scheduled_for, committed_at),
+             profile, decision_sha256, scheduled_for, committed_at),
         )
         return cur.fetchone()[0]
 
@@ -122,11 +122,12 @@ def test_committed_schedule_table_has_required_columns(pg_schema):
     cols = _columns(pg_schema.conn, pg_schema.schema, "committed_schedule")
     for col in (
         "idempotency_key", "mandate_id", "cycle_id", "attempt_index",
-        "generation", "action", "amount_paise", "profile", "scheduled_for",
-        "committed_at", "notification_sent_at", "voided_at", "void_reason",
+        "generation", "action", "amount_paise", "profile", "decision_sha256",
+        "scheduled_for", "committed_at", "notification_sent_at", "voided_at",
+        "void_reason",
     ):
         assert col in cols, f"committed_schedule.{col} missing"
-    assert {"generation", "voided_at", "void_reason", "profile"}.issubset(cols)
+    assert {"generation", "voided_at", "void_reason", "profile", "decision_sha256"}.issubset(cols)
 
 
 def test_plan_table_exists_with_required_columns(pg_schema):
@@ -187,31 +188,47 @@ def test_ledger_intent_once_allows_later_stage_with_same_key(pg_schema, seed_pla
 
 # --- committed_schedule: 24h CHECK constraint (RBI clause 6(a)) -------------
 
-def test_committed_schedule_rejects_lead_time_under_24_hours(pg_schema):
+def test_committed_schedule_rejects_lead_time_under_24_hours(pg_schema, seed_plan):
+    decision_sha = seed_plan("plan-cs-23h")
     committed_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
     scheduled_for = committed_at + timedelta(hours=23)
     with pytest.raises(psycopg.errors.CheckViolation):
         _insert_committed_schedule_row(
             pg_schema.conn, key="cs-23h", committed_at=committed_at, scheduled_for=scheduled_for,
+            decision_sha256=decision_sha,
         )
 
 
-def test_committed_schedule_accepts_exactly_24_hours(pg_schema):
+def test_committed_schedule_accepts_exactly_24_hours(pg_schema, seed_plan):
+    decision_sha = seed_plan("plan-cs-24h")
     committed_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
     scheduled_for = committed_at + timedelta(hours=24)
     row_id = _insert_committed_schedule_row(
         pg_schema.conn, key="cs-24h", committed_at=committed_at, scheduled_for=scheduled_for,
+        decision_sha256=decision_sha,
     )
     assert row_id == "cs-24h"
 
 
-def test_committed_schedule_accepts_more_than_24_hours(pg_schema):
+def test_committed_schedule_accepts_more_than_24_hours(pg_schema, seed_plan):
+    decision_sha = seed_plan("plan-cs-48h")
     committed_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
     scheduled_for = committed_at + timedelta(hours=48)
     row_id = _insert_committed_schedule_row(
         pg_schema.conn, key="cs-48h", committed_at=committed_at, scheduled_for=scheduled_for,
+        decision_sha256=decision_sha,
     )
     assert row_id == "cs-48h"
+
+
+def test_committed_schedule_decision_sha256_fk_rejects_unknown_plan(pg_schema):
+    committed_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    with pytest.raises(psycopg.errors.ForeignKeyViolation):
+        _insert_committed_schedule_row(
+            pg_schema.conn, key="cs-fk-missing", committed_at=committed_at,
+            scheduled_for=committed_at + timedelta(hours=48),
+            decision_sha256="no-such-plan-row-exists",
+        )
 
 
 # --- attempt_index CHECK: NPCI's 1..4 cap, defense-in-depth at the DB ------
@@ -234,13 +251,15 @@ def test_ledger_rejects_attempt_index_above_four(pg_schema, seed_plan):
         )
 
 
-def test_committed_schedule_rejects_attempt_index_zero(pg_schema):
+def test_committed_schedule_rejects_attempt_index_zero(pg_schema, seed_plan):
+    decision_sha = seed_plan("plan-cs-attempt-0")
     committed_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
     scheduled_for = committed_at + timedelta(hours=24)
     with pytest.raises(psycopg.errors.CheckViolation):
         _insert_committed_schedule_row(
             pg_schema.conn, key="cs-attempt-0", attempt_index=0,
             committed_at=committed_at, scheduled_for=scheduled_for,
+            decision_sha256=decision_sha,
         )
 
 
@@ -255,40 +274,47 @@ def test_ledger_rejects_negative_amount_paise(pg_schema, seed_plan):
         )
 
 
-def test_committed_schedule_rejects_negative_amount_paise(pg_schema):
+def test_committed_schedule_rejects_negative_amount_paise(pg_schema, seed_plan):
+    decision_sha = seed_plan("plan-cs-neg-amount")
     committed_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
     scheduled_for = committed_at + timedelta(hours=24)
     with pytest.raises(psycopg.errors.CheckViolation):
         _insert_committed_schedule_row(
             pg_schema.conn, key="cs-neg-amount", amount_paise=-1,
             committed_at=committed_at, scheduled_for=scheduled_for,
+            decision_sha256=decision_sha,
         )
 
 
 # --- committed_one_live_per_slot --------------------------------------------
 
-def test_committed_one_live_per_slot_rejects_second_live_row(pg_schema):
+def test_committed_one_live_per_slot_rejects_second_live_row(pg_schema, seed_plan):
+    decision_sha = seed_plan("plan-cs-slot-ab")
     committed_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
     scheduled_for = committed_at + timedelta(hours=24)
     _insert_committed_schedule_row(
         pg_schema.conn, key="cs-slot-a", mandate_id="M-SLOT", cycle_id=1,
         attempt_index=1, committed_at=committed_at, scheduled_for=scheduled_for,
+        decision_sha256=decision_sha,
     )
     with pytest.raises(psycopg.errors.UniqueViolation):
         _insert_committed_schedule_row(
             pg_schema.conn, key="cs-slot-b", mandate_id="M-SLOT", cycle_id=1,
             attempt_index=1, committed_at=committed_at, scheduled_for=scheduled_for,
+            decision_sha256=decision_sha,
         )
 
 
-def test_committed_one_live_per_slot_allows_reinsert_after_void(pg_schema):
+def test_committed_one_live_per_slot_allows_reinsert_after_void(pg_schema, seed_plan):
     """Voiding is an UPDATE -- legal here, because this constraint lives on
     committed_schedule, which is NOT append-only (only `ledger` is)."""
+    decision_sha = seed_plan("plan-cs-slot-cd")
     committed_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
     scheduled_for = committed_at + timedelta(hours=24)
     _insert_committed_schedule_row(
         pg_schema.conn, key="cs-slot-c", mandate_id="M-SLOT2", cycle_id=1,
         attempt_index=1, committed_at=committed_at, scheduled_for=scheduled_for,
+        decision_sha256=decision_sha,
     )
     with pg_schema.conn.cursor() as cur:
         cur.execute(
@@ -299,5 +325,6 @@ def test_committed_one_live_per_slot_allows_reinsert_after_void(pg_schema):
     row_id = _insert_committed_schedule_row(
         pg_schema.conn, key="cs-slot-d", mandate_id="M-SLOT2", cycle_id=1,
         attempt_index=1, committed_at=committed_at, scheduled_for=scheduled_for,
+        decision_sha256=decision_sha,
     )
     assert row_id == "cs-slot-d"

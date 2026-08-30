@@ -119,3 +119,90 @@ exact thing this guard exists to exercise), and asserts `conn.autocommit
 is True`. This is the one test in the suite that would have failed before
 the fix, because it is the only one that doesn't go through
 `dependency_overrides`.
+
+---
+
+## Incident 3 — the crash-recovery interface queried an API that rejects it
+
+**When:** Block B9, 2026-08-30 ~03:15 IST
+
+**Symptom:** The first live test-mode call ever made through
+`src/execute/razorpay_client.py` — one `create_order`, then one
+`find_by_receipt` to read it back — died on the second call:
+
+```
+RazorpayClientError: find_by_receipt('b9-live-1788084714') failed:
+  receipt is/are not required and should not be sent
+```
+
+`create_order` had succeeded. All 78 B9 tests were green at the time, and
+`guard_invariants --all` was clean.
+
+**Root cause:** `find_by_receipt()` called
+`self._client.payment.all({"receipt": receipt})`. `receipt` is an **Order**
+field; the Payments resource has no such field, and Razorpay rejects the
+parameter outright rather than ignoring it. The method could never have
+returned anything, for any input, against the real API.
+
+This is not a peripheral helper. Per the B3 spike (DECISIONS.md,
+2026-08-27), `receipt` does **not** dedupe `Order.create` — so provider-side
+dedup is not available to us, and `find_by_receipt` is the *entire*
+"recover by asking, never by resending" path in `recover.py`. Every
+`UNCONFIRMED` → `RESULT` resolution runs through it. The B9 gate's third
+clause ("`UNCONFIRMED` has a resolution path that is actually reachable")
+was, against the real API, false.
+
+**A second finding, from the same probe:** `order.all({"receipt": ...})`
+*is* honoured (verified: three known receipts each returned exactly their
+own order, count=1). But the list endpoint **lags indexing** — an order
+queried by its own receipt at 0s, 3s and 8s after creation returned
+count=0, and was absent from the unfiltered recent list too; it appeared
+minutes later. So a `None` from a receipt lookup is genuinely ambiguous:
+"never created" and "created moments ago" are indistinguishable at the
+moment `recover.py` most wants to ask.
+
+**Why it wasn't caught earlier:** every test in
+`tests/execute/test_razorpay_client.py` fakes the SDK — deliberately, and
+the module docstring says so. Faking the SDK cannot detect that the
+*parameter shape* is wrong, because the fake accepts whatever it is handed.
+The module docstring flagged `charge()`'s shape as "unverified against live
+traffic, recommend a B3-style spike" — but made no such disclosure for
+`find_by_receipt`, which was the more load-bearing of the two. The gap was
+a disclosure that stopped one method short.
+
+**Fix:** the ATTEMPT path is now anchored to an Order.
+`charge()` creates an order carrying the idempotency key as its receipt,
+*then* creates the recurring payment against that `order_id` — which is
+also how Razorpay itself models recurring debits (the one real Payment in
+this test account, `pay_TUqQ25JYjOyNPD` from B3, carries an `order_id`).
+`find_by_receipt()` became an indexed two-step: `order.all({"receipt": K})`,
+then `order.payments(order_id)`. Ordering matters and is commented in place
+— creating the order first means a crash *between* the two calls still
+leaves a receipt-addressable record, so recovery finds the order, sees zero
+payments, and reports "nothing charged yet" instead of finding nothing at
+all. `None` is documented as *unresolved-so-far*, never *never-sent*; the
+existing `UNCONFIRMED` backoff already models that correctly, so the lag
+finding strengthened the backoff's rationale rather than changing its
+design. Chosen over the working alternative (a bounded-window
+`payment.all({from,to})` scan matching `notes` client-side, also verified
+live) because that one caps at 100 payments per page and degrades on a busy
+account exactly when recovery matters most. Committed with this entry.
+
+**Guard added:** `scripts/live_smoke_b9.py` — drives `create_order` →
+`find_by_receipt` against real test mode. Kept off the default test path (it
+needs network and credentials) and run as a block-level verification step.
+This class of bug is invisible to any test that fakes the SDK, because a
+fake accepts whatever shape it is handed: the fake-based tests guard
+*behaviour*, this guards *wire format*, and they are now documented as
+separate risks that do not substitute for each other. Two unit-level guards
+were added alongside it: a stub that raises if `payment.all` is ever called
+again (`_MustNotCharge.all`), and a test asserting `charge()` sends
+`order_id` and no `receipt` in the payment body. The smoke check retries on
+a schedule rather than failing on first miss, because the indexing lag is
+real — this run resolved on attempt 3, roughly 30s after creation.
+
+**Still not covered, disclosed rather than assumed:** `charge()` itself.
+Driving `payment.createRecurring` needs a real saved token / active mandate,
+which test mode will not mint on demand, so its exact field shape remains
+unverified against live traffic — the same disclosure the module docstring
+already carried before this incident, now the *only* remaining one.
