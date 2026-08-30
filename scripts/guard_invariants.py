@@ -33,7 +33,17 @@ from hookio import ROOT, resolve_paths  # noqa: E402
 # --- invariant 1: no generative models in the deterministic core ------------
 PROTECTED_DIRS = ("src/model/", "src/policy/", "src/core/", "src/classify/")
 LLM_IMPORT = re.compile(
-    r"^\s*(?:import|from)\s+(anthropic|openai|cohere|google\.generativeai|litellm)\b",
+    r"^\s*(?:import|from)\s+("
+    r"anthropic|openai|cohere|litellm|vertexai"
+    # google-genai is the CURRENT Gemini SDK and the one this repo now uses.
+    # Listing only the legacy `google.generativeai` left `from google import
+    # genai` -- the live provider's own documented import form -- passing
+    # straight through, which made invariant 1 cosmetic for the exact client
+    # that can reach the core today. Probed both ways before and after,
+    # 2026-08-30; see DECISIONS.md.
+    r"|google\.generativeai|google\.genai"
+    r"|google\s+import\s+\(?\s*(?:generativeai|genai)"
+    r")\b",
     re.MULTILINE,
 )
 

@@ -20,9 +20,9 @@ Every "no" row below should point at a measurement.
 
 | Subtask | Model | Why a model is right here |
 |---|---|---|
-| Decline-string normalisation | Haiku | Issuer strings are unstandardised free text; new variants appear weekly. This is genuinely a language task |
-| Cancellation-intent extraction | Haiku | Support tickets, including Hinglish. No feasible rule set |
-| Merchant root-cause narrative | Sonnet | Once per batch, not per transaction. Writing, not deciding |
+| Decline-string normalisation | Gemini 3.5 Flash-Lite | Issuer strings are unstandardised free text; new variants appear weekly. This is genuinely a language task |
+| Cancellation-intent extraction | Gemini 3.5 Flash-Lite | Support tickets, including Hinglish. No feasible rule set |
+| Merchant root-cause narrative | Gemini 3.5 Flash | Once per batch, not per transaction. Writing, not deciding |
 
 ## The benchmark
 
@@ -3427,3 +3427,83 @@ was a reviewer asked a different question — not "is this correct?" but
 and single-threaded, and an induced kill can only STOP a process, never
 DELAY one. A live-but-slow worker was outside its reachable state space,
 and that is exactly where the defect lived.
+
+---
+
+## 2026-08-30 — LLM edge switched from Anthropic to Gemini (config, B11 not yet built)
+
+*What changed.* The LLM edge's provider, before any of `src/llm/` exists.
+`GEMINI_API_KEY` replaces `ANTHROPIC_API_KEY`; the three model ids become
+`gemini-3.5-flash-lite` (normaliser, intent) and `gemini-3.5-flash`
+(narrator); `requirements.txt` and `setup.ps1` swap `anthropic` for
+`google-genai==2.20.0`. Requested by the human, who supplied the key.
+
+*Scope, stated plainly.* This is a provider swap at the **language edge
+only**. It touches no decision path: invariant 1 still forbids any LLM
+client under `src/model/`, `src/policy/`, `src/core/` and `src/classify/`,
+the decision core remains the competing-risks model plus backward
+induction, and the normaliser still only maps unseen strings into a
+taxonomy it cannot extend. Nothing in the thesis moves.
+
+*Verified before adoption, not assumed.* Three things were probed against
+the live API rather than taken on faith, in the spirit of B9's
+`find_by_receipt()` finding (a method whose 78 tests were green and which
+was dead on arrival against the real API):
+
+1. **The key authenticates.** `ListModels` returns HTTP 200.
+2. **Forced tool-use survives the switch.** CLAUDE.md requires that
+   structured output go through required tool-use so malformed JSON is
+   *structurally* impossible. Gemini's equivalent is
+   `toolConfig.functionCallingConfig.mode = "ANY"`. Probed on both adopted
+   models with a four-value enum: each returned a well-formed
+   `functionCall` and **empty text** — no free-text path taken. The
+   invariant transfers intact.
+3. **`gemini-2.5-*` is retired for new keys.** Both `gemini-2.5-flash` and
+   `gemini-2.5-flash-lite` return **404, "no longer available to new
+   users"**, while still being listed by `ListModels`. The obvious model
+   ids would have failed on first call, and would have failed at whatever
+   later hour `src/llm/` was first exercised.
+
+*Why pinned ids and not `gemini-flash-latest`.* The alias resolves
+differently over time. B12's headline argument is the **run-to-run variance
+column** — same input, different answer — and an alias that silently moves
+underneath the benchmark would corrupt exactly the number the benchmark
+exists to report. Pinned ids, as with every other constant here.
+
+*The defect this uncovered, which matters more than the swap.*
+`scripts/guard_invariants.py` listed `google.generativeai` — the **legacy**
+SDK — and nothing else Google. Probed against the current SDK:
+
+        BLOCKED  import anthropic
+        PASSES   from google import genai        <- the client we now use
+        PASSES   import google.genai
+        PASSES   from google.genai import types
+        BLOCKED  import google.generativeai      <- legacy, retired
+
+So adopting Gemini without touching the guard would have left invariant 1 —
+"the mechanical proof that the no-LLM-in-core claim is not just a
+comment", per that file's own docstring — **cosmetic for the only provider
+the repo actually uses**, while still reporting green. This is the same
+defect class PLAN_DETAIL §8.2 already routed to B11 ("the guard matches
+only a direct `import anthropic`"); the provider switch promotes it from a
+secondary gap to a primary one. Fixed here rather than deferred to B11,
+because the hole opens the moment the key does. All forms above now block;
+`import googlemaps` and `from google.protobuf import x` still pass, so the
+pattern is not over-broad. `vertexai` added while there.
+
+*And the self-test that would have hidden it.* `run.ps1 verify` step 1
+proves the guard fires by writing `import anthropic` into `src/model/`.
+After this swap that probes a client we no longer use — a green check
+verifying nothing about the live risk, the same vacuous shape audited out
+of the gates on 2026-08-29. It now probes `from google import genai`
+**first**, then `import anthropic`, and fails if either passes.
+
+*What is NOT verified, and stays disclosed.* The key's prefix is `AQ.`,
+not AI Studio's usual `AIza`. It authenticates today. Whether it is
+long-lived or an OAuth-derived token with a TTL could not be determined
+from the API, so a sudden `401` on the golden set is a credential
+expiry to check before it is a code bug. Separately, Flash-Lite's
+**Hinglish** intent quality is unmeasured — that is precisely what B11's
+30-row `intent.jsonl` golden set is for, and it should be read as an open
+question until that set runs, not as an assumption carried over from the
+Haiku plan.

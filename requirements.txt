@@ -1,7 +1,7 @@
 ﻿alembic==1.19.1
 annotated-doc==0.0.5
 annotated-types==0.8.0
-anthropic==1.0.0
+google-genai==2.20.0
 anyio==4.14.2
 APScheduler==3.11.3
 autograd==1.9.1

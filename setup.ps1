@@ -89,7 +89,7 @@ Say "installing dependencies (2-4 minutes)"
 & $Py -m pip install --quiet `
     fastapi "uvicorn[standard]" "psycopg[binary]" sqlalchemy alembic `
     statsmodels lifelines scikit-learn pandas numpy scipy mapie matplotlib `
-    anthropic razorpay apscheduler python-dotenv pydantic-settings `
+    google-genai razorpay apscheduler python-dotenv pydantic-settings `
     pytest pytest-cov httpx freezegun pyyaml
 if ($LASTEXITCODE -ne 0) {
     Write-Host ""

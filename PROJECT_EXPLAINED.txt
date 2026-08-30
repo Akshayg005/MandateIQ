@@ -271,11 +271,11 @@ ships in the repo as evidence.
 
 Where models ARE used - language only:
 
-  Claude Haiku : normalising decline strings, which differ wildly between
+  Gemini Flash-Lite : normalising decline strings, which differ wildly between
                  issuers and are unstandardised free text
-  Claude Haiku : extracting cancellation intent from support ticket text,
+  Gemini Flash-Lite : extracting cancellation intent from support ticket text,
                  including Hinglish
-  Claude Sonnet: writing the merchant-facing root-cause narrative - once per
+  Gemini 3.5 Flash : writing the merchant-facing root-cause narrative - once per
                  batch, never per transaction
 
 All structured output goes through required tool-use, so malformed JSON is

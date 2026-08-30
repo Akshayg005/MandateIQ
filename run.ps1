@@ -154,11 +154,21 @@ Mandate Recovery Engine -- tasks
 
         Write-Host "`n== 1. guard fires on a deliberate violation" -ForegroundColor Cyan
         New-Item -ItemType Directory -Force -Path src\model | Out-Null
-        Set-Content -Path src\model\_check.py -Value "import anthropic"
-        & $Py scripts\guard_invariants.py src\model\_check.py 2>&1 | Out-Null
-        if ($LASTEXITCODE -eq 2) { Write-Host "   PASS" -ForegroundColor Green }
-        else { Write-Host "   FAIL -- guard did not fire" -ForegroundColor Red; $fail = 1 }
-        Remove-Item src\model\_check.py -ErrorAction SilentlyContinue
+        # Probe the LIVE provider first, then a retired one. Testing only a
+        # client we no longer use would be a green check that proves nothing
+        # about the import that can actually reach the core today -- the same
+        # vacuous shape audited out of the gates on 2026-08-29.
+        foreach ($probe in @("from google import genai", "import anthropic")) {
+            Set-Content -Path src\model\_check.py -Value $probe
+            & $Py scripts\guard_invariants.py src\model\_check.py 2>&1 | Out-Null
+            if ($LASTEXITCODE -eq 2) {
+                Write-Host "   PASS -- '$probe'" -ForegroundColor Green
+            } else {
+                Write-Host "   FAIL -- guard did not fire on '$probe'" -ForegroundColor Red
+                $fail = 1
+            }
+            Remove-Item src\model\_check.py -ErrorAction SilentlyContinue
+        }
 
         Write-Host "== 2. frozen guard denies" -ForegroundColor Cyan
         & $Py scripts\guard_frozen.py eval\frozen\sim_config.yaml 2>&1 | Out-Null

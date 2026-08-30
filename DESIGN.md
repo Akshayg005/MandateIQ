@@ -26,8 +26,8 @@ protect lifetime value. That is the thesis, not a bug.
 These are enforced by git hooks in `.claude/settings.json`, not by trust.
 If you find yourself wanting to violate one, stop and raise it instead.
 
-1. **`src/model/`, `src/policy/` and `src/core/` may NEVER import `anthropic`,
-   `openai`, or any LLM client.** The decision core is deterministic +
+1. **`src/model/`, `src/policy/` and `src/core/` may NEVER import `google.genai`,
+   `anthropic`, `openai`, or any LLM client.** The decision core is deterministic +
    statistical. Generative models do not make money decisions.
 2. **All money is integer paise.** A float touching a money value is a bug.
 3. **The ledger write happens BEFORE the money action, never after.** This is
@@ -79,15 +79,18 @@ compliance artifact.
 → exact backward induction over the four attempt slots.
 
 **LLM edge — language only:**
-- `src/llm/normalizer.py` — Haiku. Normalises decline strings that differ
+- `src/llm/normalizer.py` — Gemini 3.5 Flash-Lite. Normalises decline strings that differ
   across issuers into the taxonomy.
-- `src/llm/intent.py` — Haiku. Extracts cancellation intent from support
+- `src/llm/intent.py` — Gemini 3.5 Flash-Lite. Extracts cancellation intent from support
   ticket text, including Hinglish.
-- `src/llm/narrator.py` — Sonnet. Merchant-facing root-cause narrative.
+- `src/llm/narrator.py` — Gemini 3.5 Flash. Merchant-facing root-cause narrative.
   Runs **once per batch**, never per transaction.
 
-All structured LLM output goes through required tool-use (`src/llm/tools.py`)
-so malformed JSON is structurally impossible rather than caught downstream.
+All structured LLM output goes through forced function calling
+(`tool_config.function_calling_config.mode = "ANY"`, declared in
+`src/llm/tools.py`) so malformed JSON is structurally impossible rather than
+caught downstream. Verified against the live API before adoption: the model
+returns a function call and no stray text.
 
 `bench/llm_vs_stats.py` benchmarks an LLM-as-classifier baseline against the
 statistical model on the same held-out split, reporting AUC, p95 latency,
