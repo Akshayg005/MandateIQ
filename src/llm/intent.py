@@ -45,9 +45,16 @@ the exact harm this system exists to prevent. Be conservative: 0.7+ should
 be rare, and never triggered by financial-hardship language alone.
 """
 
-INTENT_VERSION = hashlib.sha256((INTENT_SYSTEM_PROMPT + str(INTENT_TOOL)).encode()).hexdigest()[
-    :12
-]
+# INTENT_MODEL is folded in deliberately, mirroring NORMALIZER_VERSION
+# (src/llm/normalizer.py): golden_check.py keys its on-disk cache on this
+# hash, so without the model id a MODEL_INTENT env override would reuse the
+# PREVIOUS model's cached answers and report the gate PASSED on a model that
+# never ran. The normaliser closed this hole at B11; the identical one was
+# left open here. Bumping this busts the existing intent cache once, by
+# design -- ~30 live calls.
+INTENT_VERSION = hashlib.sha256(
+    (INTENT_SYSTEM_PROMPT + str(INTENT_TOOL) + INTENT_MODEL).encode()
+).hexdigest()[:12]
 
 _singleton_client: GeminiClient | None = None
 

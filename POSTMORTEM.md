@@ -441,3 +441,51 @@ surviving a crash between `void()` and its ledger append held under actual
 chaos-testing, not just under the hand-traced reasoning in its docstring.
 Recorded here because the coverage gap (this scenario was never
 kill-tested at all) was real even though the code underneath it was not.
+
+## Incident 7 — the benchmark client dropped the retry logic it was modelled on
+**When:** Block B12, 2026-08-31, first full `--n 200 --repeats 5` run
+
+**Symptom:** The benchmark printed its stats arm (`AUC 0.5759`), then died
+partway into the first LLM arm with an unhandled
+`google.genai.errors.ClientError: 429 RESOURCE_EXHAUSTED` —
+`quotaValue: '15'`, `GenerateRequestsPerMinutePerProjectPerModel-FreeTier`.
+The traceback ran straight out of `InstrumentedGemini.probabilities` with no
+retry attempted. Roughly 200 of ~1,200 planned calls had been made. Nothing
+was written: `reports/bench.json` is only written after every arm completes,
+so the partial run left no half-table to mistake for a real one.
+
+**Root cause:** `bench/llm_vs_stats.py`'s `InstrumentedGemini` is a
+deliberate near-copy of `src/llm/client.py`'s `GeminiClient` — the forced
+calling config was copied byte-for-byte, and the module docstring says so.
+The retry behaviour was not copied. `GeminiClient._call_with_backoff` retries
+exclusively on 429 with `_MAX_RETRIES = 6` and `_DEFAULT_RETRY_DELAY_S =
+15.0`, precisely because the free tier allows ~15 requests/minute per model;
+the bench client had no backoff at all. A benchmark that issues 1,200 calls
+as fast as it can is the single most rate-limit-exposed caller in this
+repo, and it was the only one with no handling.
+
+**Why it wasn't caught earlier:** The smoke test was `--n 4 --repeats 2
+--variance-n 2` — 12 calls, comfortably under the 15/min quota, so it
+exercised every line of the call path except the one that matters at scale.
+Every unit test in `tests/eval/test_bench.py` is offline by design (no
+network, no live calls), which is right for testing metric definitions and
+wrong for catching this: the defect lives entirely in the transport layer
+those tests deliberately never touch. The class of bug — "reimplemented a
+client and silently dropped one of its behaviours" — is invisible to both a
+green unit suite and a small live smoke.
+
+**Fix:** Added 429-aware backoff to `InstrumentedGemini`, honouring the
+server-supplied `retryDelay` when present and falling back to
+`GeminiClient`'s own 15s default. Critically, the retry sleep is excluded
+from the recorded latency: only the successful attempt is timed. Sleeping
+inside the timed region would have inflated the p95-latency column by tens
+of seconds per throttled call and produced a benchmark number measuring this
+project's own quota tier rather than the model's response time — a wrong
+number that would have looked plausible.
+
+**Guard added:** `tests/eval/test_bench.py` now covers the retry path with a
+fake transport that raises a synthetic 429 before succeeding, asserting both
+that the call is retried AND that the recorded latency excludes the wait.
+The second assertion is the load-bearing one: a retry that silently
+poisoned the latency column would still have passed a retry-only test, and
+the latency column is one of the four this block exists to produce.

@@ -267,3 +267,48 @@ def find_normalized_decline(
         )
         row = cur.fetchone()
     return NormalizedDeclineRow(*row) if row is not None else None
+
+
+def append_shadow(
+    conn, *, run_id: str, mandate_id: str, cycle_id: int, profile: str,
+    ladder_action: str, ladder_slot: int, ladder_day: int,
+    ladder_committed_attempts: int,
+    our_action: str, our_slot: int | None, our_day: int | None,
+    binding_constraint: str | None, conformal_set: str, belief_json: str,
+    decision_sha256: str, divergence: str, agrees: bool,
+) -> None:
+    """Append one shadow-mode decision into `shadow_ledger` (B12).
+
+    A SEPARATE function writing a SEPARATE table rather than a mode flag on
+    append(): shadow decisions never executed, and the one thing that must
+    stay impossible is a query counting them as money. Same precedent as
+    record_normalized_decline above -- its own table, its own writer, rather
+    than generalising append() into something that can address two tables.
+
+    Deliberately NOT idempotent-by-conflict on rerun: the PK is
+    (run_id, mandate_id, cycle_id), and a new run means a new run_id, so a
+    repeated run records a new comparable observation instead of silently
+    overwriting the previous one. A genuine duplicate WITHIN one run is a
+    bug in the caller's batch, so it raises rather than being swallowed --
+    unlike the ledger, where a retried write under the same idempotency key
+    is a legitimate crash-recovery path.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO shadow_ledger (
+                run_id, mandate_id, cycle_id, profile,
+                ladder_action, ladder_slot, ladder_day, ladder_committed_attempts,
+                our_action, our_slot, our_day,
+                binding_constraint, conformal_set, belief_json,
+                decision_sha256, divergence, agrees
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                run_id, mandate_id, cycle_id, profile,
+                ladder_action, ladder_slot, ladder_day, ladder_committed_attempts,
+                our_action, our_slot, our_day,
+                binding_constraint, conformal_set, belief_json,
+                decision_sha256, divergence, agrees,
+            ),
+        )

@@ -1,0 +1,44 @@
+# Token prices for the B12 benchmark's cost-per-1k-decisions column.
+#
+# Every number here is quoted from a source, with the date it was read. The
+# benchmark table is a scored deliverable and PLAN.md's rule is absolute --
+# "Never fabricate a number. A panel that catches one invented metric
+# discards everything else you built." A price guessed from memory would be
+# exactly that, so this file exists rather than a constant in the script.
+#
+# Prices are integer MICRO-USD per 1,000,000 tokens, not floats. Gemini is
+# quoted in dollars-per-million ("$0.30"); storing that as 300000 micro-USD
+# keeps root CLAUDE.md invariant 2 ("all money is integer paise, a float
+# touching a money value is a bug") true through the whole cost computation
+# rather than only at the final rounding. bench/ is outside the guard's
+# PROTECTED_DIRS, so this is discipline, not enforcement.
+#
+# PAID-TIER standard rates. The keys used to produce the shipped table were
+# free-tier, whose marginal price is zero -- the cost column therefore
+# reports what this workload WOULD cost at paid-tier rates, which is the
+# only figure that means anything for a production comparison. Stated in the
+# table's own footnote, not left for a reader to assume.
+
+source: https://ai.google.dev/gemini-api/docs/pricing
+retrieved_on: 2026-08-31
+
+models:
+  gemini-3.5-flash-lite:
+    input_micro_usd_per_1m: 300000      # "$0.30 (text / image / video / audio)"
+    output_micro_usd_per_1m: 2500000    # "$2.50"
+  gemini-3.5-flash:
+    input_micro_usd_per_1m: 1500000     # "$1.50"
+    output_micro_usd_per_1m: 9000000    # "$9.00"
+
+# Paise per 1 USD. Required to express a USD-denominated API price in this
+# repo's own unit. Deliberately NOT defaulted inside the benchmark code:
+# cost_per_1k_paise() takes usd_inr_paise as a required argument so a rate
+# can never be silently baked into a published number, and so the table can
+# cite the rate it used alongside the figure.
+#
+# A spot rate on a single day, not a hedged or averaged rate. It moves; the
+# cost column is accurate to roughly the nearest percent and should not be
+# read more precisely than that.
+usd_inr_paise: 9569                     # USD 1 = INR 95.69
+usd_inr_source: https://www.exchangerates.org.uk/USD-INR-spot-exchange-rates-history-2026.html
+usd_inr_retrieved_on: 2026-08-31

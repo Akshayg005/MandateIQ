@@ -3815,3 +3815,221 @@ Both 3 and 4 are the same shape of finding: not "ran out of time," but
 yet, and building it here would mean guessing at design work that belongs
 to a specific later block, in the exact two places (the audit trail, and
 the off-ramp's safety gate) where guessing is most expensive to get wrong."
+
+### 2026-08-31 · B12 · The benchmark scores `Outcome`, not `Cause`
+
+The obvious reading of "LLM-as-classifier against the statistical model" is
+that both predict the three latent causes. They cannot, and the reason is
+structural rather than an implementation shortcut.
+
+`src/model/competing_risks.py` predicts `Outcome` (`STILL_PENDING` /
+`RECOVERED` / `DEAD` / `OPTED_OUT`) — `hazards()` returns a 4-vector in that
+int order. It has never predicted `Cause`. B7 opened that gap and B8 closed
+it by design rather than by fitting: `Cause` enters the system only through
+action gating (REAUTH when `CANT_PAY_EVER` dominates the belief, OFFER on a
+singleton conformal set), never through the hazard arithmetic. Root
+CLAUDE.md's rule that Cause has no production label, ever, is what makes
+that permanent.
+
+So a benchmark scoring the LLM on `Cause` would be scoring it against
+nothing — there is no statistical arm to compare with, and the resulting
+"the LLM gets 0.7 and the model gets N/A" table would be an artifact of the
+question, not a finding. Both arms therefore predict `Outcome`, whose
+ground truth is the `event_code` column already carried on the split frames.
+
+**What this costs, stated plainly:** the benchmark does not measure the
+thing this project's thesis is actually about (three-way cause
+discrimination). It measures the thing both arms can both do. The
+cause-discrimination evidence lives at B8's gate instead — measured
+discrimination gap 0.9048 against a 0.2956 margin — and not here.
+
+### 2026-08-31 · B12 · The LLM is given a deliberate information advantage
+
+`FEATURE_COLUMNS` is four terms: `const`, `slot_3`, `slot_4`,
+`in_salary_window`. Prompting the LLM with only those would reduce the
+benchmark to two priors over a 6-cell contingency table — no language
+involved, and nothing learned about language models.
+
+`PROMPT_FIELDS` in `bench/llm_vs_stats.py` therefore hands it a superset:
+amount, ceiling, category, prior failures this cycle, committed day of
+month, days since last attempt, plus slot and salary window. The comparison
+is **unfair in the LLM's favour, on purpose**. A loss under a handicap is a
+stronger claim than a loss at parity, and if the LLM wins on AUC the table
+ships anyway (PLAN.md: "Ship the table even though — especially because —
+the LLM loses"), because the variance column is the argument, not accuracy.
+
+The one thing it must never see is a label or a latent. That is enforced,
+not asserted: `render_prompt()` applies `PROMPT_FIELDS` as an **allowlist**,
+so a row dict carrying `event_code` or `initial_cause` produces a prompt
+containing neither the key nor the value, and
+`tests/eval/test_bench.py` proves it by handing exactly such a dict in and
+asserting on the rendered string. A denylist would have leaked every column
+nobody thought to name — and the columns that matter are precisely the ones
+a future frame change adds silently.
+
+### 2026-08-31 · B12 · A known weakness in the AUC column, disclosed not hidden
+
+The stats arm's design matrix has at most 6 distinct covariate atoms, so it
+emits at most 6 distinct probability vectors across the whole test split
+(measured: 5 distinct on the 200-row subsample). Its ROC is a 6-point step
+function and its AUC is tie-dominated. `macro_ovr_auc()` uses sklearn's
+tie-aware implementation, but that does not make the comparison clean: a
+step function is being compared against a free-form model's continuous
+scores.
+
+Reported with that caveat in the table's own footnote rather than quietly.
+The AUC column is present because the block specifies it. It is not the
+strongest evidence in the table and is not presented as such.
+
+### 2026-08-31 · B12 · Shadow mode compares decisions, and produces no money delta
+
+`PLAN_DETAIL.md` specifies "decide without executing; log delta vs ladder".
+Taken literally that forbids the number a reader most wants — "we would have
+recovered ₹X more" — because computing it requires executing both policies
+and observing outcomes.
+
+`src/execute/shadow.py` therefore compares at the **first decision point**:
+the moment a mandate enters recovery, its original debit already failed.
+That is exactly what a real shadow deployment observes. The ladder's side
+needs no simulation at all, since its schedule is fixed and known in advance
+— which is the entire criticism of it. Measured over the frozen 200: the
+ladder commits 600 attempts (3 per mandate, unconditionally), this system
+commits 141; 56 mandates routed to REAUTH where the ladder would have
+attempted, 3 to STOP, 141 agreeing exactly.
+
+**Two findings in that output worth naming rather than burying.**
+`SAME_ACTION_DIFFERENT_DAY = 0` — when this system does spend a slot, it
+picks T+1, the same day the ladder picks. The timing discrimination the
+thesis claims is not visible at the first decision point; it appears, if at
+all, in later slots this comparison does not reach. And `OFFER = 0`, because
+the driver passes no `ConformalGate`, so `solve()` falls back to
+`FullSetGate` and the prediction set is never the singleton `{WONT_PAY}` the
+off-ramp requires. That is the safe default behaving correctly, not a bug —
+but it means this delta log contains no evidence about the off-ramp at all,
+and must not be read as if it did.
+
+### 2026-08-31 · B12 · `shadow_ledger` is a separate table, and its hash is not a foreign key
+
+Shadow decisions are never executed. The one thing that must stay impossible
+is a query counting them as money. A nullable `is_shadow` flag on `ledger`
+would put unexecuted decisions one forgotten `WHERE` clause away from a
+revenue total, so `shadow_ledger` is its own table with its own writer
+(`store.append_shadow`), the same precedent `record_normalized_decline` set
+at B11 rather than generalising `append()` into something addressing two
+tables.
+
+`ledger.decision_sha256` is `NOT NULL REFERENCES plan`. `shadow_ledger`'s is
+plain `TEXT` with **no** foreign key, deliberately: honouring that FK would
+force shadow mode to write real `plan` rows in order to observe, which is
+the side effect the whole module exists to avoid. The hash is a fingerprint
+there, not a reference — recorded so a shadow decision can later be
+reproduced and compared against a real one.
+
+The DDL was verified against a real Postgres 16 before being committed: all
+three CHECK constraints were shown to reject the rows they target (a REAUTH
+carrying a slot, an ATTEMPT without one, a slot outside 2–4) and the PK to
+reject a duplicate within a run, with the two valid rows surviving. The
+project's own port 5432 is inside a Windows dynamic-exclusion range
+(5341–5440) and the `mrdb` container will not start; the check ran against a
+throwaway instance on 15432, which was removed afterwards. That environment
+issue is unresolved and blocks 128 Postgres-dependent tests from running
+locally.
+
+### 2026-08-31 · B12 · stats-reviewer found the benchmark was measuring the wrong thing
+
+The specified review (`PLAN_DETAIL.md:504`) returned **ten findings**, of
+which the top three were real defects in the parts of the benchmark that
+decide the gate. Each was independently reverified before being acted on —
+by measuring it, not by trusting the report — following the same discipline
+B11 used on payments-domain's nine.
+
+**1. The AUC column had no power to decide anything.** Measured per-class
+one-vs-rest AUC on the exact `--n 200` subsample: STILL_PENDING 0.534,
+RECOVERED 0.569, **DEAD 0.487 — below chance**, OPTED_OUT 0.714, macro
+0.5759 with a mandate-cluster bootstrap CI of **[0.523, 0.630]**. Two of
+four classes sit at or under chance *by construction*: the frozen simulator
+sets the DEAD hazard from the latent cause alone, and a design matrix of
+`(const, slot_3, slot_4, in_salary_window)` cannot separate it. Macro-
+averaging then spends half its weight on classes the model provably cannot
+rank. With the bar at 0.576 ± 0.05, any LLM score between roughly 0.52 and
+0.63 is a tie — and the table was reporting four decimal places of it as a
+result.
+
+Fixed by demoting AUC and promoting **multiclass log loss** to the headline,
+with per-class Brier beside it and an **intercept-only null arm** so both
+real arms are measured against a shared reference. Log loss is a proper
+scoring rule: it rewards calibration, not merely ranking, and calibration is
+what the allocator's backward induction actually consumes. A miscalibrated
+model that ranks well is useless downstream and would still have won on AUC.
+Measured: null 1.2619, competing-risks 1.2431 — the model beats base rates,
+but modestly, which is the honest picture AUC was obscuring in both
+directions. AUC is retained (the block names it) now carrying its cluster-
+bootstrap CI, because rows are clustered — one mandate contributes up to
+three slot rows — and a row-level interval would overstate precision.
+
+**2. The prompt contradicted the label on half the slot-4 rows.** Both the
+tool schema and the system prompt defined `p_still_pending` as the mandate
+surviving "to a further slot". At slot 4 no further slot remains — and the
+prompt said so itself. Yet **74 of 146 slot-4 test rows (50.7%)** carry
+exactly that label, verified directly. The label is correct: it is the
+discrete-time hazard's "no event this period", properly right-censored by
+`person_period.build()`. The prompt's gloss was wrong, and it was
+instructing the model to zero out the correct answer on half of those rows.
+
+This is the finding that mattered most, because **it biased the result in
+the direction that flatters this project's own thesis** — making the LLM
+look worse for a reason with nothing to do with language models. Reworded to
+"neither recovered, dead, nor opted out by the end of this slot
+(right-censored if this is the last slot)", with an explicit paragraph
+telling the model that at the last slot this is a real and common answer
+rather than an impossible one. No label changed.
+
+**3. The headline variance column overclaimed.** `decision_flip_rate` was
+computed as `P(RECOVERED) > P(DEAD)` flipping across repeats, but its
+docstring claimed it measured "how often the same customer would have been
+debited on a different day" and the table header called it "retry-slot
+flip". No slot and no day is computed anywhere in the module, and the real
+allocator does exact backward induction over CIFs, which a swap in that
+ordering neither implies nor is implied by. Renamed to
+`cause_ordering_flip_rate`, column relabelled "REC-vs-DEAD order flip", and
+documented as a **lower bound** on decision instability. It also ignored
+`OPTED_OUT` entirely — the cause that gates the off-ramp — so
+`max_optout_swing` was added to cover the gap, with a test proving the two
+metrics catch different failures.
+
+**Also fixed, all verified:** the stats arm's "p95 latency" was three
+whole-batch timings divided by row count — neither a tail statistic nor the
+same estimand as the LLM's per-call wall clock printed beside it (now
+per-row, and both cells label their kind); the uniform fallback for a
+degenerate model answer was silent and is now counted into the table;
+`render_prompt()` skipped missing allowlist fields, so a future frame rename
+could have silently dropped the prompt below parity with `FEATURE_COLUMNS`
+while the footnote kept printing the superset claim (now raises); run-to-run
+SD used `ddof=0`, understating this block's own argument by ~12% at R=5 (now
+`ddof=1`); the variance subsample was a head rather than a draw; and
+`build_test_split()`'s docstring claimed to score "the model this project
+actually ships" when it is literally a refit inside the benchmark.
+
+**One framing correction worth keeping.** The reviewer noted that "unfair in
+the LLM's favour" is stronger than what was demonstrated: handing a
+zero-shot model six extra covariates is *strictly more information*, but
+noise can mislead as easily as inform. The footnote now claims only what was
+shown.
+
+**Raw probabilities are now persisted** into `reports/bench.json` — both the
+accuracy pass and every variance repeat, with `y_true`, `mandate_id` and
+`slot`. A full run costs ~80 minutes of free-tier quota; discarding them
+would have meant paying that again to add a single column, which is how a
+benchmark quietly stops being re-analysable.
+
+**What survived review, explicitly.** Split integrity is clean — no path
+from a test row to the fit; `GroupShuffleSplit` on `mandate_id` with real
+exceptions rather than asserts; the `--n` subsample happens after `train` is
+fixed and cannot reintroduce a dependency. Leakage is clean including the
+three proxies specifically attacked: `prior_failures_this_cycle` is exactly
+`slot - 1`, and both `committed_day_of_month` and `days_since_last_attempt`
+are fixed by `_draw_schedule()` before any `attempt()` call, so none encodes
+a future slot. Censoring is handled correctly. The tie-awareness claim about
+`roc_auc_score` is right. The cost column is clean end to end. And the 429
+backoff and pacing both sleep outside the timed region, so the latency
+column measures the model rather than our quota tier.

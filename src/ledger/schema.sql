@@ -201,3 +201,54 @@ CREATE TABLE normalized_decline (
   CHECK (confidence >= 0.0 AND confidence <= 1.0)
 );
 CREATE INDEX normalized_decline_event ON normalized_decline (event_id, created_at DESC);
+
+-- shadow_ledger (B12) --------------------------------------------------------
+--
+-- Shadow mode decides WITHOUT executing: it runs the allocator over a batch
+-- and records what it WOULD have done beside what the fixed T+1/T+2/T+3
+-- ladder would have done. No money moves, no provider is called, and no row
+-- in `ledger` or `committed_schedule` is ever written by this path. That
+-- separation is the entire point -- PLAN_DETAIL.md section 6 calls B12 a
+-- "read-only observer of the B8 policy" -- so this is a distinct table
+-- rather than a flag on `ledger`. A nullable `is_shadow` column on the real
+-- ledger would put unexecuted decisions one forgotten WHERE clause away
+-- from being counted as real money.
+--
+-- decision_sha256 is deliberately PLAIN TEXT with NO foreign key to `plan`,
+-- unlike ledger.decision_sha256 which is NOT NULL REFERENCES plan. Carrying
+-- that FK would force shadow mode to write real `plan` rows in order to
+-- observe, which is exactly the side effect it exists to avoid. The hash is
+-- still recorded so a shadow decision can be reproduced and compared against
+-- a later real one; it is a fingerprint here, not a reference.
+--
+-- Additive DDL, appended after the B11 freeze of the tables above, same
+-- precedent as the additive column recorded further up this file. Nothing
+-- under eval/frozen/ is touched.
+CREATE TABLE shadow_ledger (
+  run_id                    TEXT        NOT NULL,  -- one shadow run over one batch
+  mandate_id                TEXT        NOT NULL,
+  cycle_id                  INTEGER     NOT NULL,
+  profile                   TEXT        NOT NULL,  -- Profile.value
+  -- what the incumbent ladder would have done
+  ladder_action             TEXT        NOT NULL,  -- Action.value
+  ladder_slot               INTEGER     NOT NULL,
+  ladder_day                INTEGER     NOT NULL,
+  ladder_committed_attempts INTEGER     NOT NULL,
+  -- what we would have done
+  our_action                TEXT        NOT NULL,  -- Action.value
+  our_slot                  INTEGER,               -- NULL unless our_action = ATTEMPT
+  our_day                   INTEGER,
+  binding_constraint        TEXT,
+  conformal_set             TEXT        NOT NULL,  -- sorted Cause.value list, comma-joined
+  belief_json               TEXT        NOT NULL,
+  decision_sha256           TEXT        NOT NULL,  -- fingerprint, NOT a FK -- see above
+  divergence                TEXT        NOT NULL,
+  agrees                    BOOLEAN     NOT NULL,
+  created_at                TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (run_id, mandate_id, cycle_id),
+  CHECK (ladder_slot BETWEEN 2 AND 4),
+  CHECK (our_slot IS NULL OR our_slot BETWEEN 2 AND 4),
+  -- an ATTEMPT must name a slot and a day; anything else must not
+  CHECK ((our_action = 'ATTEMPT') = (our_slot IS NOT NULL AND our_day IS NOT NULL))
+);
+CREATE INDEX shadow_ledger_run ON shadow_ledger (run_id, divergence);

@@ -70,6 +70,7 @@ Mandate Recovery Engine -- tasks
   .\run.ps1 golden            golden-set regression on the LLM layer (cached;
                                -NoCache forces a live call on every row)
   .\run.ps1 bench             LLM vs statistical core benchmark
+  .\run.ps1 shadow            decide without executing; delta vs the fixed ladder
   .\run.ps1 chaos -Kills 50   induced process kills
   .\run.ps1 report            regenerate all figures and tables
 
@@ -137,8 +138,14 @@ Mandate Recovery Engine -- tasks
         & $Py -m eval.report
     }
     "eval-quick" { & $Py -m eval.run --config eval/frozen/sim_config.yaml --regime nominal --profile strict --quiet }
-    "golden"     { & $Py -m eval.golden_check }
+    # NOTE: no "golden" case here. PowerShell's switch runs EVERY matching
+    # branch unless a branch breaks, and a second "golden" case (the one that
+    # honours -NoCache) lives further down. Having both meant `.\run.ps1
+    # golden` ran the whole set twice -- once unconditionally cached, once
+    # respecting the switch -- doubling a multi-minute run and, on -NoCache,
+    # doubling the live API spend. Found while planning B12, 2026-08-31.
     "bench"      { & $Py bench\llm_vs_stats.py --n 200 --repeats 5 }
+    "shadow"     { & $Py -m src.execute.shadow }
     "chaos"      { & $Py -m eval.chaos --kills=$Kills }
     "report"     { & $Py -m eval.report --figures --update-readme }
 

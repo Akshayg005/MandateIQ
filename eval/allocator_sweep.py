@@ -77,6 +77,18 @@ from src.policy.stopping_rules import AllocationContext
 
 SEEDS = range(20)  # seeds 0-19 -- matches tests/eval/test_gate_criteria.py
 
+# The provenance string every belief.update() in this harness is stamped
+# with. Deliberately NOT decline_taxonomy.TAXONOMY_VERSION: no taxonomy runs
+# here. Every DeclineClass in this file is FABRICATED -- either by
+# _proxy_decline_class() from a bare Outcome, or by draw_slot1_decline() from
+# the frozen simulator's own generative parameters -- and neither ever saw an
+# issuer string. Stamping them as taxonomy output would be exactly the
+# provenance lie B11 added source_version to make impossible
+# (src/policy/belief.py:172, "a belief that cannot be traced to a specific
+# normaliser version is not auditable"). A reader grepping the ledger for
+# this string finds simulated evidence, not observed evidence.
+PROXY_SOURCE_VERSION = "eval-allocator-sweep-proxy-v1"
+
 _OUTCOME_TO_DECLINE_CLASS: dict[Outcome, DeclineClass | None] = {
     Outcome.DEAD: DeclineClass.CARD_EXPIRED,
     Outcome.STILL_PENDING: DeclineClass.INSUFFICIENT_FUNDS,
@@ -173,7 +185,7 @@ def initial_belief(cause: Cause, config: dict, rng: random.Random) -> belief_mod
     than implied."""
     dc = draw_slot1_decline(cause, config, rng)
     uniform = belief_mod.init(dict(zip(belief_mod.CAUSE_ORDER, belief_mod.REFERENCE_PRIOR)))
-    return belief_mod.update(uniform, dc)
+    return belief_mod.update(uniform, dc, source_version=PROXY_SOURCE_VERSION)
 
 
 @dataclass
@@ -318,7 +330,7 @@ def _run_one_mandate(m, sim: Simulator, profile: Profile, hazard, costs: PolicyC
             # decision without executing any further debit.
             dc = _proxy_decline_class(result.outcome)
             if dc is not None:
-                b = belief_mod.update(b, dc)
+                b = belief_mod.update(b, dc, source_version=PROXY_SOURCE_VERSION)
                 final = solve(b, ctx, hazard=hazard, costs=costs, gate=gate)
                 if final.chosen_action == Action.REAUTH:
                     reauthed = True
@@ -326,7 +338,7 @@ def _run_one_mandate(m, sim: Simulator, profile: Profile, hazard, costs: PolicyC
 
         dc = _proxy_decline_class(result.outcome)
         if dc is not None:
-            b = belief_mod.update(b, dc)
+            b = belief_mod.update(b, dc, source_version=PROXY_SOURCE_VERSION)
 
     return attempted, n_attempts, reauthed
 

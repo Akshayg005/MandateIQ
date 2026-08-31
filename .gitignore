@@ -20,3 +20,4 @@ reports/*.json
 # and a committed cache would blur that line. Costs one live run on a
 # fresh clone.
 eval/golden/.cache/
+reports/*.log
