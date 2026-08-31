@@ -144,7 +144,7 @@ gates honestly, write the handoff.
 
 | File | Role | Read when |
 |---|---|---|
-| `STATE.md` | Current position + drift check. Under 145 lines | Every session, first |
+| `STATE.md` | Current position + drift check. Under 180 lines | Every session, first |
 | `SESSIONS.md` | Append-only history, one line per session | Only when tracing how something happened |
 | `PLAN.md` | The 12-day schedule and gates | Every session, today's day only |
 | `PLAN_DETAIL.md` | File-by-file plan from the Opus planning session | Today's day only |
