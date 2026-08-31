@@ -22,3 +22,5 @@ reports/*.json
 eval/golden/.cache/
 reports/*.log
 reports/.bench_cache/
+.env.bak*
+.env.*.bak

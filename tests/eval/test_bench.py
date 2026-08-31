@@ -51,7 +51,7 @@ def bench_module():
 
     A missing or unimportable module FAILS here; it must never skip. An
     earlier draft of this file skipped instead, which meant a renamed or
-    deleted bench script would turn all 16 of these tests green-by-absence
+    deleted bench script would turn every test in this file green-by-absence
     and the B12 gate would read as passing having checked nothing. That is
     the same vacuous shape the 2026-08-29 audit removed from the gates and
     from run.ps1's live-key scan (DECISIONS.md); it does not get to

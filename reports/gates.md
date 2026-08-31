@@ -439,6 +439,17 @@ written and its gate unmet counts as zero.
            partial work (21 flash answers already on disk), so the resume
            does not re-bill. Whether to buy paid quota, ship flash-lite
            alone, or shrink the flash arm is a decision for the human.
+           ENVIRONMENT, fixed the same day and affecting how much of this
+           block is actually covered: 128 Postgres tests had been SKIPPING
+           because Windows reserved the dynamic TCP range 5341-5440, which
+           contains 5432, so the mrdb container could not bind. Re-created on
+           port 15432 with the same volume (B3's 2 ingested_event and 2
+           webhook_event rows verified intact afterwards). The suite now runs
+           872 tests with ZERO skips, so this block's shadow_ledger DDL and
+           store.append_shadow() are covered by the real suite rather than
+           only by the throwaway containers used while building it, and
+           .un.ps1 verify passes 5/5 including the postgres check that had
+           been failing. DECISIONS.md, 2026-08-31.
            Does not touch eval/frozen/. -->
 - [ ] **B13** ★ stress regimes + report: every number reproducible by one command; at least one regime where we lose, explained
 - [ ] **B14** ∥ dashboard: merchant + acquirer views; per-mandate drill-down shows belief, chosen slot, binding constraint, conformal set, ledger trail

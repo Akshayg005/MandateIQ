@@ -1,10 +1,11 @@
-"""B12: LLM-as-classifier against the competing-risks model, same held-out
-split, four columns -- AUC, p95 latency, cost per 1k decisions, and
-run-to-run variance on identical input.
+"""B12: LLM-as-classifier against the competing-risks model, on the same
+held-out split -- log loss and per-class Brier, macro AUC with a cluster
+bootstrap CI, p95 latency, cost per 1k decisions, and run-to-run variance on
+identical input.
 
-Ship the table even though -- especially because -- the LLM loses. The
-variance column is the argument: same input, different retry time, is
-disqualifying in a payments path regardless of accuracy, because the
+Ship the table whichever way it falls. The variance columns are the
+argument, not accuracy: same input, different retry time, is disqualifying
+in a payments path regardless of how well the model scores, because the
 decision cannot be reproduced in a dispute.
 
 === What is being compared, exactly ==========================================
@@ -26,24 +27,48 @@ INFORMATION SET -- read this before trusting any number below. The LLM is
 shown a DELIBERATE SUPERSET of what the stats model uses. FEATURE_COLUMNS in
 competing_risks.py is only ("const", "slot_3", "slot_4", "in_salary_window");
 PROMPT_FIELDS here adds amount, ceiling, category, prior failures, committed
-day of month and days since the last attempt. This is unfair IN THE LLM'S
-FAVOUR, on purpose -- a loss under a handicap is a stronger claim than a loss
-under parity, and showing it only the four covariates would reduce the whole
-exercise to two priors over a 6-cell contingency table, which says nothing
-about language models. What it must NEVER see is any label or latent:
+day of month and days since the last attempt. Showing it only the four
+covariates would reduce the whole exercise to two priors over a 6-cell
+contingency table, which says nothing about language models.
+
+Note the honest limit of this framing, which an earlier version of this
+docstring overstated as "unfair in the LLM's favour": strictly MORE
+INFORMATION is what is demonstrated, and more information is not
+automatically an advantage to a zero-shot model -- six extra covariates can
+mislead as easily as inform. Claim the former, not the latter.
+
+What it must NEVER see is any label or latent:
 PROMPT_FIELDS is asserted disjoint from src/model/features.py's FORBIDDEN by
 tests/eval/test_bench.py, and render_prompt() applies the allowlist rather
 than trusting its caller's dict.
 
-A KNOWN LIMIT ON THE AUC COLUMN, stated rather than buried. The stats model's
-design matrix has at most 6 distinct covariate atoms, so it emits at most 6
-distinct probability vectors across the entire test split. Its ROC is a
-6-point step function and its AUC is dominated by ties. macro_ovr_auc() uses
-sklearn's tie-aware implementation, and the printed table carries this as a
-footnote. Comparing a 6-atom step function against a free-form model's
-continuous scores is a real apples-to-oranges hazard; the AUC column is
-reported because the block specifies it, not because it is the strongest
-evidence here. The variance column is.
+WHY AUC IS NOT THE HEADLINE. PLAN_DETAIL.md names AUC, so it is reported --
+but it cannot decide this block's claim, and saying so is the point of this
+paragraph. Two independent problems, both measured rather than suspected:
+
+  (1) Two of four classes are unrankable BY CONSTRUCTION. Measured per-class
+      one-vs-rest AUC: STILL_PENDING 0.534, RECOVERED 0.569, DEAD **0.487 --
+      below chance**, OPTED_OUT 0.714. The frozen simulator sets the DEAD
+      hazard from latent cause alone, and a design matrix of (const, slot_3,
+      slot_4, in_salary_window) cannot separate it. Macro-averaging spends
+      half its weight there, leaving almost no room above chance for any arm
+      to lose in.
+  (2) Ties. The stats arm emits at most 6 distinct probability vectors, so
+      its ROC is a 6-point step function compared against a free-form
+      model's continuous scores. macro_ovr_auc() uses sklearn's tie-aware
+      implementation, which mitigates but does not remove the mismatch.
+
+The headline is therefore multiclass_log_loss(), with brier_per_class()
+beside it and an intercept-only null arm so both real arms are measured
+against a shared reference. Log loss is a proper scoring rule: it rewards
+CALIBRATION, not merely ranking, and calibration is what the allocator's
+backward induction actually consumes -- a miscalibrated model that ranks
+well is useless downstream and would still beat the stats arm on AUC. Every
+AUC printed carries a mandate-level cluster bootstrap CI, because rows are
+clustered (one mandate contributes up to three slot rows) and overlapping
+intervals mean a tie however many decimals the point estimates differ by.
+
+Found by stats-reviewer, 2026-08-31; see DECISIONS.md.
 
 TEMPERATURE. Both 0.0 and 1.0 are run. PLAN_DETAIL.md explicitly forbids
 running the LLM at temperature 0 only, and the sharpest finding available is
@@ -57,11 +82,26 @@ it was read. No price and no exchange rate is written into this file.
 
 === Budget ===================================================================
 
-Free tier is ~15 requests/minute per model. The accuracy pass runs once over
-n rows per arm; the variance pass runs `repeats` times over a smaller
-`variance_n` subsample at each of two temperatures. That split is what keeps
-a full run inside ~80 minutes instead of ~4.5 hours, and the subsample size
-is printed in the table rather than left implicit.
+TWO limits, and the second is the one that bites. Per MINUTE: ~15 requests
+per model, handled by _pace(). Per DAY: capped per model, and the caps are
+NOT equal -- gemini-3.5-flash-lite 500/day, gemini-3.5-flash 20/day, both
+measured from real 429 bodies (DAILY_QUOTA_BY_MODEL).
+
+The accuracy pass runs once over n rows per arm; the variance pass runs
+`repeats` times over a smaller `variance_n` subsample at each of two
+temperatures, and the subsample size is printed in the table rather than
+left implicit. plan_budget()/assert_within_budget() compute the total from
+the actual arguments and REFUSE to start a run that cannot fit, because the
+alternative -- discovering a cap partway through -- cost this block 400
+completed calls (POSTMORTEM.md incident 8).
+
+CallCache flushes every answer to disk as it arrives, so an interrupted run
+resumes instead of re-billing. End-of-run persistence is no protection
+against the failure that actually happens, which is the run not reaching its
+end.
+
+A full two-model table is NOT reachable on the free tier: a flash variance
+pass alone is 5 x 30 x 2 = 300 calls against a 20/day cap.
 """
 from __future__ import annotations
 
@@ -92,7 +132,6 @@ from src.model import competing_risks, features, person_period, splits  # noqa: 
 
 PRICING_PATH = _REPO_ROOT / "config" / "llm_pricing.yaml"
 REPORT_PATH = _REPO_ROOT / "reports" / "bench.json"
-DECISIONS_PATH = _REPO_ROOT / "DECISIONS.md"
 
 # Outcome int order. hazards() returns columns in exactly this order and a
 # silent transposition would invert the AUC, so it is named once here and
@@ -120,7 +159,6 @@ PROMPT_FIELDS: tuple[str, ...] = (
     "days_since_last_attempt",
 )
 
-_LABELS = tuple(o.name for o in OUTCOME_ORDER)
 
 BENCH_TOOL: dict[str, Any] = {
     "name": "emit_slot_probabilities",

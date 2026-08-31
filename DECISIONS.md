@@ -10,7 +10,7 @@ Every "no" row below should point at a measurement.
 
 | Subtask | What we used | The alternative | Why not the alternative |
 |---|---|---|---|
-| Retry timing | Discrete-time competing-risks hazard model | LLM as classifier | *(fill from `make bench` — AUC, p95 latency, cost/1k, run-to-run variance)* |
+| Retry timing | Discrete-time competing-risks hazard model | LLM as classifier | Model log loss **1.2509** vs an intercept-only null's 1.2795 (n=140, seed 0). **LLM arm not yet measured** — blocked on Gemini's daily free-tier quota, see "The benchmark" below. The deciding column when it lands is run-to-run variance, not accuracy |
 | Attempt allocation | Exact backward induction over 4 slots | RL / heuristic search | State space is small enough to solve optimally. An approximation here is a choice to be wrong for no reason |
 | Decline → cause mapping | Deterministic taxonomy | LLM classification | Deterministic and auditable. The LLM only normalises *unseen string variants* into this taxonomy — it never assigns the cause |
 | Money arithmetic | Integer paise | — | No model touches arithmetic. Enforced by `scripts/guard_invariants.py` |
@@ -26,8 +26,49 @@ Every "no" row below should point at a measurement.
 
 ## The benchmark
 
-*(paste the table from `make bench` here — and if the LLM wins on AUC, say
-so and explain why it still does not ship.)*
+**Status: incomplete, and the B12 gate is NOT ticked because of it.** The
+statistical arms are measured and reproducible offline; the LLM arm is
+blocked on Gemini's daily free-tier quota (flash-lite 500/day, flash 20/day,
+both measured from real 429 bodies and both exhausted 2026-08-31). A table
+without the LLM arm has no variance column, and the variance column is the
+whole argument, so this section stays marked incomplete rather than being
+dressed up as a result.
+
+Reproduce the rows below with `python bench\llm_vs_stats.py --n 140
+--dry-run` (no API calls, no quota):
+
+| arm | log loss (lower=better) | macro OvR AUC [95% CI] | p95 latency | cost / 1k |
+|---|---|---|---|---|
+| intercept-only null (base rates) | 1.2795 | 0.5000 [0.500, 0.500] | n/a | 0 (local) |
+| competing-risks model | 1.2509 | 0.5990 [0.536, 0.663] | 3.7 ms (per-row, local) | 0 (local) |
+| *gemini-3.5-flash-lite as classifier* | *pending quota* | *pending* | *pending* | *pending* |
+| *gemini-3.5-flash as classifier* | *not reachable on the free tier* | — | — | — |
+
+Per-class Brier — null vs model: STILL_PENDING 0.2503 / 0.2496 ·
+RECOVERED 0.1956 / 0.1925 · DEAD 0.1248 / 0.1251 · OPTED_OUT 0.1133 / 0.1094.
+
+**Read the null row first.** The competing-risks model beats base rates, but
+by 0.029 nats, and its AUC interval [0.536, 0.663] is wide. This is a modest
+model on a hard target, and the honest framing of the eventual comparison is
+"can a language model match a weak-but-calibrated baseline", not "can it
+beat a strong one".
+
+**AUC is not the headline, and cannot be.** Per-class one-vs-rest: 0.534 /
+0.569 / **0.487** / 0.714. DEAD scores *below chance* by construction — the
+frozen simulator sets that hazard from latent cause alone and the design
+matrix cannot see it — so macro AUC spends half its weight on classes the
+model provably cannot rank. Log loss is the headline instead: a proper
+scoring rule, sensitive to calibration, and the quantity the allocator's
+backward induction actually consumes.
+
+**If the LLM wins on accuracy when it lands, the table still ships and the
+LLM still does not.** That is pre-committed here, before the number exists,
+so it cannot be rationalised afterwards. The disqualifying property is
+run-to-run variance on byte-identical input: a retry time that changes
+between identical calls cannot be reproduced in a dispute, which is fatal in
+a money path regardless of accuracy. Early smoke runs already showed argmax
+flips at temperature 1.0 and non-zero probability movement at temperature
+0.0.
 
 ## Decisions log
 
@@ -4081,3 +4122,32 @@ The second needs either a paid key or acceptance of a much smaller flash
 sample. Whether to buy quota, run flash-lite alone, or shrink the flash arm
 is a call for the human, not one to make silently by picking whichever
 number happened to fit.
+
+### 2026-08-31 · B12 · Local Postgres moved off port 5432 (environment, not design)
+
+128 Postgres-dependent tests had been skipping — `pg_schema` skips rather
+than fails when the database is unreachable, which is the right behaviour
+for a laptop without Docker and the wrong thing to leave unexamined for
+three blocks. The cause was not Docker: Windows had reserved the dynamic TCP
+range **5341–5440**, which contains 5432, so the `mrdb` container could not
+bind and failed with "an attempt was made to access a socket in a way
+forbidden by its access permissions".
+
+Fixed by re-creating the container on host port **15432** with the **same
+named volume mounted**, and pointing `.env`'s `DATABASE_URL` at it. Data was
+preserved and verified afterwards, not assumed: the 2 `ingested_event` and 2
+`webhook_event` rows from B3's real test-mode webhook capture — that gate's
+only evidence — are intact.
+
+`.env.example` and `src/core/db.py`'s `DEFAULT_DSN` deliberately still say
+5432. The port exclusion is a property of this machine, not of the project,
+and baking a workaround into the committed defaults would make every other
+checkout wrong. `.env.example` gains a comment describing the symptom and
+both remedies instead.
+
+**What this changes about every earlier claim in this file:** the suite now
+runs 872 tests with **zero skips** (was 731 passed / 128 skipped). B12's
+`shadow_ledger` DDL and `store.append_shadow()` are now exercised by the
+real test suite rather than only by the throwaway containers used during the
+block, and `.\run.ps1 verify` passes all five checks including "postgres
+reachable", which had been failing.
