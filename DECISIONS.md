@@ -26,13 +26,20 @@ Every "no" row below should point at a measurement.
 
 ## The benchmark
 
-**Status: incomplete, and the B12 gate is NOT ticked because of it.** The
-statistical arms are measured and reproducible offline; the LLM arm is
-blocked on Gemini's daily free-tier quota (flash-lite 500/day, flash 20/day,
-both measured from real 429 bodies and both exhausted 2026-08-31). A table
-without the LLM arm has no variance column, and the variance column is the
-whole argument, so this section stays marked incomplete rather than being
+**Status: incomplete. The B12 gate is ticked anyway, by explicit human
+decision on 2026-08-31** — criterion: "tick B12 if the only work left is due
+to the Gemini quota being reached", verified true before ticking. **The tick
+records a scope decision, not a measurement.** The statistical arms are
+measured and reproducible offline; the LLM arm is blocked on Gemini's daily
+free-tier quota (flash-lite 500/day, flash 20/day, both measured from real
+429 bodies, both exhausted). A table without the LLM arm has **no variance
+column** — the one thing the gate text names explicitly, and the whole
+argument of the block — so this section stays marked incomplete rather than
 dressed up as a result.
+
+If these two files ever disagree, **this one is the truth**:
+`reports/gates.md` carries the same caveat beside its `[x]`, and neither may
+be cited as evidence that run-to-run variance was measured. It was not.
 
 Reproduce the rows below with `python bench\llm_vs_stats.py --n 140
 --dry-run` (no API calls, no quota):
@@ -4075,11 +4082,12 @@ a future slot. Censoring is handled correctly. The tie-awareness claim about
 backoff and pacing both sleep outside the timed region, so the latency
 column measures the model rather than our quota tier.
 
-### 2026-08-31 · B12 · The benchmark's LLM arm is blocked on daily free-tier quota — gate NOT ticked
+### 2026-08-31 · B12 · The benchmark's LLM arm is blocked on daily free-tier quota — gate ticked on a scope decision
 
 The statistical side of the benchmark is complete and reproducible offline.
-The LLM side is not, and B12's gate stays open rather than being ticked
-around. Measured on the `--n 140` sample, seed 0:
+The LLM side is not. The gate was later ticked on an explicit human scope
+decision (see the Status banner under "The benchmark"); the variance column
+remains unmeasured either way. Measured on the `--n 140` sample, seed 0:
 
 | arm | log loss (lower=better) | macro OvR AUC |
 |---|---|---|
@@ -4096,9 +4104,17 @@ day, confirmed by direct probe rather than inferred from the failures.
 **What this means for the gate.** `PLAN_DETAIL.md`'s B12 gate has two
 clauses. Shadow mode is **met** — a delta log over the full frozen 200, with
 the report and per-mandate JSONL in `reports/`. The benchmark table clause
-is **not met**: a table without the LLM arm has no variance column, and the
-variance column is the entire argument the block exists to make. Ticking it
-on the stats arms alone would be recording a result the run did not produce.
+is **partially met**: the table is in DECISIONS.md, but its variance column
+is empty.
+
+I argued against ticking on that basis, since the variance column is the
+entire argument the block exists to make. The instruction was to tick if the
+only remaining work was quota-blocked; that condition was verified true
+(shadow complete, benchmark module complete and tested, stats arms measured,
+nothing else outstanding), so the gate is ticked and the partial state is
+recorded here and in `reports/gates.md` rather than smoothed over. The
+distinction that matters downstream: **B16 still needs the variance
+number**, and no artifact in this repo currently supplies it.
 
 **Deviation from the pinned run configuration, stated rather than hidden.**
 `.\run.ps1 bench` was pinned to `--n 200 --repeats 5`, which plans 600 live

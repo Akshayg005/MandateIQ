@@ -576,5 +576,8 @@ inside one run of being written, which is the only reason this sequel cost
 
 **Consequence for B12:** both models' daily quotas are now exhausted
 (verified by probe: flash-lite 429/PerDay/500, flash 429/PerDay/20), so the
-benchmark's LLM arm cannot be completed today and **the B12 gate is not
-ticked**. The stats and null arms are complete and reproducible offline.
+benchmark's LLM arm could not be completed and **its variance column is
+still unmeasured**. The stats and null arms are complete and reproducible
+offline. The gate was subsequently ticked on an explicit human scope
+decision — the tick records that nothing else was outstanding, not that the
+variance number exists. It does not.

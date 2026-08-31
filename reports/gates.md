@@ -388,8 +388,9 @@ written and its gate unmet counts as zero.
            exact repository citations for both blocked findings:
            DECISIONS.md, 2026-08-31, two entries. Does not touch
            eval/frozen/. -->
-- [ ] **B12** ∥ benchmark + shadow: benchmark table in DECISIONS.md including the variance column; shadow mode produces a delta log over the full batch
-      <!-- 2026-08-31, PARTIALLY MET, NOT TICKED. Two clauses; one is met and
+- [x] **B12** ∥ benchmark + shadow: benchmark table in DECISIONS.md including the variance column; shadow mode produces a delta log over the full batch
+      <!-- 2026-08-31, PARTIALLY MET, then TICKED ON A HUMAN SCOPE DECISION
+           (see the end of this note). Two clauses; one is met and
            one is blocked on an external quota, so the box stays empty.
            SHADOW MODE: MET. src/execute/shadow.py produces a delta log over
            all 200 frozen mandates (reports/shadow_delta.md + .jsonl).
@@ -448,8 +449,32 @@ written and its gate unmet counts as zero.
            872 tests with ZERO skips, so this block's shadow_ledger DDL and
            store.append_shadow() are covered by the real suite rather than
            only by the throwaway containers used while building it, and
-           .un.ps1 verify passes 5/5 including the postgres check that had
+           .
+un.ps1 verify passes 5/5 including the postgres check that had
            been failing. DECISIONS.md, 2026-08-31.
+           TICKED 2026-08-31 BY EXPLICIT HUMAN DECISION, on the stated
+           criterion "tick B12 if the only work left is due to the Gemini
+           quota being reached." That criterion was verified true before
+           ticking: shadow mode complete, benchmark module complete and
+           tested (34 offline tests), stats and null arms measured, and the
+           ONLY outstanding item blocked solely by the daily free-tier cap.
+           READ THIS BEFORE CITING THE GATE. The tick records a scope
+           decision, NOT a measurement. Clause 2 (shadow) is verified in the
+           ordinary way. Clause 1 is PARTIALLY verified: the benchmark table
+           is in DECISIONS.md, but the variance column that clause names
+           explicitly is EMPTY, because no LLM arm has been run. Nobody may
+           later read this [x] as evidence that run-to-run variance was
+           measured -- it was not, and DECISIONS.md's "The benchmark"
+           section still carries a Status: incomplete banner saying so. The
+           two files agree deliberately; if they ever disagree, DECISIONS.md
+           is the truth.
+           What would make clause 1 fully true, unchanged: run the two
+           commands in DECISIONS.md's "To finish it" block once quota
+           allows, then replace the pending rows. The call cache banks 21
+           flash answers so the resume does not re-bill. B16 in particular
+           needs this number -- the variance column is the AI-judgment
+           evidence the submission rests on, and it is the one figure this
+           block did not produce.
            Does not touch eval/frozen/. -->
 - [ ] **B13** ★ stress regimes + report: every number reproducible by one command; at least one regime where we lose, explained
 - [ ] **B14** ∥ dashboard: merchant + acquirer views; per-mandate drill-down shows belief, chosen slot, binding constraint, conformal set, ledger trail
