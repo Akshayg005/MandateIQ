@@ -4033,3 +4033,51 @@ a future slot. Censoring is handled correctly. The tie-awareness claim about
 `roc_auc_score` is right. The cost column is clean end to end. And the 429
 backoff and pacing both sleep outside the timed region, so the latency
 column measures the model rather than our quota tier.
+
+### 2026-08-31 · B12 · The benchmark's LLM arm is blocked on daily free-tier quota — gate NOT ticked
+
+The statistical side of the benchmark is complete and reproducible offline.
+The LLM side is not, and B12's gate stays open rather than being ticked
+around. Measured on the `--n 140` sample, seed 0:
+
+| arm | log loss (lower=better) | macro OvR AUC |
+|---|---|---|
+| intercept-only null (base rates) | 1.2795 | 0.5000 |
+| competing-risks model | 1.2509 | 0.5990 |
+
+**Why the LLM arm is missing.** Gemini's free tier caps requests per day,
+per model, and the caps differ by model — measured from real 429 bodies,
+not documentation: `gemini-3.5-flash-lite` 500/day, `gemini-3.5-flash`
+**20/day**. Three runs were attempted; the sequence, and what each cost, is
+in POSTMORTEM.md incidents 7 and 8. Both models are now exhausted for the
+day, confirmed by direct probe rather than inferred from the failures.
+
+**What this means for the gate.** `PLAN_DETAIL.md`'s B12 gate has two
+clauses. Shadow mode is **met** — a delta log over the full frozen 200, with
+the report and per-mandate JSONL in `reports/`. The benchmark table clause
+is **not met**: a table without the LLM arm has no variance column, and the
+variance column is the entire argument the block exists to make. Ticking it
+on the stats arms alone would be recording a result the run did not produce.
+
+**Deviation from the pinned run configuration, stated rather than hidden.**
+`.\run.ps1 bench` was pinned to `--n 200 --repeats 5`, which plans 600 live
+calls per model. That is over flash-lite's cap and 30x over flash's, so it
+could never have completed on this tier. Now `--n 140 --repeats 5
+--variance-n 30` (440 calls), which fits flash-lite but still not flash.
+`.claude/skills/bench-llm/SKILL.md` asks for three table rows including both
+Gemini models; on the free tier, a flash row with a variance column needs
+5 repeats x 30 rows x 2 temperatures = 300 calls against a 20/day cap, so it
+is not reachable without a paid key regardless of scheduling.
+
+**To finish it** — the call cache added in this block makes the resume cheap
+and the partial work is already banked (21 flash answers on disk):
+
+```powershell
+.\run.ps1 bench                                    # flash-lite, 440 calls
+python bench\llm_vs_stats.py --n 140 --repeats 5 --variance-n 30 --model gemini-3.5-flash
+```
+
+The second needs either a paid key or acceptance of a much smaller flash
+sample. Whether to buy quota, run flash-lite alone, or shrink the flash arm
+is a call for the human, not one to make silently by picking whichever
+number happened to fit.

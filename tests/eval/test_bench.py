@@ -621,9 +621,8 @@ def test_plan_budget_counts_every_live_call(bench_module):
 
 
 def test_assert_within_budget_refuses_the_configuration_that_actually_failed(bench_module):
-    """--n 200 --repeats 5 --variance-n 40 plans 600 calls per model against a
-    500/day cap. It ran for 400 calls and lost all of them. It must now be
-    refused before any client is constructed."""
+    """--n 200 --repeats 5 --variance-n 40 plans 600 calls per model against
+    flash-lite's 500/day cap. It ran for 400 calls and lost all of them."""
     over = bench_module.plan_budget(
         n=200, repeats=5, variance_n=40, temperatures=(0.0, 1.0),
         models=("gemini-3.5-flash-lite",),
@@ -638,11 +637,42 @@ def test_assert_within_budget_refuses_the_configuration_that_actually_failed(ben
     bench_module.assert_within_budget(ok)  # must not raise
 
 
+def test_daily_quota_is_per_model_not_one_global_number(bench_module):
+    """The SECOND failure, and the one a single constant would have missed.
+    gemini-3.5-flash allows 20 requests/day, not 500 -- both figures measured
+    from real 429 bodies. A 440-call run that is legal for flash-lite is 22x
+    over budget for flash, and the first version of this guard would have
+    waved it straight through."""
+    assert bench_module.daily_quota("gemini-3.5-flash-lite") == 500
+    assert bench_module.daily_quota("gemini-3.5-flash") == 20
+
+    budget = bench_module.plan_budget(
+        n=140, repeats=5, variance_n=30, temperatures=(0.0, 1.0),
+        models=("gemini-3.5-flash",),
+    )
+    with pytest.raises(ValueError, match="gemini-3.5-flash: 440 planned vs 20/day"):
+        bench_module.assert_within_budget(budget)
+
+
+def test_unknown_model_assumes_the_smallest_observed_quota(bench_module):
+    """An unmeasured model must default to the SMALLEST known cap, not the
+    largest. Guessing high is exactly how a run discovers its limit at call
+    400 with nothing persisted."""
+    assert bench_module.daily_quota("gemini-9.9-unmeasured") == 20
+    assert bench_module.daily_quota("gemini-9.9-unmeasured") == min(
+        bench_module.DAILY_QUOTA_BY_MODEL.values()
+    )
+
+
 def test_assert_within_budget_accounts_for_calls_already_spent(bench_module):
     """A quota is per DAY, not per run. A second run that fits on its own can
     still exceed what is left."""
+    # A named model, not a placeholder: an unknown model now defaults to the
+    # smallest observed quota (20), which would fail this at already_spent=0
+    # for the wrong reason.
     budget = bench_module.plan_budget(
-        n=140, repeats=5, variance_n=30, temperatures=(0.0, 1.0), models=("m",),
+        n=140, repeats=5, variance_n=30, temperatures=(0.0, 1.0),
+        models=("gemini-3.5-flash-lite",),
     )
     bench_module.assert_within_budget(budget, already_spent=0)
     with pytest.raises(ValueError, match="already spent today"):

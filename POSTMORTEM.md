@@ -542,6 +542,39 @@ cannot fit inside `DAILY_QUOTA_PER_MODEL`, naming the arguments that would.
 **Guard added:** `tests/eval/test_bench.py` covers both — that `plan_budget()`
 rejects an over-quota configuration before any client is constructed, and
 that a second `_score()` pass over identical inputs issues **zero** live
-calls, asserted against a counting fake. The second is the load-bearing one:
-a cache that silently missed would be indistinguishable from no cache at all
-right up until the next 500-call bill.
+calls. The second is the load-bearing one: a cache that silently missed
+would be indistinguishable from no cache at all right up until the next
+500-call bill.
+
+**Sequel, same day — the fix was still wrong.** The re-run, resized to 440
+calls to fit "the" 500/day cap and pointed at `gemini-3.5-flash`, died after
+about 20 calls:
+
+```
+quotaId: 'GenerateRequestsPerDayPerProjectPerModel-FreeTier'
+quotaValue: '20'
+quotaDimensions: {'model': 'gemini-3.5-flash'}
+```
+
+**The daily cap is not the same for every model.** flash-lite allows 500/day;
+flash allows **20**. `DAILY_QUOTA_PER_MODEL = 500` — the constant added two
+hours earlier specifically to stop this — waved a 440-call run straight
+through against a cap of 20, because it encoded the one number that had been
+measured as though it were the shape of the world. The same error as the
+original, one level up: reasoning about a limit from the single instance that
+had already bitten.
+
+Replaced with `DAILY_QUOTA_BY_MODEL`, both values measured from real 429
+bodies, and `daily_quota()` defaulting an unmeasured model to the **smallest**
+observed cap rather than the largest — guessing high is the whole failure
+mode. Tested against the exact configuration that failed.
+
+**What the cache bought, immediately:** 21 flash answers survived on disk and
+will be reused rather than re-billed. The incident-7/8 fix paid for itself
+inside one run of being written, which is the only reason this sequel cost
+20 calls instead of another 400.
+
+**Consequence for B12:** both models' daily quotas are now exhausted
+(verified by probe: flash-lite 429/PerDay/500, flash 429/PerDay/20), so the
+benchmark's LLM arm cannot be completed today and **the B12 gate is not
+ticked**. The stats and null arms are complete and reproducible offline.

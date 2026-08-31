@@ -389,6 +389,57 @@ written and its gate unmet counts as zero.
            DECISIONS.md, 2026-08-31, two entries. Does not touch
            eval/frozen/. -->
 - [ ] **B12** ∥ benchmark + shadow: benchmark table in DECISIONS.md including the variance column; shadow mode produces a delta log over the full batch
+      <!-- 2026-08-31, PARTIALLY MET, NOT TICKED. Two clauses; one is met and
+           one is blocked on an external quota, so the box stays empty.
+           SHADOW MODE: MET. src/execute/shadow.py produces a delta log over
+           all 200 frozen mandates (reports/shadow_delta.md + .jsonl).
+           Measured: the fixed ladder commits 600 attempts (3 per mandate,
+           unconditionally), this system commits 141; 56 REAUTH of which 18
+           are bound by the AFA cliff and 38 by belief alone, 3 STOP, 141
+           agreeing exactly. The no-live-write invariant was proven against a
+           REAL Postgres, not only against test doubles: 6 rows written to
+           shadow_ledger and 0 rows in ledger, committed_schedule,
+           attempt_lease and plan. Test coverage is a positive/negative
+           control PAIR -- a conn permitting only INSERT INTO shadow_ledger
+           must let run_shadow finish, AND one also rejecting shadow_ledger
+           must make it raise, so "no forbidden statement issued" cannot be
+           satisfied by a function that never touched the database.
+           BENCHMARK TABLE: NOT MET. The stats side is complete (intercept-
+           only null log loss 1.2795 / AUC 0.5000; competing-risks 1.2509 /
+           0.5990 on the n=140 seed-0 sample) but the LLM arm is missing, and
+           a table without it has no variance column -- which is the entire
+           argument the block exists to make. Gemini's free tier caps
+           requests per day PER MODEL and the caps differ: flash-lite 500/day,
+           flash 20/day, both measured from real 429 bodies and both
+           confirmed exhausted by direct probe. Three runs were attempted;
+           POSTMORTEM.md incidents 7 and 8 record what each cost, including
+           400 completed calls discarded because results were written only at
+           the end of a run.
+           NOT a clean history. The originally pinned `--n 200 --repeats 5`
+           plans 600 calls per model and could never have completed on this
+           tier -- it was sized against a limit that had not been read. The
+           first fix encoded DAILY_QUOTA_PER_MODEL = 500, which was the same
+           error one level up and would have waved a 440-call flash run past
+           a cap of 20; it is now a measured per-model table defaulting an
+           unknown model to the SMALLEST observed cap.
+           Also NOT clean: stats-reviewer found the benchmark was measuring
+           the wrong thing. Per-class AUC is 0.534/0.569/0.487/0.714, i.e.
+           DEAD is BELOW CHANCE by construction, so macro AUC had no power to
+           decide "the LLM must lose" either way; the headline moved to
+           multiclass log loss with per-class Brier, an intercept-only null
+           arm, and a mandate-cluster bootstrap CI. Worse, the prompt defined
+           p_still_pending as surviving "to a further slot" while 74 of 146
+           slot-4 rows carry exactly that label -- instructing the model to
+           zero out the correct answer on half of them, biasing the result in
+           THIS PROJECT'S OWN FAVOUR. Every finding was reverified by
+           measurement before being acted on. Full account: DECISIONS.md,
+           2026-08-31, five B12 entries.
+           To close: run the two commands in DECISIONS.md's "To finish it"
+           block after the quota resets. The call cache added here banks
+           partial work (21 flash answers already on disk), so the resume
+           does not re-bill. Whether to buy paid quota, ship flash-lite
+           alone, or shrink the flash arm is a decision for the human.
+           Does not touch eval/frozen/. -->
 - [ ] **B13** ★ stress regimes + report: every number reproducible by one command; at least one regime where we lose, explained
 - [ ] **B14** ∥ dashboard: merchant + acquirer views; per-mandate drill-down shows belief, chosen slot, binding constraint, conformal set, ledger trail
 - [ ] **B15** ∥ landing page: 60fps on a mid laptop; reduced-motion fallback; canvas-failure fallback; counters wired to real report output, not hard-coded

@@ -485,11 +485,30 @@ _DEFAULT_RETRY_DELAY_S = 15.0
 # `quotaValue: '15'`). 60/15 plus a cushion for clock skew against the
 # server's own window.
 _MIN_INTERVAL_S = 4.3
-# Free tier is ALSO capped per day, per model. Measured from the 429 body:
-# quotaId 'GenerateRequestsPerDayPerProjectPerModel-FreeTier', value 500.
-# The original 600-calls-per-model plan was over this before it started
-# (POSTMORTEM.md incident 8), so the budget is now checked, not assumed.
-DAILY_QUOTA_PER_MODEL = 500
+# Free tier is ALSO capped PER DAY, PER MODEL -- and the cap is NOT the same
+# for every model, which is the part that cost this block two runs. Both
+# figures below are measured from real 429 bodies
+# (quotaId 'GenerateRequestsPerDayPerProjectPerModel-FreeTier'), not from
+# documentation and not from memory:
+#
+#   gemini-3.5-flash-lite   quotaValue '500'   (2026-08-31)
+#   gemini-3.5-flash        quotaValue '20'    (2026-08-31)
+#
+# A single DAILY_QUOTA_PER_MODEL = 500 constant was the first version of this
+# fix, and it was still wrong: it would have waved through a 440-call flash
+# run against a cap of 20. POSTMORTEM.md incident 8.
+DAILY_QUOTA_BY_MODEL: Mapping[str, int] = {
+    "gemini-3.5-flash-lite": 500,
+    "gemini-3.5-flash": 20,
+}
+# Used only for a model with no measured entry. Deliberately the SMALLEST
+# observed cap, not the largest: guessing high is how a run discovers a
+# limit at call 400 with nothing persisted.
+DAILY_QUOTA_UNKNOWN_MODEL = 20
+
+
+def daily_quota(model: str) -> int:
+    return DAILY_QUOTA_BY_MODEL.get(model, DAILY_QUOTA_UNKNOWN_MODEL)
 
 
 def _retry_delay_s(exc: Exception) -> float:
@@ -675,14 +694,20 @@ def plan_budget(*, n: int, repeats: int, variance_n: int, temperatures: Sequence
 
 
 def assert_within_budget(budget: Mapping[str, int], *, already_spent: int = 0) -> None:
-    over = {m: c for m, c in budget.items() if c + already_spent > DAILY_QUOTA_PER_MODEL}
+    over = {
+        m: (c, daily_quota(m)) for m, c in budget.items()
+        if c + already_spent > daily_quota(m)
+    }
     if over:
+        detail = "; ".join(
+            f"{m}: {c} planned vs {q}/day" for m, (c, q) in sorted(over.items())
+        )
         raise ValueError(
-            f"this run would issue {over} calls per model against a daily free-tier "
-            f"quota of {DAILY_QUOTA_PER_MODEL} (already spent today: {already_spent}). "
-            f"Lower --n, --repeats or --variance-n, or pass fewer --model values. "
-            f"Budget is checked here rather than discovered at call "
-            f"{DAILY_QUOTA_PER_MODEL} -- see POSTMORTEM.md incident 8."
+            f"this run exceeds the daily free-tier quota -- {detail} "
+            f"(already spent today: {already_spent}). Lower --n, --repeats or "
+            f"--variance-n, or pass fewer --model values. Quotas differ PER MODEL "
+            f"and are checked here rather than discovered mid-run -- see "
+            f"POSTMORTEM.md incident 8."
         )
 
 
@@ -1064,8 +1089,9 @@ def main(n: int = 200, repeats: int = 5, *, variance_n: int = 40, seed: int = 0,
         budget = plan_budget(n=n, repeats=repeats, variance_n=variance_n,
                              temperatures=(0.0, 1.0), models=models)
         assert_within_budget(budget, already_spent=already_spent)
-        print(f"planned live calls per model: {budget} "
-              f"(daily free-tier quota {DAILY_QUOTA_PER_MODEL})")
+        print("planned live calls: " + ", ".join(
+            f"{m}={c} (quota {daily_quota(m)}/day)" for m, c in sorted(budget.items())
+        ))
 
     train, test = build_test_split(seed=seed)
     if n < len(test):
