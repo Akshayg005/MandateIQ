@@ -598,7 +598,30 @@ un.ps1 verify passes 5/5 including the postgres check that had
            choosing a sixth now, knowing what breaks the engine, is what
            pre-registration exists to prevent.
 
-           910 tests pass, zero skips; guards clean on 122 files; run.ps1
+           SEED SWEEP, 2026-09-01. Everything above was originally seed 0
+           with no error bar. `.\run.ps1 eval` now runs 8 seeds (1024 cells,
+           ~15 min) and the report's headline is a per-seed SIGN TEST over
+           256 paired comparisons rather than the averaged table, because a
+           mean can hide a comparison that flips between seeds. Result:
+             * vs the LADDER the thesis holds and is stable -- the engine
+               preserves more in 256/256 and spends fewer attempts in
+               256/256, recovering more money in only 36/256. Deliberately
+               recovering less to protect lifetime value is the thesis.
+             * vs ONE_SHOT it does not. A single attempt on day 2 with no
+               model, no belief and no gate preserves more mandates than the
+               engine in 214/256, and the engine spends MORE attempts in
+               226/256. The engine's only edge is money, 146/256 (57%). On
+               two of the three bars a policy with no model in it beats this
+               one -- and more seeds made that finding STRONGER, which is the
+               opposite of what a noise explanation would predict.
+           The defensible claim is therefore against the incumbent ladder,
+           not against every trivial baseline, and both the report and the
+           README now lead with that rather than with the ladder comparison
+           alone. The sweep also produced worse figures than seed 0 had:
+           per-class conformal coverage down to 0.741 (CANT_PAY_EVER), and
+           4,032 post-terminal ATTEMPTs.
+
+           915 tests pass, zero skips; guards clean on 122 files; run.ps1
            verify 5/5. Does not touch eval/frozen/. -->
 - [ ] **B14** ∥ dashboard: merchant + acquirer views; per-mandate drill-down shows belief, chosen slot, binding constraint, conformal set, ledger trail
 - [ ] **B15** ∥ landing page: 60fps on a mid laptop; reduced-motion fallback; canvas-failure fallback; counters wired to real report output, not hard-coded
