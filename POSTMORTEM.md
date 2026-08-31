@@ -489,3 +489,59 @@ that the call is retried AND that the recorded latency excludes the wait.
 The second assertion is the load-bearing one: a retry that silently
 poisoned the latency column would still have passed a retry-only test, and
 the latency column is one of the four this block exists to produce.
+
+## Incident 8 — a daily quota nobody had read, and 400 paid calls thrown away
+**When:** Block B12, 2026-08-31, third full benchmark run
+
+**Symptom:** The run completed the whole `gemini-3.5-flash-lite` accuracy
+pass (200 calls) and all five variance repeats at t=0.0 (200 more), then died
+on a 429 whose body was **not** the per-minute quota this run had been
+carefully paced against:
+
+```
+quotaId: 'GenerateRequestsPerDayPerProjectPerModel-FreeTier'
+quotaValue: '500'
+```
+
+`reports/bench.json` was not written. Every one of those 400 calls was lost.
+
+**Root cause:** Two independent mistakes that only bite together.
+
+*The budget was never checkable.* Incident 7 fixed the per-minute limit and
+the module docstring reasoned confidently about "~15 requests/minute per
+model", sizing the run at ~1,200 calls across two models. There is also a
+**500/model/day** cap, and 600 calls per model was over it before the first
+run started. The arithmetic was done against the only limit that had already
+failed, which is a poor way to choose which limits to check.
+
+*Results were written once, at the end.* `main()` builds every arm and then
+writes `reports/bench.json`. Any failure at call 400 of 600 discards calls
+1–400. This is precisely the pattern `eval/golden_check.py:_persisting()`
+was built to avoid at B11 — it flushes each fresh live answer to disk
+immediately "so an interrupted run doesn't re-bill" — and that precedent was
+read and cited while planning this block, then not applied. The irony is
+sharper still: this same run had just been restarted specifically to add
+`variance_runs` persistence so raw probabilities would never need re-buying,
+and the persistence added was end-of-run persistence, which is no protection
+at all against the thing that actually happens.
+
+**Why it wasn't caught earlier:** The smoke tests were 12 and 20 calls. Both
+rate limits are invisible below a few hundred calls, and the daily one is
+invisible below 500 — so no test short enough to run casually can reach it.
+Nothing in the repo asserted a call budget against a documented quota, so
+the sizing lived only in a docstring's prose where it could not be wrong out
+loud.
+
+**Fix:** An on-disk JSONL cache, flushed after every single live call and
+keyed by (model, temperature, repeat, row) plus a hash of the prompt and
+tool schema, so a re-run resumes instead of re-billing and a prompt edit
+correctly invalidates. Plus an explicit pre-flight budget check that computes
+the call count from the actual arguments and refuses to start a run that
+cannot fit inside `DAILY_QUOTA_PER_MODEL`, naming the arguments that would.
+
+**Guard added:** `tests/eval/test_bench.py` covers both — that `plan_budget()`
+rejects an over-quota configuration before any client is constructed, and
+that a second `_score()` pass over identical inputs issues **zero** live
+calls, asserted against a counting fake. The second is the load-bearing one:
+a cache that silently missed would be indistinguishable from no cache at all
+right up until the next 500-call bill.

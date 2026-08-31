@@ -485,6 +485,11 @@ _DEFAULT_RETRY_DELAY_S = 15.0
 # `quotaValue: '15'`). 60/15 plus a cushion for clock skew against the
 # server's own window.
 _MIN_INTERVAL_S = 4.3
+# Free tier is ALSO capped per day, per model. Measured from the 429 body:
+# quotaId 'GenerateRequestsPerDayPerProjectPerModel-FreeTier', value 500.
+# The original 600-calls-per-model plan was over this before it started
+# (POSTMORTEM.md incident 8), so the budget is now checked, not assumed.
+DAILY_QUOTA_PER_MODEL = 500
 
 
 def _retry_delay_s(exc: Exception) -> float:
@@ -651,6 +656,80 @@ def _extract_call_args(response: Any) -> dict[str, Any]:
 # --- the run -----------------------------------------------------------------
 
 
+CACHE_DIR = _REPO_ROOT / "reports" / ".bench_cache"
+
+# Hash of everything that changes what a call MEANS. A prompt or tool-schema
+# edit must invalidate the cache; a change to n/repeats must not.
+PROMPT_VERSION = __import__("hashlib").sha256(
+    (BENCH_SYSTEM_PROMPT + str(BENCH_TOOL) + str(PROMPT_FIELDS)).encode()
+).hexdigest()[:12]
+
+
+def plan_budget(*, n: int, repeats: int, variance_n: int, temperatures: Sequence[float],
+                models: Sequence[str]) -> dict[str, int]:
+    """Calls this configuration will make, per model. Checked BEFORE any client
+    is built, because the alternative -- discovering the daily cap at call 400
+    of 600 -- costs the whole run (POSTMORTEM.md incident 8)."""
+    per_model = n + repeats * variance_n * len(temperatures)
+    return {model: per_model for model in models}
+
+
+def assert_within_budget(budget: Mapping[str, int], *, already_spent: int = 0) -> None:
+    over = {m: c for m, c in budget.items() if c + already_spent > DAILY_QUOTA_PER_MODEL}
+    if over:
+        raise ValueError(
+            f"this run would issue {over} calls per model against a daily free-tier "
+            f"quota of {DAILY_QUOTA_PER_MODEL} (already spent today: {already_spent}). "
+            f"Lower --n, --repeats or --variance-n, or pass fewer --model values. "
+            f"Budget is checked here rather than discovered at call "
+            f"{DAILY_QUOTA_PER_MODEL} -- see POSTMORTEM.md incident 8."
+        )
+
+
+class CallCache:
+    """Append-only JSONL cache, flushed after EVERY live call.
+
+    Mirrors eval/golden_check.py's _persisting(): an interrupted multi-hundred
+    call run must resume, never re-bill. End-of-run persistence is no
+    protection against the failure that actually happens, which is the run not
+    reaching its end.
+    """
+
+    def __init__(self, model: str, *, enabled: bool = True) -> None:
+        self.enabled = enabled
+        self.path = CACHE_DIR / f"{model.replace('/', '_')}__{PROMPT_VERSION}.jsonl"
+        self.hits = 0
+        self.misses = 0
+        self._data: dict[str, list[float]] = {}
+        if enabled and self.path.exists():
+            for line in self.path.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                rec = json.loads(line)
+                self._data[rec["k"]] = rec["p"]
+
+    @staticmethod
+    def key(*, temperature: float, repeat: int, row_index: int) -> str:
+        return f"t{temperature}|r{repeat}|i{row_index}"
+
+    def get(self, k: str) -> list[float] | None:
+        if not self.enabled:
+            return None
+        hit = self._data.get(k)
+        if hit is not None:
+            self.hits += 1
+        return hit
+
+    def put(self, k: str, probs: Sequence[float]) -> None:
+        self.misses += 1
+        if not self.enabled:
+            return
+        self._data[k] = list(probs)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with self.path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"k": k, "p": list(probs)}) + "\n")
+
+
 @dataclass
 class ArmResult:
     name: str
@@ -781,22 +860,45 @@ def llm_arm(
     temperatures: Sequence[float],
     usd_inr_paise: int,
     pricing: Mapping[str, Any],
+    use_cache: bool = True,
 ) -> ArmResult:
     """Accuracy over the full sample once at t=0.0, then `repeats` passes
     over a `variance_n` subsample at each temperature."""
     client = InstrumentedGemini()
+    cache = CallCache(model, enabled=use_cache)
     y_true = test["event_code"].to_numpy(dtype=int)
     rows = [test.iloc[i].to_dict() for i in range(len(test))]
 
-    def _score(rs: Sequence[Mapping[str, object]], temp: float, label: str) -> np.ndarray:
+    def _score(
+        rs: Sequence[Mapping[str, object]], temp: float, label: str, *,
+        repeat: int, row_ids: Sequence[int],
+    ) -> np.ndarray:
         out = []
-        for i, r in enumerate(rs, 1):
-            out.append(client.probabilities(model=model, user=render_prompt(r), temperature=temp))
+        for i, (r, row_id) in enumerate(zip(rs, row_ids), 1):
+            key = CallCache.key(temperature=temp, repeat=repeat, row_index=row_id)
+            hit = cache.get(key)
+            if hit is not None:
+                out.append(np.asarray(hit, dtype=float))
+            else:
+                probs = client.probabilities(
+                    model=model, user=render_prompt(r), temperature=temp
+                )
+                # Flushed to disk immediately, before the next call is made.
+                # An interrupted run must resume, never re-bill -- 400 calls
+                # were lost to end-of-run persistence (POSTMORTEM.md 8).
+                cache.put(key, probs)
+                out.append(probs)
             if i % 25 == 0 or i == len(rs):
-                print(f"    [{model} {label}] {i}/{len(rs)}", flush=True)
+                print(
+                    f"    [{model} {label}] {i}/{len(rs)} "
+                    f"(cache {cache.hits} hit / {cache.misses} live)",
+                    flush=True,
+                )
         return np.array(out)
 
-    accuracy_probs = _score(rows, 0.0, "accuracy")
+    accuracy_probs = _score(
+        rows, 0.0, "accuracy", repeat=0, row_ids=list(range(len(rows)))
+    )
 
     variance: dict[str, VarianceReport] = {}
     raw_runs: dict[str, list] = {}
@@ -806,7 +908,13 @@ def llm_arm(
     sub_idx = list(test.sample(n=min(variance_n, len(rows)), random_state=0).index)
     sub = [rows[i] for i in sub_idx]
     for temp in temperatures:
-        runs = [_score(sub, temp, f"variance t={temp} rep{k + 1}") for k in range(repeats)]
+        runs = [
+            _score(
+                sub, temp, f"variance t={temp} rep{k + 1}",
+                repeat=k + 1, row_ids=[int(i) for i in sub_idx],
+            )
+            for k in range(repeats)
+        ]
         variance[f"t={temp}"] = variance_report(runs)
         raw_runs[f"t={temp}"] = [r.tolist() for r in runs]
 
@@ -833,7 +941,7 @@ def llm_arm(
         degenerate_answers=client.degenerate_answers,
         variance=variance,
         note=(
-            f"{len(client.records)} live calls; variance subsample n={len(sub)}; "
+            f"{cache.misses} live calls, {cache.hits} cached; variance subsample n={len(sub)}; "
             f"{client.degenerate_answers} degenerate answer(s) coerced to uniform"
         ),
         probs=accuracy_probs.tolist(),
@@ -946,10 +1054,18 @@ is zero. Converted at USD 1 = INR {pricing['usd_inr_paise'] / 100:.2f}
 
 
 def main(n: int = 200, repeats: int = 5, *, variance_n: int = 40, seed: int = 0,
-         models: Sequence[str] | None = None, dry_run: bool = False) -> int:
+         models: Sequence[str] | None = None, dry_run: bool = False,
+         use_cache: bool = True, already_spent: int = 0) -> int:
     pricing = load_pricing()
     usd_inr_paise = int(pricing["usd_inr_paise"])
     models = tuple(models or ("gemini-3.5-flash-lite", "gemini-3.5-flash"))
+
+    if not dry_run:
+        budget = plan_budget(n=n, repeats=repeats, variance_n=variance_n,
+                             temperatures=(0.0, 1.0), models=models)
+        assert_within_budget(budget, already_spent=already_spent)
+        print(f"planned live calls per model: {budget} "
+              f"(daily free-tier quota {DAILY_QUOTA_PER_MODEL})")
 
     train, test = build_test_split(seed=seed)
     if n < len(test):
@@ -972,6 +1088,7 @@ def main(n: int = 200, repeats: int = 5, *, variance_n: int = 40, seed: int = 0,
             arm = llm_arm(
                 model=model, test=test, repeats=repeats, variance_n=variance_n,
                 temperatures=(0.0, 1.0), usd_inr_paise=usd_inr_paise, pricing=pricing,
+                use_cache=use_cache,
             )
             arms.append(arm)
             print(f"  {arm.name}: log loss {arm.log_loss:.4f} AUC {arm.auc:.4f} ({arm.note})")
@@ -1032,6 +1149,10 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--model", action="append", dest="models", default=None)
     ap.add_argument("--dry-run", action="store_true", help="stats arm only; no live API calls")
+    ap.add_argument("--no-cache", action="store_true",
+                    help="force a live call for every row (ignores reports/.bench_cache/)")
+    ap.add_argument("--already-spent", type=int, default=0,
+                    help="calls already made against today's per-model quota, for the budget check")
     return ap.parse_args(argv)
 
 
@@ -1042,5 +1163,6 @@ if __name__ == "__main__":
     _a = _parse_args()
     raise SystemExit(
         main(_a.n, _a.repeats, variance_n=_a.variance_n, seed=_a.seed,
-             models=_a.models, dry_run=_a.dry_run)
+             models=_a.models, dry_run=_a.dry_run, use_cache=not _a.no_cache,
+             already_spent=_a.already_spent)
     )

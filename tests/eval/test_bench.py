@@ -606,3 +606,91 @@ def test_variance_report_max_optout_swing_catches_what_ordering_flip_misses(benc
     assert report.max_optout_swing == pytest.approx(0.40), (
         "the opt-out swing is what makes the instability visible at all"
     )
+
+
+# --- Budget and cache guards (POSTMORTEM.md incident 8) ----------------------
+
+
+def test_plan_budget_counts_every_live_call(bench_module):
+    """The budget must count the variance pass, not just the accuracy pass.
+    Undercounting is how 600 calls got planned against a 500/day cap."""
+    budget = bench_module.plan_budget(
+        n=140, repeats=5, variance_n=30, temperatures=(0.0, 1.0), models=("m1", "m2"),
+    )
+    assert budget == {"m1": 140 + 5 * 30 * 2, "m2": 140 + 5 * 30 * 2}
+
+
+def test_assert_within_budget_refuses_the_configuration_that_actually_failed(bench_module):
+    """--n 200 --repeats 5 --variance-n 40 plans 600 calls per model against a
+    500/day cap. It ran for 400 calls and lost all of them. It must now be
+    refused before any client is constructed."""
+    over = bench_module.plan_budget(
+        n=200, repeats=5, variance_n=40, temperatures=(0.0, 1.0),
+        models=("gemini-3.5-flash-lite",),
+    )
+    with pytest.raises(ValueError, match="daily free-tier quota"):
+        bench_module.assert_within_budget(over)
+
+    ok = bench_module.plan_budget(
+        n=140, repeats=5, variance_n=30, temperatures=(0.0, 1.0),
+        models=("gemini-3.5-flash-lite",),
+    )
+    bench_module.assert_within_budget(ok)  # must not raise
+
+
+def test_assert_within_budget_accounts_for_calls_already_spent(bench_module):
+    """A quota is per DAY, not per run. A second run that fits on its own can
+    still exceed what is left."""
+    budget = bench_module.plan_budget(
+        n=140, repeats=5, variance_n=30, temperatures=(0.0, 1.0), models=("m",),
+    )
+    bench_module.assert_within_budget(budget, already_spent=0)
+    with pytest.raises(ValueError, match="already spent today"):
+        bench_module.assert_within_budget(budget, already_spent=100)
+
+
+def test_call_cache_round_trips_and_is_flushed_per_call(bench_module, tmp_path, monkeypatch):
+    """The load-bearing half: a second pass over identical inputs must issue
+    ZERO live calls. A cache that silently missed would be indistinguishable
+    from no cache at all, right up until the next 500-call bill.
+
+    Also asserts the entry is on DISK before the next call would be made --
+    end-of-run persistence is what lost 400 calls, so writing at close is not
+    good enough.
+    """
+    monkeypatch.setattr(bench_module, "CACHE_DIR", tmp_path)
+
+    first = bench_module.CallCache("test-model")
+    key = bench_module.CallCache.key(temperature=0.0, repeat=0, row_index=7)
+    assert first.get(key) is None, "empty cache must miss"
+    first.put(key, [0.1, 0.2, 0.3, 0.4])
+
+    # On disk immediately, not at close.
+    assert first.path.exists(), "cache entry was not flushed to disk on write"
+
+    second = bench_module.CallCache("test-model")
+    got = second.get(key)
+    assert got == [0.1, 0.2, 0.3, 0.4], f"cache did not round-trip, got {got}"
+    assert second.hits == 1
+
+
+def test_call_cache_is_invalidated_by_a_prompt_change(bench_module, tmp_path, monkeypatch):
+    """A reworded prompt must not be served last version's answers. The
+    slot-4 prompt fix is exactly this case: reusing pre-fix answers would have
+    silently reported the corrected prompt's numbers as the old prompt's."""
+    monkeypatch.setattr(bench_module, "CACHE_DIR", tmp_path)
+    path_now = bench_module.CallCache("m").path
+    monkeypatch.setattr(bench_module, "PROMPT_VERSION", "deadbeef1234")
+    path_after = bench_module.CallCache("m").path
+    assert path_now != path_after, "cache path must change when the prompt changes"
+
+
+def test_call_cache_can_be_disabled(bench_module, tmp_path, monkeypatch):
+    """--no-cache must force a live call for every row, mirroring
+    eval/golden_check.py's own flag. A gate ticked against a cached run is
+    weaker evidence than one ticked against a live run."""
+    monkeypatch.setattr(bench_module, "CACHE_DIR", tmp_path)
+    c = bench_module.CallCache("m", enabled=False)
+    key = bench_module.CallCache.key(temperature=0.0, repeat=0, row_index=1)
+    c.put(key, [0.25, 0.25, 0.25, 0.25])
+    assert c.get(key) is None, "a disabled cache must never serve a hit"

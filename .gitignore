@@ -21,3 +21,4 @@ reports/*.json
 # fresh clone.
 eval/golden/.cache/
 reports/*.log
+reports/.bench_cache/

@@ -144,7 +144,11 @@ Mandate Recovery Engine -- tasks
     # golden` ran the whole set twice -- once unconditionally cached, once
     # respecting the switch -- doubling a multi-minute run and, on -NoCache,
     # doubling the live API spend. Found while planning B12, 2026-08-31.
-    "bench"      { & $Py bench\llm_vs_stats.py --n 200 --repeats 5 }
+    # --n 200 --repeats 5 (the original pinned args) plans 600 live calls per
+    # model against a 500/model/day free-tier cap, and cannot complete --
+    # POSTMORTEM.md incident 8, where it died at call 400. 140 + 5*30*2 = 440
+    # fits, and bench refuses to start anything that does not.
+    "bench"      { & $Py bench\llm_vs_stats.py --n 140 --repeats 5 --variance-n 30 }
     "shadow"     { & $Py -m src.execute.shadow }
     "chaos"      { & $Py -m eval.chaos --kills=$Kills }
     "report"     { & $Py -m eval.report --figures --update-readme }
