@@ -545,6 +545,39 @@ DAILY_QUOTA_BY_MODEL: Mapping[str, int] = {
 DAILY_QUOTA_UNKNOWN_MODEL = 20
 
 
+def next_quota_reset() -> str:
+    """When the free-tier DAILY quota actually rolls over, in IST.
+
+    Google resets `generate_content_free_tier_requests` at midnight
+    **US/Pacific**, not at local midnight. IST is 12.5 hours ahead of PDT, so
+    a fresh IST date is NOT a fresh quota day -- 00:43 IST on the 1st is
+    still 12:13 on the previous day in Pacific, i.e. mid-quota-day. The reset
+    lands at ~12:30 IST.
+
+    This cost two failed runs on 2026-08-31/09-01 before it was diagnosed.
+    Worse, a one-call probe SUCCEEDED both times minutes before the real run
+    died on its first billed call: with a handful of the day's 500 left, a
+    single call proves the key works and says nothing about remaining budget.
+    Do not use a probe as a go/no-go for a multi-hundred-call run -- there is
+    no free-tier API for remaining quota. The call cache is the real
+    protection: a run that dies partway costs nothing and resumes.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    ist = timezone(timedelta(hours=5, minutes=30))
+    pacific = timezone(timedelta(hours=-7))  # PDT; an hour out under PST
+    now_pac = datetime.now(timezone.utc).astimezone(pacific)
+    reset_pac = (now_pac + timedelta(days=1)).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    hours = (reset_pac - now_pac).total_seconds() / 3600
+    return (
+        f"{reset_pac.astimezone(ist).strftime('%Y-%m-%d %H:%M')} IST "
+        f"(~{hours:.1f}h away; quota rolls over at midnight US/Pacific, "
+        f"NOT at local midnight)"
+    )
+
+
 def daily_quota(model: str) -> int:
     return DAILY_QUOTA_BY_MODEL.get(model, DAILY_QUOTA_UNKNOWN_MODEL)
 
@@ -745,7 +778,11 @@ def assert_within_budget(budget: Mapping[str, int], *, already_spent: int = 0) -
             f"(already spent today: {already_spent}). Lower --n, --repeats or "
             f"--variance-n, or pass fewer --model values. Quotas differ PER MODEL "
             f"and are checked here rather than discovered mid-run -- see "
-            f"POSTMORTEM.md incident 8."
+            f"POSTMORTEM.md incident 8.\n"
+            f"Next quota reset: {next_quota_reset()}.\n"
+            f"NOTE: this pre-flight can only see THIS run's planned calls. It "
+            f"is structurally blind to what earlier sessions already spent "
+            f"today, so passing it does not mean the budget is there."
         )
 
 

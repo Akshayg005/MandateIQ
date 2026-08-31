@@ -4495,3 +4495,50 @@ if the markers are absent, rather than guessing where the table is.
 The README table carries the `null` and `one_shot` rows next to the engine,
 for the reason in finding 4: the preserved-mandates column is not
 interpretable without them.
+
+### 2026-09-01 · Quota resets at midnight US/Pacific, not local midnight
+
+Two runs were attempted and lost to 429s before this was diagnosed, and the
+diagnosis is embarrassing enough to be worth writing down precisely.
+
+**The trap.** Google resets `generate_content_free_tier_requests` at midnight
+**US/Pacific**. IST is 12.5 hours ahead of PDT. So at 00:43 IST on 1 Sep it
+was still 12:13 on 31 Aug in Pacific — the middle of the *previous* quota day,
+with that day's 500 flash-lite calls already spent by the earlier session. A
+fresh IST date reads like a fresh quota day and is not one. The reset actually
+lands at **~12:30 IST**.
+
+**The second trap, which is the one that actually caused the losses.** A
+one-call probe against each model **succeeded both times**, minutes before the
+real workload died on its first billed call. That is not a contradiction: with
+a handful of the day's 500 remaining, a single call proves the key works and
+the model is reachable, and says nothing whatsoever about remaining budget.
+There is no free-tier API for remaining quota.
+
+**So: never use a probe as a go/no-go for a multi-hundred-call run.** The
+correct protection is the one already built — `CallCache` flushes after every
+live call, so a run that dies partway costs nothing and resumes. Just launch
+the workload and let it fail if the budget is not there.
+
+`assert_within_budget()` is likewise not a green light. It can only compare
+*this run's* planned calls against the per-model cap; it is structurally blind
+to what earlier sessions spent on the same key today. `440 <= 500` passed
+while the true remaining budget was approximately zero.
+
+**Fixed by making the fact discoverable rather than by adding a check there
+cannot be one:** `bench/llm_vs_stats.next_quota_reset()` computes the rollover
+in IST, and the pre-flight's failure message now prints it along with an
+explicit statement that passing the pre-flight does not mean the budget
+exists.
+
+**Still outstanding, both purely waiting on the 12:30 IST rollover:**
+
+* B12's variance column — the flash-lite arm (440 calls, fits in 500) and
+  another 20 banked flash calls. The flash arm is **not** to be shrunk, per
+  the human's standing instruction: 440 needed against a 20/day cap with 21
+  banked.
+* The golden set's intent arm — 30 calls. `intent.py` changed in B12, so the
+  version-namespaced cache is empty for the current prompt and the freshness
+  check correctly reports PARTIAL (1 of 30).
+
+Both fit inside one day's flash-lite budget: 440 + 30 = 470 of 500.
