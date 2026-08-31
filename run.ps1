@@ -66,13 +66,13 @@ Mandate Recovery Engine -- tasks
                                never existed; see DECISIONS.md, 2026-08-29
 
   .\run.ps1 eval              full eval, all regimes, both compliance profiles
-  .\run.ps1 eval-quick        nominal regime only, strict profile
+  .\run.ps1 eval-quick        baseline regime, nominal arm, strict profile
   .\run.ps1 golden            golden-set regression on the LLM layer (cached;
                                -NoCache forces a live call on every row)
   .\run.ps1 bench             LLM vs statistical core benchmark
   .\run.ps1 shadow            decide without executing; delta vs the fixed ladder
   .\run.ps1 chaos -Kills 50   induced process kills
-  .\run.ps1 report            regenerate all figures and tables
+  .\run.ps1 report            re-render tables+figures from the last run
 
   .\run.ps1 freeze            BLOCK B2 ONLY -- commit and record the eval hash
   .\run.ps1 checkpoint -Day B4  end of session -- regenerate STATE.md
@@ -133,11 +133,18 @@ Mandate Recovery Engine -- tasks
         & $Py eval\golden_check.py --check-freshness
     }
 
+    # B13's gate: "every number reproducible by one command". THIS is that
+    # command -- it re-runs the whole sweep and re-renders every table and
+    # figure from the artifact it just wrote, so reports/regimes.md can never
+    # drift from reports/regimes.json.
     "eval" {
         & $Py -m eval.run --config eval/frozen/sim_config.yaml --all-regimes --both-profiles
-        & $Py -m eval.report
+        & $Py -m eval.report --figures
     }
-    "eval-quick" { & $Py -m eval.run --config eval/frozen/sim_config.yaml --regime nominal --profile strict --quiet }
+    # "nominal" is an ARM, not a regime -- the regimes are baseline,
+    # issuer_outage, delayed_salary, stacking_spike, festival_season,
+    # retry_storm (eval/regimes.py). This line predated that file.
+    "eval-quick" { & $Py -m eval.run --config eval/frozen/sim_config.yaml --regime baseline --arm nominal --profile strict --quiet }
     # NOTE: no "golden" case here. PowerShell's switch runs EVERY matching
     # branch unless a branch breaks, and a second "golden" case (the one that
     # honours -NoCache) lives further down. Having both meant `.\run.ps1
@@ -151,7 +158,9 @@ Mandate Recovery Engine -- tasks
     "bench"      { & $Py bench\llm_vs_stats.py --n 140 --repeats 5 --variance-n 30 }
     "shadow"     { & $Py -m src.execute.shadow }
     "chaos"      { & $Py -m eval.chaos --kills=$Kills }
-    "report"     { & $Py -m eval.report --figures --update-readme }
+    # Re-renders from the EXISTING artifact without re-running the sweep.
+    # Use .\run.ps1 eval for the full reproduce-from-scratch path.
+    "report"     { & $Py -m eval.report --figures }
 
     "freeze" {
         git add eval/frozen

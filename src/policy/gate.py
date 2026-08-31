@@ -17,10 +17,17 @@ reimplemented here.
 """
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+import hashlib
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
+
+import numpy as np
 
 from src.core.types import Cause
+from src.model.conformal import lac_scores
 from src.policy.belief import Belief
+
+if TYPE_CHECKING:
+    from src.model.conformal import SplitConformal
 
 
 @runtime_checkable
@@ -45,3 +52,45 @@ class FullSetGate:
 
     def pred_set(self, b: Belief) -> frozenset[Cause]:
         return frozenset(Cause)
+
+
+class ConformalCauseGate:
+    """The real off-ramp gate: a split-conformal predictor over the three
+    causes, wrapping a SplitConformal fitted on its own calib_conf split.
+
+    B8 shipped FullSetGate as the safe default, whose failure mode is
+    declining to offer. This is the gate that can actually fire, and it is
+    deliberately the only place where a Belief becomes a prediction SET
+    rather than an argmax. allocator.py then applies conformal.should_act()
+    -- offer only on the singleton {WONT_PAY} -- so the firing rule stays
+    defined in exactly one place.
+
+    Why a cause-level predictor and not the terminal-Outcome one that
+    eval/model_fit_report.py calibrates: the off-ramp decision is about WHY
+    the mandate is failing, not about what happens at the next attempt. The
+    four-way Outcome predictor answers a different question and its
+    singleton sets would mean something else entirely.
+
+    `key` for the smoothed p-value is derived from the belief itself rather
+    than supplied by the caller. Two identical beliefs must produce the same
+    prediction set -- an off-ramp that fires on a coin flip is not a gate --
+    and there is no stable per-decision id available at this layer that is
+    not also a leak of mandate identity into the score.
+    """
+
+    def __init__(self, predictor: "SplitConformal[Cause]") -> None:
+        self._predictor = predictor
+
+    @property
+    def predictor(self) -> "SplitConformal[Cause]":
+        return self._predictor
+
+    @staticmethod
+    def _key(b: Belief) -> str:
+        return hashlib.sha256(
+            (";".join(f"{p:.12f}" for p in b.probs)).encode()
+        ).hexdigest()[:16]
+
+    def pred_set(self, b: Belief) -> frozenset[Cause]:
+        scores = lac_scores(np.asarray([b.probs], dtype=float))[0]
+        return self._predictor.pred_set(scores, key=self._key(b))

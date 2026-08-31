@@ -4167,3 +4167,139 @@ runs 872 tests with **zero skips** (was 731 passed / 128 skipped). B12's
 real test suite rather than only by the throwaway containers used during the
 block, and `.\run.ps1 verify` passes all five checks including "postgres
 reachable", which had been failing.
+
+### 2026-08-31 · B13 · A regime is a config overlay, never an edit to the simulator
+
+`eval/frozen/` is immutable (CLAUDE.md invariant 4), so the five stress
+regimes are expressed as deep-merged overlays on `sim_config.yaml` and the
+frozen `Simulator` is driven unchanged. `_deep_merge()` **refuses an overlay
+key the base config does not already have** — a typo'd knob would otherwise
+be a silent no-op, and a regime that changes nothing produces a column that
+looks like evidence and is not.
+
+The cost of this discipline is real and is disclosed per regime rather than
+hidden: every `RegimeSpec` carries an `approximation` field saying where the
+available knobs fall short of the story. `issuer_outage` cannot be a
+time-varying window (the simulator has no such concept), so it is a
+cycle-long depression of recovery; `delayed_salary` cannot move the days-1-5
+salary window (hard-coded in frozen code), so it inverts the window's bonus
+instead. A policy that could schedule around a known outage window cannot
+demonstrate that skill under these regimes. Saying so is the point.
+
+Hypotheses are pre-registered in the same file and `git log eval/regimes.py`
+is the check that they predate the results.
+
+### 2026-08-31 · B13 · The off-ramp gate is real, and it never fires
+
+B8 shipped `FullSetGate` as a stub whose failure mode is declining to offer.
+B13 adds the real one — `ConformalCauseGate` in `src/policy/gate.py`, a split
+conformal predictor over the three **causes** (not the four terminal
+`Outcome`s that `eval/model_fit_report.py` calibrates; the off-ramp asks *why*
+the mandate is failing, which is a different question). It is calibrated once
+on `baseline`, from its own seed-namespaced draw, and reused unchanged under
+every regime, so `conformal.assert_disjoint()` has something real to check.
+
+**Result: `OFFER` = 0 in all 32 engine cells.** Marginal coverage is
+0.960–0.985 against a 0.95 target — but it is achieved by returning a mean
+set size of 2.82–2.90 out of 3, which is exactly the trivially-satisfiable
+failure mode B6's own notes warned about. The singleton `{WONT_PAY}`
+condition is never met.
+
+This is the gate working, not failing. The cause is measurable: after a
+single slot-1 decline, the belief for a **true `WONT_PAY` mandate typically
+points at `CANT_PAY_NOW`** (0.8/0.1/0.1), because the proxy decline class is
+`INSUFFICIENT_FUNDS` regardless of intent. Exit intent is not identifiable
+from one payment decline, which is what CLAUDE.md already asserted — B13
+measures it rather than asserting it.
+
+**Consequence for the thesis, stated plainly:** every preserved-mandate win
+in the report is won by *restraint* (attempting less), and none of it by
+*correctly identifying exit intent*. Those are different claims and only the
+second is the project's stated thesis. The signal that would change this is
+`src/llm/intent.py` (support-ticket text), which this harness does not feed
+in. This belongs in B16's "What this can't do".
+
+### 2026-08-31 · B13 · The engine has no timing discrimination — B12's open question, settled
+
+B12 flagged that shadow mode showed `SAME_ACTION_DIFFERENT_DAY = 0` and could
+not tell whether that was an artifact of comparing only the first decision
+point. It is not an artifact.
+
+**Every attempt the engine commits lands on day 2** — the earliest legal day
+— in all five regimes, all three arms, and both compliance profiles. The
+reason is structural: `competing_risks.FEATURE_COLUMNS` is
+`("const", "slot_3", "slot_4", "in_salary_window")`, so the only temporal
+feature the hazard model has is whether the day falls in days 1–5. Backward
+induction has nothing with which to prefer day 4 to day 2, and day 2 is both
+in the window and earliest.
+
+So the project's "we forecast, we time it to their replenishment rhythm"
+framing is **not supported by the current model**. The engine's measured
+advantage comes from *whether* and *how often* it attempts (REAUTH on the AFA
+cliff and on dead-instrument belief; spending fewer slots), not from *when*.
+Two consequences follow, both reported rather than worked around:
+
+1. `delayed_salary` was pre-registered as the regime we expected to lose,
+   precisely because it inverts the salary-window signal. We lose on money
+   under `nominal` (−21.7%) but **win** under `misspecified` (+35.5%) — the
+   policy is not using timing, so inverting the timing signal mostly changes
+   the environment rather than the decision.
+2. `strict` and `permissive` come out **byte-identical in all 32 cell pairs**.
+   The profiles are not inert in code (`requires_fresh_notification()` shifts
+   the earliest committable day by one, and `allocator.solve()` reads it), but
+   the constraint never binds at an optimum that is always "earliest legal
+   day". The two RBI interpretations are indistinguishable *on this evidence*
+   — a fact about how little this policy uses timing, not a demonstration
+   that the ambiguity does not matter.
+
+### 2026-08-31 · B13 · Error costs are exact counterfactuals, not re-seeded reruns
+
+`missed recovery` and `false off-ramp` both ask "would this mandate have paid
+if we had not stopped?". Answering it by re-running a ladder on a
+freshly-seeded simulator answers a different question — a draw from the same
+process, not the same realisation.
+
+Instead, `eval/run.py` `deepcopy`s the simulator at the exact moment the
+engine stops on a mandate — RNG state, household balance and effective cause
+included — and keeps grinding on the copy at the tightest legal cadence. A
+test asserts the copy cannot perturb the run being measured.
+
+The ladder's own day offsets are deliberately *not* reused for this: they are
+absolute days (1/2/3) and the engine may already have attempted past them,
+which the frozen simulator correctly rejects as out-of-order.
+
+**Reported result:** `false off-ramp` is 0 everywhere, but only trivially —
+`OFFER` never fires, so it cannot be anything else. That column is not yet
+evidence of safety and the report says so.
+
+### 2026-08-31 · B13 · Zero-attempt mandates are scored here, not in the frozen scorer
+
+`frozen/scoring.score_mandate()` raises on an empty attempt list. That is
+right for the ladder, which cannot produce one, and wrong for this engine:
+REAUTH or OFFER at the first decision point spends no slot at all, which is
+the entire point of having those actions. Rather than edit the frozen scorer,
+`eval/run.py._result_for()` synthesises the result for that case —
+`STILL_PENDING`, zero recovered, **preserved** — which is what
+`protocol.md`'s own definitions already say (budget unspent, right-censored,
+still an active mandate next cycle).
+
+### 2026-08-31 · B13 · Quota: the flash-lite arm was lost to a same-day cap, no calls burned
+
+Resuming B12's variance column was attempted first this session. A one-call
+probe against each model succeeded, so the run was launched — and
+`gemini-3.5-flash-lite` returned 429 `RESOURCE_EXHAUSTED` (limit 500/day) on
+its **first** billed call. Nothing was lost: the call cache is flushed per
+call, and it recorded zero new rows.
+
+The lesson is a limitation of `assert_within_budget()`, not a bug in it: the
+pre-flight can only check *this run's* planned calls against the cap, and is
+structurally blind to what earlier sessions already spent today. `440 <= 500`
+passed while the true remaining budget was ~0. `--already-spent` exists for
+this and requires a number no one has.
+
+Standing arithmetic for the flash arm, unchanged and not negotiated down per
+the human's instruction not to shrink it: a full arm is
+`140 + 5*30*2 = 440` calls; `gemini-3.5-flash` is capped at **20/day**; 21
+answers are banked. At free-tier rates that arm needs ~21 more days. The
+options remain what B12 recorded — buy paid quota, or ship flash-lite as the
+only LLM row — and it stays a human call.

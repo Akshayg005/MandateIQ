@@ -476,7 +476,71 @@ un.ps1 verify passes 5/5 including the postgres check that had
            evidence the submission rests on, and it is the one figure this
            block did not produce.
            Does not touch eval/frozen/. -->
-- [ ] **B13** ★ stress regimes + report: every number reproducible by one command; at least one regime where we lose, explained
+- [x] **B13** ★ stress regimes + report: every number reproducible by one command; at least one regime where we lose, explained
+      <!-- 2026-08-31, MET, both clauses, verified rather than asserted.
+
+           CLAUSE 1 -- reproducible by one command. `.\run.ps1 eval` runs
+           eval/run.py over 6 regimes x 3 arms x 2 profiles x 2 policies
+           (64 cells) and then eval/report.py, which computes NOTHING: every
+           number in reports/regimes.md is read out of reports/regimes.json,
+           so the report cannot drift from the run. Verified by DELETING
+           regimes.json, regimes.md and all three figures and re-running from
+           empty -- identical numbers. Checked, not assumed: eval/frozen/ is
+           untouched (git status clean; FREEZE_HASH still 4daf9ec56db2), the
+           regimes are config OVERLAYS on the frozen sim_config.yaml and an
+           overlay key the base config lacks is refused rather than ignored.
+
+           CLAUSE 2 -- at least one regime where we lose, explained. Three,
+           found mechanically by report.py rather than chosen by hand:
+             * festival_season -- the largest money loss: -57.6% (nominal)
+               and -62.2% (misspecified) against the ladder, 38 and 48
+               mandates that would have paid, Rs 20.2 lakh and Rs 23.8 lakh.
+               The AFA cliff (clause 8a) pushes high-value mandates onto the
+               re-auth path; the ladder has no concept of the cliff and
+               collects money it is not entitled to attempt for.
+             * stacking_spike -- a PRE-REGISTERED HYPOTHESIS THAT FAILED. The
+               spec predicted the engine would cause fewer iatrogenic
+               failures by attempting less. It caused MORE: 137 -> 142. Same
+               inversion under baseline/coupled (115 -> 125) and
+               issuer_outage/coupled (39 -> 44). Fewer attempts do not imply
+               less household contention, and the engine models households
+               not at all.
+             * delayed_salary/nominal -- -21.7% money, the regime written in
+               advance as the one we expected to lose.
+
+           THREE FINDINGS THAT ARE LOSSES FOR THE THESIS, NOT FOR THE GATE.
+           Recorded here because a future session must not rediscover them as
+           good news. Full detail in DECISIONS.md, six B13 entries.
+             1. OFFER = 0 in all 32 engine cells, with the REAL conformal gate
+                live (new ConformalCauseGate; B8's FullSetGate stub is no
+                longer what is being measured). Coverage 0.960-0.985 vs a 0.95
+                target, but achieved by returning 2.82-2.90 labels out of 3 --
+                B6's own trivially-satisfiable failure mode. After one slot-1
+                decline a true WONT_PAY mandate's belief points at
+                CANT_PAY_NOW. So every preserved-mandate win in the report is
+                won by RESTRAINT, and none of it by identifying exit intent.
+                The off-ramp lane -- one of the three the project is built on
+                -- contributes nothing measurable here.
+             2. No timing discrimination, ANYWHERE. Every committed attempt
+                lands on day 2, the earliest legal day, in all 5 regimes, all
+                3 arms, both profiles. This SETTLES B12's open question:
+                SAME_ACTION_DIFFERENT_DAY = 0 was not an artifact of looking
+                only at the first decision point. The hazard model's only
+                temporal feature is in_salary_window, so backward induction
+                cannot prefer day 4 to day 2.
+             3. strict and permissive are byte-identical in all 32 cell pairs.
+                The profiles are read by allocator.solve(), but the
+                constraint never binds at an optimum that is always "earliest
+                legal day" -- a consequence of finding 2, not independent of
+                it. The two RBI interpretations are indistinguishable on this
+                evidence, which is not the same as the ambiguity not
+                mattering.
+
+           NOT DONE, and not claimed: the payments-domain review PLAN_DETAIL
+           lists for this block has not been run (this session was instructed
+           not to spawn subagents). 903 tests pass, zero skips; guards clean
+           on 122 files; run.ps1 verify 5/5.
+           Does not touch eval/frozen/. -->
 - [ ] **B14** ∥ dashboard: merchant + acquirer views; per-mandate drill-down shows belief, chosen slot, binding constraint, conformal set, ledger trail
 - [ ] **B15** ∥ landing page: 60fps on a mid laptop; reduced-motion fallback; canvas-failure fallback; counters wired to real report output, not hard-coded
 - [ ] **B16** ship: README has "What this can't do" with ≥4 items; video under 5:00; three takes max
