@@ -308,3 +308,65 @@ def test_report_never_shows_recovery_without_the_other_two_bars(small_payload):
     """The one formatting rule that is actually a design rule."""
     header = report_mod._three_bar_table(small_payload, "strict")[0]
     assert "recovered" in header and "attempts" in header and "preserved" in header
+
+
+# --- multi-seed aggregation ---------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def two_seed_payload():
+    return run_mod.run_all(
+        regime_names=["baseline"],
+        arms=["nominal"],
+        profiles=[Profile.strict],
+        seed=0,
+        seeds=[0, 1],
+        verbose=False,
+    )
+
+
+def test_seeds_multiply_the_cells_and_are_recorded(two_seed_payload):
+    assert two_seed_payload["seeds"] == [0, 1]
+    # 1 regime x 1 arm x 1 profile x 4 policies x 2 seeds
+    assert len(two_seed_payload["cells"]) == 8
+    assert {c["seed"] for c in two_seed_payload["cells"]} == {0, 1}
+
+
+def test_report_averages_across_seeds_and_keeps_money_integral(two_seed_payload):
+    """A mean over seeds is a statistic, not a ledger entry -- but invariant 2
+    still has to hold of every value the report can emit, so the merged money
+    fields must round to whole paise rather than carry a float."""
+    pairs = report_mod._paired(two_seed_payload, "strict")
+    merged = pairs[("baseline", "nominal")]["engine"]
+    assert merged["n_seeds"] == 2
+    assert isinstance(merged["recovered_paise"], int)
+    assert isinstance(merged["missed_recovery_paise"], int)
+    assert merged["recovered_paise__min"] <= merged["recovered_paise"] <= merged["recovered_paise__max"]
+
+
+def test_single_seed_artifact_still_renders(small_payload):
+    """The merge path must not require the seeds key -- a schema-1 artifact
+    from before the sweep existed still has to render."""
+    md = report_mod.render(small_payload, figures=False)
+    assert "Single seed, no error bar" in md
+
+
+def test_sign_test_counts_per_seed_not_per_averaged_cell(two_seed_payload):
+    """The whole point of the sign test is that it can disagree with the
+    mean. It must therefore count (regime, arm, profile, SEED) groups."""
+    w, l, t = report_mod._seed_win_counts(
+        two_seed_payload, "null", "engine", "mandates_preserved"
+    )
+    # null preserves every mandate, so it wins every seed-level comparison
+    assert w == 2 and l == 0
+
+
+def test_null_beats_everything_on_the_preserved_bar(two_seed_payload):
+    """The bound that makes the preserved bar interpretable, asserted rather
+    than left to prose: no policy can preserve more than never attempting."""
+    for c in two_seed_payload["cells"]:
+        if c["policy"] == "null":
+            continue
+        peer = [x for x in two_seed_payload["cells"]
+                if x["policy"] == "null" and x["seed"] == c["seed"]][0]
+        assert c["mandates_preserved"] <= peer["mandates_preserved"]

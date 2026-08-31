@@ -572,7 +572,18 @@ def run_null_cell(regime: str, arm: str, profile: Profile, cfg: dict, seed: int,
 def run_all(*, regime_names: Sequence[str], arms: Sequence[str],
             profiles: Sequence[Profile], seed: int,
             verbose: bool = True,
-            config_path: pathlib.Path | None = None) -> dict[str, Any]:
+            config_path: pathlib.Path | None = None,
+            seeds: Sequence[int] | None = None) -> dict[str, Any]:
+    """`seeds` runs the whole grid once per seed and concatenates the cells.
+
+    Everything in B13's first report was a single draw with no error bar,
+    which is the weakest possible footing for its central comparison: the
+    engine against a model-free one-attempt policy. A gap of a few mandates
+    on one seed is not a result. The report aggregates across whatever seeds
+    are present and reports the spread, so a claim can be checked against
+    its own noise.
+    """
+    seed_list = list(seeds) if seeds else [seed]
     base_cfg = load_config(config_path)
     costs = load_costs()
 
@@ -588,15 +599,18 @@ def run_all(*, regime_names: Sequence[str], arms: Sequence[str],
         print(f"  gate: {gate_kind} {gate_diag}", file=sys.stderr)
 
     cells: list[CellResult] = []
-    for regime in regime_names:
+    for sd in seed_list:
+      if verbose and len(seed_list) > 1:
+          print(f"-- seed {sd}", file=sys.stderr)
+      for regime in regime_names:
         cfg = regimes_mod.config_for(regime, base_cfg)
         for arm in regimes_mod.arms_for(regime, tuple(arms)):
             for profile in profiles:
-                cells.append(run_ladder_cell(regime, arm, profile, cfg, seed))
-                cells.append(run_engine_cell(regime, arm, profile, cfg, seed,
+                cells.append(run_ladder_cell(regime, arm, profile, cfg, sd))
+                cells.append(run_engine_cell(regime, arm, profile, cfg, sd,
                                              hazard, costs, gate, gate_kind))
-                cells.append(run_null_cell(regime, arm, profile, cfg, seed, "null"))
-                cells.append(run_null_cell(regime, arm, profile, cfg, seed, "one_shot"))
+                cells.append(run_null_cell(regime, arm, profile, cfg, sd, "null"))
+                cells.append(run_null_cell(regime, arm, profile, cfg, sd, "one_shot"))
                 if verbose:
                     lad, eng, nul, one = cells[-4], cells[-3], cells[-2], cells[-1]
                     print(
@@ -609,8 +623,9 @@ def run_all(*, regime_names: Sequence[str], arms: Sequence[str],
                     )
 
     return {
-        "schema": 1,
-        "seed": seed,
+        "schema": 2,
+        "seed": seed_list[0],
+        "seeds": seed_list,
         "gate_kind": gate_kind,
         "gate_diagnostics": gate_diag,
         "arms": list(arms),
@@ -644,6 +659,10 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
                          "defaults to eval/frozen/sim_config.yaml. Accepted so "
                          "the run command names its own input explicitly.")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--seeds", type=int, default=None, metavar="N",
+                    help="run seeds 0..N-1 and report the spread. A single "
+                         "seed carries no error bar, which is the weakest "
+                         "footing for the engine-vs-one_shot comparison.")
     ap.add_argument("--out", type=pathlib.Path, default=ARTIFACT)
     ap.add_argument("--quiet", action="store_true")
     return ap.parse_args(argv)
@@ -665,7 +684,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     payload = run_all(regime_names=regime_names, arms=arms, profiles=profiles,
                       seed=args.seed, verbose=not args.quiet,
-                      config_path=args.config)
+                      config_path=args.config,
+                      seeds=list(range(args.seeds)) if args.seeds else None)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     try:

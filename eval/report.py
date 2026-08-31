@@ -73,13 +73,87 @@ def load(path: pathlib.Path = ARTIFACT) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+_MEAN_FIELDS = (
+    "recovered_paise", "attempts_spent", "mandates_preserved", "recovered",
+    "dead", "opted_out", "censored", "iatrogenic_failures", "n_attempt",
+    "n_offer", "n_reauth", "n_stop", "n_above_afa", "n_attempt_after_terminal",
+    "missed_recovery_count", "missed_recovery_paise", "false_offramp_count",
+    "false_offramp_paise", "false_reauth_count", "false_reauth_paise",
+    "billable_paise", "coverage_n",
+)
+_FLOAT_FIELDS = ("coverage_marginal", "mean_set_size", "singleton_rate",
+                 "singleton_wont_pay_rate")
+
+
+def _merge_seeds(cells: list[dict[str, Any]]) -> dict[str, Any]:
+    """Collapse one group's per-seed cells into a single mean cell, keeping
+    the spread alongside.
+
+    Integer money fields are averaged and rounded to whole paise -- a mean
+    over seeds is a statistic, not a ledger entry, and rounding keeps
+    invariant 2's "money is integer paise" true of every value this report
+    can emit.
+    """
+    if len(cells) == 1:
+        out = dict(cells[0])
+        out["n_seeds"] = 1
+        return out
+    out = dict(cells[0])
+    out["n_seeds"] = len(cells)
+    for f in _MEAN_FIELDS:
+        vals = [c[f] for c in cells]
+        out[f] = round(sum(vals) / len(vals))
+        out[f"{f}__min"], out[f"{f}__max"] = min(vals), max(vals)
+    for f in _FLOAT_FIELDS:
+        vals = [c[f] for c in cells if c.get(f) is not None]
+        out[f] = (sum(vals) / len(vals)) if vals else None
+        if vals:
+            out[f"{f}__min"], out[f"{f}__max"] = min(vals), max(vals)
+    # Averaged too, not inherited from cells[0]: a per-class coverage number
+    # silently carried from one seed would look like an 8-seed figure.
+    per_class: dict[str, list[float]] = collections.defaultdict(list)
+    for c in cells:
+        for k, v in (c.get("coverage_per_class") or {}).items():
+            per_class[k].append(v)
+    out["coverage_per_class"] = {k: sum(v) / len(v) for k, v in per_class.items()}
+    out["violations"] = [v for c in cells for v in c["violations"]]
+    return out
+
+
 def _paired(data: dict[str, Any], profile: str) -> dict[tuple[str, str], dict[str, Any]]:
-    out: dict[tuple[str, str], dict[str, Any]] = collections.defaultdict(dict)
+    """Group cells by (regime, arm) -> policy, averaging over seeds."""
+    grouped: dict[tuple[str, str, str], list[dict[str, Any]]] = collections.defaultdict(list)
     for c in data["cells"]:
         if c["profile"] != profile:
             continue
-        out[(c["regime"], c["arm"])][c["policy"]] = c
+        grouped[(c["regime"], c["arm"], c["policy"])].append(c)
+    out: dict[tuple[str, str], dict[str, Any]] = collections.defaultdict(dict)
+    for (regime, arm, policy), cs in grouped.items():
+        out[(regime, arm)][policy] = _merge_seeds(cs)
     return dict(out)
+
+
+def _seed_win_counts(data: dict[str, Any], a: str, b: str, field: str) -> tuple[int, int, int]:
+    """How often does policy `a` beat `b` on `field`, counted per
+    (regime, arm, profile, SEED) rather than per averaged cell?
+
+    A mean can hide that a comparison flips from seed to seed. This is the
+    sign test the headline needs: (a wins, b wins, ties).
+    """
+    grouped: dict[tuple, dict[str, Any]] = collections.defaultdict(dict)
+    for c in data["cells"]:
+        grouped[(c["regime"], c["arm"], c["profile"], c["seed"])][c["policy"]] = c
+    wins = losses = ties = 0
+    for v in grouped.values():
+        if a not in v or b not in v:
+            continue
+        if v[a][field] > v[b][field]:
+            wins += 1
+        elif v[a][field] < v[b][field]:
+            losses += 1
+        else:
+            ties += 1
+    return wins, losses, ties
 
 
 # --- sections ----------------------------------------------------------------
@@ -458,7 +532,59 @@ def _headline(data: dict[str, Any]) -> list[str]:
         (v, k) for c in conf for k, v in (c.get("coverage_per_class") or {}).items()
     ) if conf else (None, None)
 
+    seeds = data.get("seeds") or [data.get("seed", 0)]
+    # NOTE the direction convention: for `attempts_spent`, MORE is WORSE.
+    # _seed_win_counts is a plain "a > b" count, so its result must be read
+    # as "spends more", never as "wins".
+    pw, pl, pt = _seed_win_counts(data, "engine", "one_shot", "mandates_preserved")
+    mw, ml, mt = _seed_win_counts(data, "engine", "one_shot", "recovered_paise")
+    aw, al, a_t = _seed_win_counts(data, "engine", "one_shot", "attempts_spent")
+    lp, lpl, _ = _seed_win_counts(data, "engine", "ladder", "mandates_preserved")
+    lm, lml, _ = _seed_win_counts(data, "engine", "ladder", "recovered_paise")
+    la, lal, _ = _seed_win_counts(data, "engine", "ladder", "attempts_spent")
+    npairs = pw + pl + pt
+
+    if len(seeds) > 1:
+        spread = "\n".join([
+            f"**Across {len(seeds)} seeds, {npairs} paired comparisons, counted "
+            f"per seed rather than on the mean.** A gap of a few mandates on one "
+            f"seed is not a result, so this sign test -- not the averaged table "
+            f"below -- is what every claim here rests on.",
+            "",
+            "| comparison | preserves more | recovers more | spends FEWER attempts |",
+            "|---|---|---|---|",
+            f"| engine vs **ladder** | {lp} / {npairs} | {lm} / {npairs} | {lal} / {npairs} |",
+            f"| engine vs **one_shot** | {pw} / {npairs} | {mw} / {npairs} | {al} / {npairs} |",
+            "",
+            "Fewer attempts is better, so the third column is the favourable "
+            "count, not a win count.",
+            "",
+            f"**Against the incumbent the trade is real and stable.** The engine "
+            f"preserves more in {lp} of {npairs} and spends fewer attempts in "
+            f"{lal} of {npairs}, while recovering less money in {lml}. That is "
+            f"the thesis, and it survives {len(seeds)} seeds.",
+            "",
+            f"**Against `one_shot` it does not hold.** A policy that makes one "
+            f"attempt on day 2 with no model, no belief and no gate preserves "
+            f"MORE mandates than the engine in {pl} of {npairs} comparisons, and "
+            f"the engine spends MORE attempts in {aw} of {npairs}. The engine's "
+            f"only edge is money, and a thin one: it recovers more in {mw} of "
+            f"{npairs} ({100 * mw / npairs:.0f}%). **On two of the three headline "
+            f"bars the engine is beaten by a policy with no model in it.** The "
+            f"seed-0 draft reported this as 14 of 16 cells on the preserved bar; "
+            f"{len(seeds)} seeds make the finding stronger, not weaker.",
+        ])
+    else:
+        spread = (
+            "**Single seed, no error bar.** Every number below is one draw. The "
+            "engine-vs-`one_shot` comparison in particular turns on a handful of "
+            "mandates and should not be read as a result until `--seeds N` has "
+            "been run."
+        )
+
     out = [
+        f"0. {spread}",
+        "",
         f"1. **The headline three-bar comparison does not identify anything, "
         f"and the reference policies are in the table to prove it.** The "
         f"engine preserves more mandates than the ladder in "
@@ -558,11 +684,15 @@ def _summary_payload(data: dict) -> dict:
     engine's numbers are not interpretable without them.
     """
     def cell(policy, profile="strict"):
-        for c in data["cells"]:
-            if (c["regime"] == HEADLINE_REGIME and c["arm"] == HEADLINE_ARM
-                    and c["profile"] == profile and c["policy"] == policy):
-                return c
-        return None
+        """The MERGED cell, averaged over seeds -- not the first match.
+
+        Scanning data["cells"] for a match returned seed 0's cell while the
+        report beside it printed 8-seed means, so the README and the report
+        disagreed about the same headline. Going through _paired() means both
+        read the same aggregation.
+        """
+        pairs = _paired(data, profile)
+        return pairs.get((HEADLINE_REGIME, HEADLINE_ARM), {}).get(policy)
 
     def bars(c):
         if c is None:
@@ -589,9 +719,29 @@ def _summary_payload(data: dict) -> dict:
     })
 
     eng = [c for c in data["cells"] if c["policy"] == "engine"]
+    seeds = data.get("seeds") or [data.get("seed", 0)]
+    pw, pl, pt = _seed_win_counts(data, "engine", "one_shot", "mandates_preserved")
+    mw, ml, _ = _seed_win_counts(data, "engine", "one_shot", "recovered_paise")
+    aw, al, _ = _seed_win_counts(data, "engine", "one_shot", "attempts_spent")
+    lp, _, _ = _seed_win_counts(data, "engine", "ladder", "mandates_preserved")
+    lm, lml, _ = _seed_win_counts(data, "engine", "ladder", "recovered_paise")
+    _, lal, _ = _seed_win_counts(data, "engine", "ladder", "attempts_spent")
+    npairs = pw + pl + pt
     out = {
         "headline_cell": f"{HEADLINE_REGIME}/{HEADLINE_ARM}",
         "seed": data["seed"],
+        "seeds": seeds,
+        "paired_comparisons": npairs,
+        # Losses are carried explicitly, never derived as (n - wins): that
+        # silently reassigns TIES to the opponent. The first draft of the
+        # README did exactly that and overstated one_shot by 6 comparisons.
+        "sign_test": {
+            "vs_ladder": {"preserves_more": lp, "recovers_more": lm,
+                          "spends_fewer_attempts": lal},
+            "vs_one_shot": {"preserves_more": pw, "preserves_fewer": pl,
+                            "recovers_more": mw, "recovers_less": ml,
+                            "spends_fewer_attempts": al, "spends_more_attempts": aw},
+        },
         "gate_kind": data["gate_kind"],
         "regimes_where_we_lose": losing,
         "offers_fired_total": sum(c["n_offer"] for c in eng),
@@ -609,6 +759,9 @@ def _summary_payload(data: dict) -> dict:
 
 def _readme_table(data: dict) -> list[str]:
     s = _summary_payload(data)
+    n = s["paired_comparisons"]
+    lad, one = s["sign_test"]["vs_ladder"], s["sign_test"]["vs_one_shot"]
+    n_seeds = len(s["seeds"])
 
     def row(name, b):
         if b is None:
@@ -618,37 +771,56 @@ def _readme_table(data: dict) -> list[str]:
                 f"**{b['mandates_preserved']}** |")
 
     return [
-        f"*Auto-generated by `.\\run.ps1 eval`. Headline cell: "
-        f"`{s['headline_cell']}`, seed {s['seed']}. Full report: "
+        f"*Auto-generated by `.\\run.ps1 eval`. Headline cell "
+        f"`{s['headline_cell']}`, mean of {n_seeds} seeds. Full report: "
         f"[reports/regimes.md](reports/regimes.md).*",
         "",
         "| | recovered | attempts/recovery | **mandates preserved** |",
         "|---|---|---|---|",
-        row("Fixed ladder (baseline)", s["baseline"]),
+        row("Fixed ladder (the incumbent)", s["baseline"]),
         row("This engine (strict)", {k: s[k] for k in
             ("recovered", "attempts_per_recovery", "mandates_preserved")}),
         row("This engine (permissive)", s["engine_permissive"]),
         row("*Reference:* one attempt, no model", s["reference_one_shot"]),
         row("*Reference:* never attempt", s["reference_null"]),
         "",
-        "The two reference rows are not policies we propose; they are there "
-        "because every metric above is monotonically decreasing in attempt "
-        "count, so \"preserves more\" follows from \"attempts less\". "
-        "`one_shot` preserves more than the engine in most cells while "
-        "spending fewer attempts. Read the preserved column against those "
-        "rows, not against the ladder alone.",
+        f"**Read this as a sign test, not a table.** Across {n_seeds} seeds and "
+        f"{n} paired comparisons, counted per seed rather than on the mean:",
         "",
-        f"Error costs (headline cell): stopped-on that would have paid, and "
-        f"false off-ramp — see [reports/regimes.md](reports/regimes.md). "
-        f"**The off-ramp never fires in this evaluation** "
-        f"(`OFFER` = {s['offers_fired_total']} across every cell), so the "
-        f"false-off-ramp column is not yet evidence of safety. "
-        f"{s['false_reauth_total']} of {s['reauth_total']} REAUTHs were "
-        f"issued on mandates whose true cause is not `CANT_PAY_EVER`.",
+        "| comparison | preserves more | recovers more | spends FEWER attempts |",
+        "|---|---|---|---|",
+        f"| engine vs **ladder** | {lad['preserves_more']} / {n} | "
+        f"{lad['recovers_more']} / {n} | {lad['spends_fewer_attempts']} / {n} |",
+        f"| engine vs **one_shot** | {one['preserves_more']} / {n} | "
+        f"{one['recovers_more']} / {n} | {one['spends_fewer_attempts']} / {n} |",
         "",
-        f"**Where we lose:** {', '.join('`' + r + '`' for r in s['regimes_where_we_lose'])} "
-        f"— the engine recovers less money than the ladder in these regimes. "
-        f"See the \"Where we lose\" section of the full report for why.",
+        f"**Against the incumbent, the trade holds and is stable** — more "
+        f"mandates preserved and fewer attempts spent in every comparison, at "
+        f"the cost of money. Deliberately recovering less this cycle to protect "
+        f"lifetime value is the thesis, not a bug.",
+        "",
+        f"**Against `one_shot` it does not.** One attempt on day 2 with no "
+        f"model, no belief and no gate preserves more mandates than the engine "
+        f"in {one['preserves_fewer']} of {n} comparisons, and the engine "
+        f"spends MORE attempts in {one['spends_more_attempts']} of {n}. The "
+        f"engine's only edge over it is money, and a thin one: "
+        f"{one['recovers_more']} of {n}. On two of the three bars, a policy "
+        f"with no model in it beats this one. That is in the README because it "
+        f"is true, and because a reader who discovers it themselves should not "
+        f"have to wonder what else was left out.",
+        "",
+        f"**The off-ramp never fires** (`OFFER` = {s['offers_fired_total']} "
+        f"across every cell) — and that is arithmetic, not measurement: the "
+        f"proxy decline alphabet cannot move belief toward `WONT_PAY` at all. "
+        f"The off-ramp lane is untested, so the false-off-ramp column is not "
+        f"evidence of safety. Separately, {s['false_reauth_total']} of "
+        f"{s['reauth_total']} REAUTHs went to mandates whose true cause is not "
+        f"`CANT_PAY_EVER`.",
+        "",
+        f"**Where we lose:** "
+        f"{', '.join('`' + r + '`' for r in s['regimes_where_we_lose'])} — the "
+        f"engine recovers less money than the ladder in these regimes. The "
+        f"report's \"Where we lose\" section gives the reason for each.",
     ]
 
 

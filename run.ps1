@@ -146,8 +146,14 @@ Mandate Recovery Engine -- tasks
     # command -- it re-runs the whole sweep and re-renders every table and
     # figure from the artifact it just wrote, so reports/regimes.md can never
     # drift from reports/regimes.json.
+    # --seeds 8 is the PUBLISHED configuration, not a nicety. Everything in
+    # B13's first draft was seed 0 with no error bar, and its central
+    # comparison (the engine against a model-free one-attempt policy) turns
+    # on a handful of mandates. The report's headline is a per-seed sign test
+    # over 256 paired comparisons; it cannot be produced from one seed.
+    # Costs ~15 minutes wall clock. Use eval-quick for a fast smoke check.
     "eval" {
-        Invoke-Step "sweep"  { & $Py -m eval.run --config eval/frozen/sim_config.yaml --all-regimes --both-profiles }
+        Invoke-Step "sweep"  { & $Py -m eval.run --config eval/frozen/sim_config.yaml --all-regimes --both-profiles --seeds 8 }
         Invoke-Step "report" { & $Py -m eval.report --figures }
     }
     # "nominal" is an ARM, not a regime -- the regimes are baseline,

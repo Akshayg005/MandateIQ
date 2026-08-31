@@ -4542,3 +4542,59 @@ exists.
   check correctly reports PARTIAL (1 of 30).
 
 Both fit inside one day's flash-lite budget: 440 + 30 = 470 of 500.
+
+### 2026-09-01 · B13 · Eight seeds, and the sign test that supersedes the table
+
+Everything in B13's first two drafts was seed 0 with no error bar. That is the
+weakest possible footing for the comparison the deliverable now turns on — the
+engine against `one_shot`, a policy with no model in it — where a gap of a few
+mandates is well inside seed noise. `eval/run.py --seeds N` now runs the whole
+grid once per seed; `.\run.ps1 eval` runs **8** because that is the published
+configuration, not a nicety (~15 min wall clock; `eval-quick` is the fast
+smoke path).
+
+The report's headline is now a **per-seed sign test over 256 paired
+comparisons**, not the averaged table, because a mean can hide a comparison
+that flips from seed to seed. Direction matters and is stated in the report:
+on `attempts_spent`, more is worse.
+
+| comparison | preserves more | recovers more | spends FEWER attempts |
+|---|---|---|---|
+| engine vs **ladder** | 256 / 256 | 36 / 256 | 256 / 256 |
+| engine vs **one_shot** | 36 / 256 | 146 / 256 | 28 / 256 |
+
+**Against the incumbent, the thesis holds and is stable.** The engine
+preserves more in every one of 256 comparisons and spends fewer attempts in
+every one, while recovering less money in 220. Deliberately recovering less
+this cycle to protect lifetime value is the trade this project exists to make,
+and eight seeds do not shake it.
+
+**Against `one_shot` it does not hold, and more strongly than seed 0
+suggested.** A single attempt on day 2 — no model, no belief, no gate —
+preserves MORE mandates than the engine in **214 of 256**, and the engine
+spends MORE attempts in **226 of 256**. The engine's only edge is money, and
+a thin one: 146 of 256, 57%. **On two of the three headline bars the engine is
+beaten by a policy with no model in it.** The seed-0 draft reported 14 of 16
+cells; more seeds made the finding stronger, which is the opposite of what a
+noise explanation would predict.
+
+That is the honest state of the evidence, and it is what B16 has to say. The
+engine's defensible claim is against the *incumbent ladder* — the thing it was
+built to replace — and not against every trivial baseline. Whether spending
+226/256 more attempts to recover more money 57% of the time is a good trade is
+a product question the three bars are supposed to expose rather than settle,
+and this report now exposes it instead of burying it under a comparison to the
+ladder alone.
+
+Two smaller things the sweep surfaced, both worse than seed 0 showed:
+per-class conformal coverage falls to **0.741** for `CANT_PAY_EVER` (seed 0
+showed 0.803 for `WONT_PAY`), and post-terminal `ATTEMPT` — the allocator
+wanting to retry an instrument the issuer just confirmed dead — runs to 4,032
+across the full grid.
+
+Mechanics worth knowing: `_merge_seeds()` averages the per-seed cells and
+keeps min/max alongside; money fields are **rounded to whole paise**, because
+a mean over seeds is a statistic rather than a ledger entry but invariant 2
+must still hold of every value the report can emit. `coverage_per_class` is
+averaged too, not inherited from the first seed — inheriting it would have
+printed a one-seed number wearing an eight-seed label.
