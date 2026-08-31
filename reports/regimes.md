@@ -14,81 +14,171 @@ The three bars are always reported together. Recovery rate alone is the incumben
 
 ## Headline findings
 
-1. **The engine preserves more mandates in 16 of 16 regime-arm cells, and recovers more money in 2.** It spends fewer attempts everywhere. That is the trade the thesis predicts.
+1. **The headline three-bar comparison does not identify anything, and the reference policies are in the table to prove it.** The engine preserves more mandates than the ladder in 16 of 16 cells and recovers more money in 2. But `null` -- never attempt, no model -- preserves **every** mandate in all 16 cells, and `one_shot` -- one attempt on day 2, no model, no belief, no gate -- preserves more than the engine in 14 of 16 while spending fewer attempts. Every metric here is monotonically decreasing in attempt count by construction, so "preserves more" follows from "attempts less" and is not evidence of knowing WHY a payment failed. B5 recorded this exact confound; B13's first draft reproduced it by omitting the column.
 
-2. **The off-ramp never fires. `OFFER` = 0 across all 32 engine cells.** The conformal gate holds coverage (marginal 0.960-0.985 against a 0.95 target) by returning almost the whole label set -- mean size 2.82-2.90 of 3 -- so the singleton `{WONT_PAY}` condition is never met. This is the gate working as designed, not failing: after a single slot-1 decline the belief for a true `WONT_PAY` mandate typically points at `CANT_PAY_NOW`, because a payment decline is a weak signal of intent. **Every preserved-mandate win below is therefore won by restraint -- attempting less -- and none of it by correctly identifying exit intent.** The intent signal that would change this (`src/llm/intent.py`, support-ticket text) is not in this harness.
+2. **The off-ramp cannot fire in this harness. `OFFER` = 0 in all 32 engine cells -- and that is arithmetic, not measurement.** The proxy decline alphabet has exactly two symbols (`INSUFFICIENT_FUNDS`, `CARD_EXPIRED`) and `cause_map` assigns `WONT_PAY` a prior of 0.10 under **both**, so the WONT_PAY likelihood ratio is constant and no observation this simulator can produce moves belief mass toward `WONT_PAY`. Its probability is pinned at 0.10 after slot 1 and is non-increasing thereafter, so the singleton `{WONT_PAY}` condition is unreachable for any alpha, any seed, any regime. An earlier draft read this as "a payment decline is a weak signal of intent" -- true about the world, false about this number. **The off-ramp lane is untested, not tested and negative**, and `retry_storm`'s pre-registered hypothesis about it is vacuous rather than falsified: the outcome was fixed before the regime ran. `false off-ramp = 0` is likewise not a safety result.
 
-3. **No timing discrimination.** Every attempt the engine commits lands on day 2, the earliest legal day, in every regime and under both compliance profiles. The hazard model's only temporal feature is `in_salary_window` (days 1-5) plus the slot index, so backward induction has nothing with which to prefer day 4 to day 2. The 'timed to their replenishment rhythm' claim in the project's own framing is **not supported by this evidence**; the engine's advantage comes from *whether* and *how often* it attempts, not *when*. This confirms B12's shadow-mode finding (`SAME_ACTION_DIFFERENT_DAY = 0`) across all five regimes.
+3. **The off-ramp gate under-covers.** Over the 147,206 decision points the gate was actually queried at, marginal coverage is 0.876-0.925 against a 0.95 target, with per-class coverage as low as 0.803 (`WONT_PAY`) -- a Mondrian violation on a class that drives REAUTH. Mean set size is 2.38-2.61 of 3. Two earlier defects inflated this: the smoothing key was derived from the belief itself (making the WONT_PAY p-value a hash of a constant rather than a rank), and coverage was scored only over the 200 slot-1 beliefs rather than every query, which also made six numbers print as thirty-two. Both are fixed; the reported figure moved from an apparent 0.980 to a real under-coverage.
 
-4. Actions taken across all engine cells: 1494 REAUTH, 172 STOP, 0 OFFER. Constraint violations: **0**.
+4. **No timing discrimination.** Every attempt the engine commits lands on day 2, the earliest legal day, in every regime and under both compliance profiles. The hazard model's only temporal feature is `in_salary_window` (days 1-5) plus the slot index, so backward induction has nothing with which to prefer day 4 to day 2. The 'timed to their replenishment rhythm' claim in the project's own framing is **not supported by this evidence**; the engine's advantage comes from *whether* and *how often* it attempts, not *when*. This confirms B12's shadow-mode finding (`SAME_ACTION_DIFFERENT_DAY = 0`) across all five regimes.
+
+5. **The allocator wants to retry instruments the issuer just confirmed dead.** Re-solving after a terminal outcome returned `ATTEMPT` 502 times across all engine cells -- on mandates that had just come back `DEAD` or `OPTED_OUT`. `belief.update()` compounds naive-Bayes with no floor, and a single `CARD_EXPIRED` cannot overtake the slot-1 `INSUFFICIENT_FUNDS` prior, so `CANT_PAY_NOW` keeps dominating. The CANT_PAY_EVER -> REAUTH row of the project's own cause/action table does not fire on observed evidence. This case previously fell through every counter and was discarded unrecorded.
+
+6. Actions across all engine cells: 1494 REAUTH (of which **810 were issued on mandates whose true cause is not `CANT_PAY_EVER`** -- `issuer_outage`'s own pre-registered falsification criterion, now measured), 172 STOP, 0 OFFER. Constraint violations: **0**.
 
 ## Where we lose
 
 A policy that wins every regime is evidence the regimes were tuned, not that the policy is good. These are the losses.
 
-### Money left on the table
+### Money left on the table, against the ladder
 
-| regime | arm | money delta | mandates we did not attempt that would have paid | value (Rs) |
-|---|---|---:|---:|---:|
-| festival_season | misspecified | -62.2% | 48 | 2,383,643 |
-| festival_season | nominal | -57.6% | 38 | 2,022,514 |
-| festival_season | coupled | -26.7% | 2 | 7,622 |
-| stacking_spike | coupled | -25.0% | 5 | 7,071 |
-| baseline | coupled | -24.7% | 5 | 11,030 |
-| delayed_salary | nominal | -21.7% | 7 | 256,072 |
-| baseline | misspecified | -21.1% | 16 | 324,600 |
-| issuer_outage | misspecified | -19.4% | 7 | 103,527 |
-| issuer_outage | coupled | -19.4% | 0 | 0 |
-| baseline | nominal | -15.6% | 14 | 375,968 |
-| delayed_salary | coupled | -11.0% | 4 | 7,990 |
-| retry_storm | misspecified | -10.6% | 16 | 474,929 |
-| retry_storm | nominal | -10.4% | 6 | 148,069 |
-| retry_storm | coupled | -5.6% | 5 | 10,235 |
+"Stopped-on" counts every mandate the engine did not carry to a terminal outcome -- whether it never attempted, or attempted and then stopped. The counterfactual grinds on consecutive days from where we stopped, which always lands inside the days-1-5 salary window, so this is an **upper bound** on what was given up, not a point estimate.
+
+| regime | arm | profile | money delta | stopped-on that would have paid | value |
+|---|---|---|---:|---:|---:|
+| festival_season | misspecified | strict | -62.2% | 48 | ₹23,83,642.91 |
+| festival_season | misspecified | permissive | -62.2% | 48 | ₹23,83,642.91 |
+| festival_season | nominal | strict | -57.6% | 38 | ₹20,22,513.53 |
+| festival_season | nominal | permissive | -57.6% | 38 | ₹20,22,513.53 |
+| baseline | misspecified | strict | -21.1% | 16 | ₹3,24,600.23 |
+| baseline | misspecified | permissive | -21.1% | 16 | ₹3,24,600.23 |
+| delayed_salary | nominal | strict | -21.7% | 7 | ₹2,56,071.63 |
+| delayed_salary | nominal | permissive | -21.7% | 7 | ₹2,56,071.63 |
+| baseline | nominal | strict | -15.6% | 14 | ₹3,75,967.64 |
+| baseline | nominal | permissive | -15.6% | 14 | ₹3,75,967.64 |
+| issuer_outage | misspecified | strict | -19.4% | 7 | ₹1,03,526.57 |
+| issuer_outage | misspecified | permissive | -19.4% | 7 | ₹1,03,526.57 |
+| retry_storm | nominal | strict | -10.4% | 6 | ₹1,48,069.24 |
+| retry_storm | nominal | permissive | -10.4% | 6 | ₹1,48,069.24 |
+| retry_storm | misspecified | strict | -10.6% | 16 | ₹4,74,928.87 |
+| retry_storm | misspecified | permissive | -10.6% | 16 | ₹4,74,928.87 |
+| baseline | coupled | strict | -24.7% | 5 | ₹11,030.41 |
+| baseline | coupled | permissive | -24.7% | 5 | ₹11,030.41 |
+| festival_season | coupled | strict | -26.7% | 2 | ₹7,621.69 |
+| festival_season | coupled | permissive | -26.7% | 2 | ₹7,621.69 |
+| issuer_outage | coupled | strict | -19.4% | 0 | ₹0.00 |
+| issuer_outage | coupled | permissive | -19.4% | 0 | ₹0.00 |
+| delayed_salary | coupled | strict | -11.0% | 4 | ₹7,990.49 |
+| delayed_salary | coupled | permissive | -11.0% | 4 | ₹7,990.49 |
+| stacking_spike | coupled | strict | -25.0% | 5 | ₹7,071.44 |
+| stacking_spike | coupled | permissive | -25.0% | 5 | ₹7,071.44 |
+| retry_storm | coupled | strict | -5.6% | 5 | ₹10,234.55 |
+| retry_storm | coupled | permissive | -5.6% | 5 | ₹10,234.55 |
+
+### Cells where a model-free one-attempt policy preserves more than the engine
+
+`one_shot` spends one attempt per mandate on day 2 and consults no model, no belief and no gate. Where it preserves more while spending fewer attempts, the engine's preserved-mandate bar is not evidence of cause inference.
+
+| regime | arm | profile | engine preserved / attempts | one_shot preserved / attempts |
+|---|---|---|---:|---:|
+| baseline | nominal | strict | 135 / 256 | 143 / 200 |
+| baseline | misspecified | strict | 128 / 210 | 133 / 200 |
+| baseline | coupled | strict | 129 / 357 | 137 / 200 |
+| issuer_outage | nominal | strict | 126 / 296 | 133 / 200 |
+| issuer_outage | misspecified | strict | 117 / 274 | 123 / 200 |
+| issuer_outage | coupled | strict | 123 / 339 | 133 / 200 |
+| delayed_salary | nominal | strict | 126 / 317 | 139 / 200 |
+| delayed_salary | misspecified | strict | 123 / 285 | 132 / 200 |
+| delayed_salary | coupled | strict | 125 / 357 | 135 / 200 |
+| stacking_spike | coupled | strict | 130 / 379 | 148 / 200 |
+| festival_season | nominal | strict | 159 / 198 | 160 / 200 |
+| retry_storm | nominal | strict | 114 / 258 | 135 / 200 |
+| retry_storm | misspecified | strict | 112 / 225 | 120 / 200 |
+| retry_storm | coupled | strict | 98 / 323 | 127 / 200 |
+| baseline | nominal | permissive | 135 / 256 | 143 / 200 |
+| baseline | misspecified | permissive | 128 / 210 | 133 / 200 |
+| baseline | coupled | permissive | 129 / 357 | 137 / 200 |
+| issuer_outage | nominal | permissive | 126 / 296 | 133 / 200 |
+| issuer_outage | misspecified | permissive | 117 / 274 | 123 / 200 |
+| issuer_outage | coupled | permissive | 123 / 339 | 133 / 200 |
+| delayed_salary | nominal | permissive | 126 / 317 | 139 / 200 |
+| delayed_salary | misspecified | permissive | 123 / 285 | 132 / 200 |
+| delayed_salary | coupled | permissive | 125 / 357 | 135 / 200 |
+| stacking_spike | coupled | permissive | 130 / 379 | 148 / 200 |
+| festival_season | nominal | permissive | 159 / 198 | 160 / 200 |
+| retry_storm | nominal | permissive | 114 / 258 | 135 / 200 |
+| retry_storm | misspecified | permissive | 112 / 225 | 120 / 200 |
+| retry_storm | coupled | permissive | 98 / 323 | 127 / 200 |
 
 ### Regimes where the engine caused MORE collateral damage than the ladder
 
-| regime | arm | ladder iatrogenic | engine iatrogenic |
-|---|---|---:|---:|
-| baseline | coupled | 115 | 125 |
-| issuer_outage | coupled | 39 | 44 |
-| stacking_spike | coupled | 137 | 142 |
+| regime | arm | profile | ladder iatrogenic | engine iatrogenic |
+|---|---|---|---:|---:|
+| baseline | coupled | strict | 115 | 125 |
+| issuer_outage | coupled | strict | 39 | 44 |
+| stacking_spike | coupled | strict | 137 | 142 |
+| baseline | coupled | permissive | 115 | 125 |
+| issuer_outage | coupled | permissive | 39 | 44 |
+| stacking_spike | coupled | permissive | 137 | 142 |
 
 ## The three bars -- profile `strict`
 
-| regime | arm | policy | recovered (Rs) | attempts | preserved | missed recovery (n / Rs) | false off-ramp (n / Rs) |
-|---|---|---|---:|---:|---:|---:|---:|
-| baseline | nominal | ladder | 1,020,388 | 320 | 105/200 | -- | -- |
-| baseline | nominal | engine | 861,465 | 256 | 135/200 | 14 / 375,968 | 0 / 0 |
-| baseline | misspecified | ladder | 1,114,461 | 282 | 101/200 | -- | -- |
-| baseline | misspecified | engine | 879,603 | 210 | 128/200 | 16 / 324,600 | 0 / 0 |
-| baseline | coupled | ladder | 96,413 | 428 | 95/200 | -- | -- |
-| baseline | coupled | engine | 72,574 | 357 | 129/200 | 5 / 11,030 | 0 / 0 |
-| issuer_outage | nominal | ladder | 545,000 | 381 | 85/200 | -- | -- |
-| issuer_outage | nominal | engine | 548,783 | 296 | 126/200 | 9 / 157,948 | 0 / 0 |
-| issuer_outage | misspecified | ladder | 523,285 | 346 | 78/200 | -- | -- |
-| issuer_outage | misspecified | engine | 421,882 | 274 | 117/200 | 7 / 103,527 | 0 / 0 |
-| issuer_outage | coupled | ladder | 66,571 | 427 | 86/200 | -- | -- |
-| issuer_outage | coupled | engine | 53,687 | 339 | 123/200 | 0 / 0 | 0 / 0 |
-| delayed_salary | nominal | ladder | 754,893 | 381 | 98/200 | -- | -- |
-| delayed_salary | nominal | engine | 591,021 | 317 | 126/200 | 7 / 256,072 | 0 / 0 |
-| delayed_salary | misspecified | ladder | 506,440 | 350 | 83/200 | -- | -- |
-| delayed_salary | misspecified | engine | 685,981 | 285 | 123/200 | 6 / 138,964 | 0 / 0 |
-| delayed_salary | coupled | ladder | 60,993 | 440 | 90/200 | -- | -- |
-| delayed_salary | coupled | engine | 54,283 | 357 | 125/200 | 4 / 7,990 | 0 / 0 |
-| stacking_spike | coupled | ladder | 23,639 | 441 | 89/200 | -- | -- |
-| stacking_spike | coupled | engine | 17,731 | 379 | 130/200 | 5 / 7,071 | 0 / 0 |
-| festival_season | nominal | ladder | 3,385,619 | 319 | 127/200 | -- | -- |
-| festival_season | nominal | engine | 1,434,458 | 198 | 159/200 | 38 / 2,022,514 | 0 / 0 |
-| festival_season | misspecified | ladder | 4,238,680 | 278 | 136/200 | -- | -- |
-| festival_season | misspecified | engine | 1,600,837 | 161 | 168/200 | 48 / 2,383,643 | 0 / 0 |
-| festival_season | coupled | ladder | 56,960 | 481 | 115/200 | -- | -- |
-| festival_season | coupled | engine | 41,753 | 297 | 154/200 | 2 / 7,622 | 0 / 0 |
-| retry_storm | nominal | ladder | 821,479 | 319 | 85/200 | -- | -- |
-| retry_storm | nominal | engine | 736,309 | 258 | 114/200 | 6 / 148,069 | 0 / 0 |
-| retry_storm | misspecified | ladder | 803,178 | 276 | 90/200 | -- | -- |
-| retry_storm | misspecified | engine | 718,361 | 225 | 112/200 | 16 / 474,929 | 0 / 0 |
-| retry_storm | coupled | ladder | 83,985 | 403 | 76/200 | -- | -- |
-| retry_storm | coupled | engine | 79,299 | 323 | 98/200 | 5 / 10,235 | 0 / 0 |
+| regime | arm | policy | recovered | attempts | preserved | stopped-on that would have paid (n / value) | false off-ramp | false REAUTH |
+|---|---|---|---:|---:|---:|---:|---:|---:|
+| baseline | nominal | ladder | ₹10,20,387.83 | 320 | 105/200 | -- | -- | -- |
+| baseline | nominal | engine | ₹8,61,464.58 | 256 | 135/200 | 14 / ₹3,75,967.64 | 0 / ₹0.00 | 15 / ₹4,84,660.87 |
+| baseline | nominal | one_shot | ₹6,51,268.82 | 200 | 143/200 | -- | -- | -- |
+| baseline | nominal | null | ₹0.00 | 0 | 200/200 | -- | -- | -- |
+| baseline | misspecified | ladder | ₹11,14,461.11 | 282 | 101/200 | -- | -- | -- |
+| baseline | misspecified | engine | ₹8,79,602.75 | 210 | 128/200 | 16 / ₹3,24,600.23 | 0 / ₹0.00 | 15 / ₹4,84,660.87 |
+| baseline | misspecified | one_shot | ₹9,90,105.95 | 200 | 133/200 | -- | -- | -- |
+| baseline | misspecified | null | ₹0.00 | 0 | 200/200 | -- | -- | -- |
+| baseline | coupled | ladder | ₹96,413.37 | 428 | 95/200 | -- | -- | -- |
+| baseline | coupled | engine | ₹72,573.77 | 357 | 129/200 | 5 / ₹11,030.41 | 0 / ₹0.00 | 15 / ₹4,84,660.87 |
+| baseline | coupled | one_shot | ₹71,163.49 | 200 | 137/200 | -- | -- | -- |
+| baseline | coupled | null | ₹0.00 | 0 | 200/200 | -- | -- | -- |
+| issuer_outage | nominal | ladder | ₹5,45,000.36 | 381 | 85/200 | -- | -- | -- |
+| issuer_outage | nominal | engine | ₹5,48,782.73 | 296 | 126/200 | 9 / ₹1,57,948.25 | 0 / ₹0.00 | 23 / ₹5,55,687.71 |
+| issuer_outage | nominal | one_shot | ₹2,41,404.86 | 200 | 133/200 | -- | -- | -- |
+| issuer_outage | nominal | null | ₹0.00 | 0 | 200/200 | -- | -- | -- |
+| issuer_outage | misspecified | ladder | ₹5,23,285.14 | 346 | 78/200 | -- | -- | -- |
+| issuer_outage | misspecified | engine | ₹4,21,881.93 | 274 | 117/200 | 7 / ₹1,03,526.57 | 0 / ₹0.00 | 23 / ₹5,55,687.71 |
+| issuer_outage | misspecified | one_shot | ₹3,53,776.54 | 200 | 123/200 | -- | -- | -- |
+| issuer_outage | misspecified | null | ₹0.00 | 0 | 200/200 | -- | -- | -- |
+| issuer_outage | coupled | ladder | ₹66,570.87 | 427 | 86/200 | -- | -- | -- |
+| issuer_outage | coupled | engine | ₹53,687.01 | 339 | 123/200 | 0 / ₹0.00 | 0 / ₹0.00 | 23 / ₹5,55,687.71 |
+| issuer_outage | coupled | one_shot | ₹24,513.67 | 200 | 133/200 | -- | -- | -- |
+| issuer_outage | coupled | null | ₹0.00 | 0 | 200/200 | -- | -- | -- |
+| delayed_salary | nominal | ladder | ₹7,54,893.42 | 381 | 98/200 | -- | -- | -- |
+| delayed_salary | nominal | engine | ₹5,91,020.56 | 317 | 126/200 | 7 / ₹2,56,071.63 | 0 / ₹0.00 | 15 / ₹4,84,660.87 |
+| delayed_salary | nominal | one_shot | ₹3,41,919.21 | 200 | 139/200 | -- | -- | -- |
+| delayed_salary | nominal | null | ₹0.00 | 0 | 200/200 | -- | -- | -- |
+| delayed_salary | misspecified | ladder | ₹5,06,440.30 | 350 | 83/200 | -- | -- | -- |
+| delayed_salary | misspecified | engine | ₹6,85,980.72 | 285 | 123/200 | 6 / ₹1,38,963.75 | 0 / ₹0.00 | 15 / ₹4,84,660.87 |
+| delayed_salary | misspecified | one_shot | ₹4,92,354.22 | 200 | 132/200 | -- | -- | -- |
+| delayed_salary | misspecified | null | ₹0.00 | 0 | 200/200 | -- | -- | -- |
+| delayed_salary | coupled | ladder | ₹60,992.92 | 440 | 90/200 | -- | -- | -- |
+| delayed_salary | coupled | engine | ₹54,282.72 | 357 | 125/200 | 4 / ₹7,990.49 | 0 / ₹0.00 | 15 / ₹4,84,660.87 |
+| delayed_salary | coupled | one_shot | ₹24,513.67 | 200 | 135/200 | -- | -- | -- |
+| delayed_salary | coupled | null | ₹0.00 | 0 | 200/200 | -- | -- | -- |
+| stacking_spike | coupled | ladder | ₹23,638.98 | 441 | 89/200 | -- | -- | -- |
+| stacking_spike | coupled | engine | ₹17,731.16 | 379 | 130/200 | 5 / ₹7,071.44 | 0 / ₹0.00 | 15 / ₹4,84,660.87 |
+| stacking_spike | coupled | one_shot | ₹14,769.37 | 200 | 148/200 | -- | -- | -- |
+| stacking_spike | coupled | null | ₹0.00 | 0 | 200/200 | -- | -- | -- |
+| festival_season | nominal | ladder | ₹33,85,618.55 | 319 | 127/200 | -- | -- | -- |
+| festival_season | nominal | engine | ₹14,34,458.08 | 198 | 159/200 | 38 / ₹20,22,513.53 | 0 / ₹0.00 | 60 / ₹29,56,442.69 |
+| festival_season | nominal | one_shot | ₹21,87,290.30 | 200 | 160/200 | -- | -- | -- |
+| festival_season | nominal | null | ₹0.00 | 0 | 200/200 | -- | -- | -- |
+| festival_season | misspecified | ladder | ₹42,38,679.50 | 278 | 136/200 | -- | -- | -- |
+| festival_season | misspecified | engine | ₹16,00,836.96 | 161 | 168/200 | 48 / ₹23,83,642.91 | 0 / ₹0.00 | 60 / ₹29,56,442.69 |
+| festival_season | misspecified | one_shot | ₹29,76,007.58 | 200 | 157/200 | -- | -- | -- |
+| festival_season | misspecified | null | ₹0.00 | 0 | 200/200 | -- | -- | -- |
+| festival_season | coupled | ladder | ₹56,959.71 | 481 | 115/200 | -- | -- | -- |
+| festival_season | coupled | engine | ₹41,752.71 | 297 | 154/200 | 2 / ₹7,621.69 | 0 / ₹0.00 | 60 / ₹29,56,442.69 |
+| festival_season | coupled | one_shot | ₹37,369.84 | 200 | 152/200 | -- | -- | -- |
+| festival_season | coupled | null | ₹0.00 | 0 | 200/200 | -- | -- | -- |
+| retry_storm | nominal | ladder | ₹8,21,479.23 | 319 | 85/200 | -- | -- | -- |
+| retry_storm | nominal | engine | ₹7,36,309.48 | 258 | 114/200 | 6 / ₹1,48,069.24 | 0 / ₹0.00 | 17 / ₹5,85,581.54 |
+| retry_storm | nominal | one_shot | ₹5,86,976.29 | 200 | 135/200 | -- | -- | -- |
+| retry_storm | nominal | null | ₹0.00 | 0 | 200/200 | -- | -- | -- |
+| retry_storm | misspecified | ladder | ₹8,03,177.91 | 276 | 90/200 | -- | -- | -- |
+| retry_storm | misspecified | engine | ₹7,18,361.35 | 225 | 112/200 | 16 / ₹4,74,928.87 | 0 / ₹0.00 | 17 / ₹5,85,581.54 |
+| retry_storm | misspecified | one_shot | ₹7,34,627.96 | 200 | 120/200 | -- | -- | -- |
+| retry_storm | misspecified | null | ₹0.00 | 0 | 200/200 | -- | -- | -- |
+| retry_storm | coupled | ladder | ₹83,985.44 | 403 | 76/200 | -- | -- | -- |
+| retry_storm | coupled | engine | ₹79,298.66 | 323 | 98/200 | 5 / ₹10,234.55 | 0 / ₹0.00 | 17 / ₹5,85,581.54 |
+| retry_storm | coupled | one_shot | ₹69,082.56 | 200 | 127/200 | -- | -- | -- |
+| retry_storm | coupled | null | ₹0.00 | 0 | 200/200 | -- | -- | -- |
 
 ## Engine vs ladder, deltas -- profile `strict`
 
@@ -113,20 +203,43 @@ A policy that wins every regime is evidence the regimes were tuned, not that the
 
 ## Compliance profiles
 
-**All 32 cells are byte-identical between `strict` and `permissive`.** The profiles are not inert in the code -- `profiles.requires_fresh_notification()` shifts the earliest committable day by one under `strict`, and `allocator.solve()` reads it -- but that constraint never binds at the optimum this policy chooses, because the policy always picks the earliest legal day anyway (see 'No timing discrimination' below). The two compliance interpretations are therefore indistinguishable *on this evidence*, which is a fact about how little the current policy uses timing, not a demonstration that the ambiguity does not matter.
+**All 64 cells are byte-identical between `strict` and `permissive`, and this is a defect in the compliance model, not a finding about the policy.**
+
+An earlier version of this report explained it as "the constraint never binds at the optimum, because the policy always picks the earliest legal day anyway". That explanation is wrong, and it understated the problem. The two profiles are provably the same function. In `allocator.solve()`:
+
+```python
+lead = 1 if profile.requires_fresh_notification(next_slot) else 0
+earliest = ctx.plan_day + lead
+if ctx.committed_days:
+    earliest = max(earliest, ctx.committed_days[-1] + 1)
+```
+
+`with_attempt()` sets `plan_day = on_day` *and* appends `on_day` to `committed_days`, and the initial context starts at `plan_day=1, committed_days=(1,)`. So `committed_days[-1] == plan_day` always, and `max(plan_day + 0, plan_day + 1)` equals `max(plan_day + 1, plan_day + 1)`. The `lead` term is absorbed by the monotonicity clamp at every reachable context: the candidate day *sets* are identical, not merely the chosen optimum. A policy with perfect timing discrimination would still produce byte-identical results under the two profiles.
+
+CLAUDE.md requires that the strict/permissive ambiguity never be hard-coded to one interpretation and that both be evaluated. That requirement is currently satisfied in form and empty in substance: the code branches on the profile and the branch cannot change any output. Modelling the 24h pre-notification lead as a real lead -- rather than as a one-day offset that the clamp swallows -- is the fix, and it is not done. (payments-domain, 2026-08-31.)
 
 ## Off-ramp gate: coverage per regime
 
 Coverage is *measured*, not assumed. The gate is calibrated once on `baseline` and reused unchanged under every regime; a regime breaks the exchangeability split conformal assumes, so any degradation here is a real result.
 
-| regime | gate live | marginal coverage | mean set size | singleton {WONT_PAY} rate | OFFERs fired |
-|---|---|---:|---:|---:|---:|
-| baseline | conformal | 0.980 (n=200) | 2.87 / 3 | 0.000 | 0 |
-| issuer_outage | conformal | 0.960 (n=200) | 2.82 / 3 | 0.000 | 0 |
-| delayed_salary | conformal | 0.980 (n=200) | 2.87 / 3 | 0.000 | 0 |
-| stacking_spike | conformal | 0.980 (n=200) | 2.87 / 3 | 0.000 | 0 |
-| festival_season | conformal | 0.970 (n=200) | 2.90 / 3 | 0.000 | 0 |
-| retry_storm | conformal | 0.985 (n=200) | 2.90 / 3 | 0.000 | 0 |
+| regime | arm | gate live | marginal coverage | per-class coverage (NOW / EVER / WONT) | mean set size | singleton rate | singleton {WONT_PAY} | OFFERs |
+|---|---|---|---:|---:|---:|---:|---:|---:|
+| baseline | nominal | conformal | 0.900 (n=4674) | 0.965 / 0.864 / 0.839 | 2.51 / 3 | 0.132 | 0.000 | 0 |
+| baseline | misspecified | conformal | 0.915 (n=4467) | 0.951 / 0.893 / 0.882 | 2.58 / 3 | 0.092 | 0.000 | 0 |
+| baseline | coupled | conformal | 0.897 (n=5039) | 0.967 / 0.872 / 0.815 | 2.40 / 3 | 0.195 | 0.000 | 0 |
+| issuer_outage | nominal | conformal | 0.876 (n=4908) | 0.919 / 0.883 / 0.818 | 2.41 / 3 | 0.174 | 0.000 | 0 |
+| issuer_outage | misspecified | conformal | 0.886 (n=4814) | 0.918 / 0.866 / 0.854 | 2.44 / 3 | 0.157 | 0.000 | 0 |
+| issuer_outage | coupled | conformal | 0.886 (n=5023) | 0.928 / 0.873 / 0.832 | 2.38 / 3 | 0.193 | 0.000 | 0 |
+| delayed_salary | nominal | conformal | 0.901 (n=4917) | 0.963 / 0.882 / 0.828 | 2.44 / 3 | 0.175 | 0.000 | 0 |
+| delayed_salary | misspecified | conformal | 0.915 (n=4796) | 0.960 / 0.893 / 0.865 | 2.47 / 3 | 0.154 | 0.000 | 0 |
+| delayed_salary | coupled | conformal | 0.905 (n=5039) | 0.972 / 0.882 / 0.822 | 2.40 / 3 | 0.195 | 0.000 | 0 |
+| stacking_spike | coupled | conformal | 0.900 (n=5097) | 0.970 / 0.870 / 0.817 | 2.39 / 3 | 0.204 | 0.000 | 0 |
+| festival_season | nominal | conformal | 0.904 (n=3510) | 0.946 / 0.829 / 0.847 | 2.53 / 3 | 0.129 | 0.000 | 0 |
+| festival_season | misspecified | conformal | 0.925 (n=3328) | 0.940 / 0.911 / 0.899 | 2.61 / 3 | 0.082 | 0.000 | 0 |
+| festival_season | coupled | conformal | 0.905 (n=3887) | 0.953 / 0.899 / 0.803 | 2.38 / 3 | 0.214 | 0.000 | 0 |
+| retry_storm | nominal | conformal | 0.915 (n=4658) | 0.969 / 0.939 / 0.869 | 2.55 / 3 | 0.129 | 0.000 | 0 |
+| retry_storm | misspecified | conformal | 0.922 (n=4538) | 0.961 / 0.948 / 0.888 | 2.59 / 3 | 0.106 | 0.000 | 0 |
+| retry_storm | coupled | conformal | 0.903 (n=4908) | 0.966 / 0.867 / 0.861 | 2.47 / 3 | 0.174 | 0.000 | 0 |
 
 ## Pre-registered regimes
 

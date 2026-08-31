@@ -1,6 +1,6 @@
 # Shadow-mode delta log
 
-run_id `shadow-20260831T085344-83b66a95` · arm `nominal` · profile `strict` · 200 mandates
+run_id `shadow-20260831T152627-83b66a95` · arm `nominal` · profile `strict` · 200 mandates
 
 Decisions only. Nothing was executed, no provider was called, and no row
 was written to `ledger`, `committed_schedule`, `attempt_lease` or `plan`.

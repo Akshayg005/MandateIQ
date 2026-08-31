@@ -71,26 +71,57 @@ class ConformalCauseGate:
     four-way Outcome predictor answers a different question and its
     singleton sets would mean something else entirely.
 
-    `key` for the smoothed p-value is derived from the belief itself rather
-    than supplied by the caller. Two identical beliefs must produce the same
-    prediction set -- an off-ramp that fires on a coin flip is not a gate --
-    and there is no stable per-decision id available at this layer that is
-    not also a leak of mandate identity into the score.
+    **The smoothing key must be a per-DECISION id, never a function of the
+    belief.** The first version of this class hashed `b.probs`, reasoning
+    that two identical beliefs must give the same set. That reasoning is
+    right and the implementation of it was wrong, in a way that silently
+    destroyed the coverage guarantee:
+
+    Vovk's smoothed p-value is valid because the tie-breaking draw `u` is
+    independent of the score and redrawn per row, so coverage is 1-alpha
+    after averaging over `u`. Keying on the score makes `u` a deterministic
+    function of it, so every row with the same belief shares one `u` and
+    there is nothing left to average. With a belief space this small the
+    whole study ran on two `u` values, and for WONT_PAY -- whose calibration
+    pool is a single tie atom -- the p-value reduced to `u` exactly. The
+    inclusion decision for the one class that can fire the off-ramp was
+    literally a hash of a constant string, with no data dependence, and the
+    reported coverage was one draw from a range spanning 0.105 to 0.980
+    (stats-reviewer, 2026-08-31; DECISIONS.md).
+
+    So the key is now supplied by the caller via `bind()`, as
+    `conformal.SplitConformal.pred_set()` documents ("a stable per-row id,
+    e.g. mandate_id"). Determinism is preserved -- the same mandate at the
+    same slot always gets the same set -- and `u` no longer depends on the
+    score. Binding is REQUIRED: an unbound gate raises rather than falling
+    back to a key that would reintroduce the bug quietly.
     """
 
-    def __init__(self, predictor: "SplitConformal[Cause]") -> None:
+    def __init__(self, predictor: "SplitConformal[Cause]", key: str | None = None) -> None:
         self._predictor = predictor
+        self._key = key
 
     @property
     def predictor(self) -> "SplitConformal[Cause]":
         return self._predictor
 
-    @staticmethod
-    def _key(b: Belief) -> str:
-        return hashlib.sha256(
-            (";".join(f"{p:.12f}" for p in b.probs)).encode()
-        ).hexdigest()[:16]
+    @property
+    def key(self) -> str | None:
+        return self._key
+
+    def bind(self, key: str) -> "ConformalCauseGate":
+        """A view of this gate for one decision point. Shares the fitted
+        predictor -- binding is cheap and must not refit anything."""
+        if not key:
+            raise ValueError("ConformalCauseGate.bind() requires a non-empty key")
+        return ConformalCauseGate(self._predictor, key=key)
 
     def pred_set(self, b: Belief) -> frozenset[Cause]:
+        if self._key is None:
+            raise ValueError(
+                "ConformalCauseGate was queried without a bound key. Call "
+                "gate.bind(<per-decision id>) first -- see this class's "
+                "docstring for why the key may not be derived from the belief."
+            )
         scores = lac_scores(np.asarray([b.probs], dtype=float))[0]
-        return self._predictor.pred_set(scores, key=self._key(b))
+        return self._predictor.pred_set(scores, key=self._key)

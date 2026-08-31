@@ -536,11 +536,70 @@ un.ps1 verify passes 5/5 including the postgres check that had
                 evidence, which is not the same as the ambiguity not
                 mattering.
 
-           NOT DONE, and not claimed: the payments-domain review PLAN_DETAIL
-           lists for this block has not been run (this session was instructed
-           not to spawn subagents). 903 tests pass, zero skips; guards clean
-           on 122 files; run.ps1 verify 5/5.
-           Does not touch eval/frozen/. -->
+           REVIEWED AFTER THE FIRST TICK, and the numbers above are the
+           POST-REVIEW ones. payments-domain and stats-reviewer were run
+           against this block; between them they invalidated two published
+           numbers and found three checks that could not fail. The gate still
+           holds -- both clauses re-verified after the fixes -- but several
+           conclusions in the first draft were WRONG. Full detail in
+           DECISIONS.md, three further B13 entries. The corrections that
+           change what this block claims:
+             * Finding 1 above understated it. OFFER = 0 is ARITHMETIC, not
+               measurement: the proxy decline alphabet gives WONT_PAY an
+               identical likelihood under both symbols it can emit, so
+               P(WONT_PAY) is pinned at 0.10 and the singleton is unreachable
+               for any alpha, seed or regime. The off-ramp lane is UNTESTED,
+               not tested-and-negative, and retry_storm's hypothesis about it
+               is vacuous rather than falsified.
+             * The gate's reported coverage was an artifact. Its smoothing key
+               was derived from the belief, which collapsed the WONT_PAY
+               p-value to a hash of a constant; and coverage was scored over
+               only the 200 slot-1 beliefs rather than the ~4,700 queries the
+               gate actually receives. Both fixed. Real marginal coverage is
+               0.876-0.925 against a 0.95 target -- the gate UNDER-covers.
+               The earlier 0.980 should not be cited.
+             * The headline was unfalsifiable and is now bounded. `null`
+               (never attempt) preserves 200/200 in EVERY cell; `one_shot`
+               (one attempt, no model, no belief, no gate) preserves more
+               than the engine in 14 of 16 cells while spending fewer
+               attempts. Both are now first-class arms in the table, the
+               figures and the README. The test asserting the engine always
+               spends fewer attempts than the ladder was DELETED: it pinned
+               the confound by test.
+             * issuer_outage's own pre-registered falsification criterion
+               (false-REAUTH) was never computed. Now measured: 810 of 1,494
+               REAUTHs go to mandates whose true cause is not CANT_PAY_EVER.
+             * Finding 3 above was right about the fact and wrong about the
+               reason: strict and permissive are provably the SAME FUNCTION
+               (the lead term is absorbed by the monotonicity clamp at every
+               reachable context), not merely equal at this policy's optimum.
+             * Every rupee in the report was float-divided outside money.py,
+               and guard_invariants scanned money only in PROTECTED_DIRS --
+               i.e. exactly where the rule already held. Both sides fixed;
+               the guard now scans MONEY_DIRS.
+
+           TWO CHECKS THAT COULD NOT FAIL, fixed:
+             * `.\run.ps1 test` returned 0 on a RED suite -- bare `& $Py` in a
+               switch branch does not set the script exit code -- which made
+               CLAUDE.md's definition-of-done step 3 unfalsifiable. Proven
+               with a repro, then fixed via the already-existing Invoke-Step.
+             * The golden-set freshness advisory tested file existence, so a
+               quota-killed run leaving 1 of 30 rows cached reported "current".
+               Now compares against the golden set's rows. Currently, and
+               honestly, PARTIAL.
+
+           STILL NOT DONE, not claimed: the belief layer cannot conclude
+           CANT_PAY_EVER from an observed dead instrument (502 post-terminal
+           re-solves returned ATTEMPT); the 24h pre-notification lead is not
+           modelled as a real lead; the five regimes never perturb
+           CANT_PAY_EVER.base_dead, never model external debit-order
+           competition, and never stress the decline-signal channel. The
+           regimes are deliberately UNCHANGED -- they are pre-registered, and
+           choosing a sixth now, knowing what breaks the engine, is what
+           pre-registration exists to prevent.
+
+           910 tests pass, zero skips; guards clean on 122 files; run.ps1
+           verify 5/5. Does not touch eval/frozen/. -->
 - [ ] **B14** ∥ dashboard: merchant + acquirer views; per-mandate drill-down shows belief, chosen slot, binding constraint, conformal set, ledger trail
 - [ ] **B15** ∥ landing page: 60fps on a mid laptop; reduced-motion fallback; canvas-failure fallback; counters wired to real report output, not hard-coded
 - [ ] **B16** ship: README has "What this can't do" with ≥4 items; video under 5:00; three takes max

@@ -30,13 +30,83 @@ def test_conformal_cause_gate_satisfies_the_protocol():
     assert isinstance(gate, ConformalGate)
 
 
-def test_gate_is_deterministic_for_an_identical_belief():
-    """An off-ramp that fires on a coin flip is not a gate. The smoothed
-    conformal p-value draws its randomness from the belief itself, so the
-    same belief must always produce the same set."""
+def test_gate_refuses_to_answer_without_a_bound_key():
+    """The smoothing key MUST be a per-decision id. Deriving it from the
+    belief -- the original implementation -- makes the tie-breaking draw a
+    deterministic function of the score, which destroys the coverage
+    guarantee (stats-reviewer, 2026-08-31). An unbound gate must fail loudly
+    rather than silently fall back to anything belief-derived."""
     gate, kind, _ = run_mod.fit_gate(load_config())
     b = Belief(probs=(0.1, 0.1, 0.8), provenance="test")
-    assert gate.pred_set(b) == gate.pred_set(b)
+    with pytest.raises(ValueError, match="without a bound key"):
+        gate.pred_set(b)
+
+
+def test_gate_is_deterministic_for_one_decision_point():
+    """Determinism is still required -- an off-ramp that fires on a coin
+    flip is not a gate -- but it is keyed per decision, not per belief."""
+    gate, _, _ = run_mod.fit_gate(load_config())
+    b = Belief(probs=(0.1, 0.1, 0.8), provenance="test")
+    g = gate.bind("M0001:C1:s2")
+    assert g.pred_set(b) == g.pred_set(b)
+
+
+def test_gate_randomisation_is_not_a_function_of_the_belief():
+    """The regression test for the bug itself: two DIFFERENT decision points
+    holding the SAME belief must be able to receive different sets. If they
+    cannot, the smoothing draw is pinned to the score again and the coverage
+    number is an artifact of a hash.
+
+    The belief used is (0.8, 0.1, 0.1) -- the one the harness actually
+    produces after a slot-1 INSUFFICIENT_FUNDS. That matters: smoothing only
+    bites on TIES, and this belief's WONT_PAY score of 0.90 lands exactly on
+    the single atom that is the whole WONT_PAY calibration pool, which is
+    precisely the degenerate case where the old belief-derived key reduced
+    the p-value to a constant."""
+    gate, _, _ = run_mod.fit_gate(load_config())
+    b = Belief(probs=(0.8, 0.1, 0.1), provenance="test")
+    sets = {gate.bind(f"M{i:04d}:C1:s2").pred_set(b) for i in range(200)}
+    assert len(sets) > 1, (
+        "every key produced the same prediction set for one belief -- the "
+        "smoothing draw is not varying per row"
+    )
+
+
+def test_gate_can_return_the_wont_pay_singleton():
+    """Positive control. The off-ramp never fires in the eval, and the report
+    explains that as a property of the proxy decline alphabet rather than of
+    the gate. That explanation is only honest if the gate CAN fire when the
+    evidence warrants it -- otherwise "never fires" might just be a broken
+    gate. Calibrate on a population where the three causes are well separated
+    and check that a confident WONT_PAY belief yields the singleton."""
+    import numpy as np
+
+    from src.model import conformal
+
+    rng = np.random.default_rng(0)
+    probs, y, ids = [], [], []
+    for i in range(300):
+        c = i % 3
+        row = np.full(3, 0.02)
+        row[c] = 0.96
+        row = row + rng.uniform(0, 0.01, 3)
+        probs.append(row / row.sum())
+        y.append(c)
+        ids.append(f"synthetic:{i}")
+    predictor = conformal.calibrate(
+        scores=conformal.lac_scores(np.asarray(probs)),
+        y=np.asarray(y),
+        labels=run_mod.CAUSE_ORDER,
+        row_group_ids=ids,
+        provenance="calib_conf",
+    )
+    gate = ConformalCauseGate(predictor)
+    wont = Belief(probs=(0.02, 0.02, 0.96), provenance="test")
+    sets = [gate.bind(f"k{i}").pred_set(wont) for i in range(50)]
+    assert frozenset({Cause.WONT_PAY}) in sets, (
+        f"gate never produced the WONT_PAY singleton on a 0.96-confident "
+        f"WONT_PAY belief; got {set(sets)}"
+    )
 
 
 def test_gate_calibration_is_disjoint_from_every_reported_seed():
@@ -111,9 +181,11 @@ def small_payload():
 
 
 def test_driver_produces_a_cell_per_policy_regime_profile(small_payload):
-    # 2 regimes x 1 arm x 2 profiles x 2 policies
-    assert len(small_payload["cells"]) == 8
-    assert {c["policy"] for c in small_payload["cells"]} == {"ladder", "engine"}
+    # 2 regimes x 1 arm x 2 profiles x 4 policies
+    assert len(small_payload["cells"]) == 16
+    assert {c["policy"] for c in small_payload["cells"]} == {
+        "ladder", "engine", "null", "one_shot"
+    }
 
 
 def test_no_constraint_violations(small_payload):
@@ -131,14 +203,64 @@ def test_every_cell_reports_all_three_bars(small_payload):
         assert 0 <= c["mandates_preserved"] <= c["n_mandates"]
 
 
-def test_ladder_spends_more_attempts_than_the_engine(small_payload):
-    """Not a tuning target -- if this ever flips, the thesis is wrong and the
-    report should say so rather than the test passing quietly."""
+def test_reference_policies_are_present_in_every_cell_group(small_payload):
+    """The test that used to live here asserted the engine ALWAYS spends
+    fewer attempts than the ladder. payments-domain correctly called that
+    out: it pins the confound by test. Every metric in this report is
+    monotonically decreasing in attempt count, so asserting the engine
+    attempts less is asserting that it must appear to win -- the thing under
+    investigation, not an invariant.
+
+    What actually needs guarding is that the reference policies a reader
+    needs in order to discount that effect are always emitted."""
     by = {}
     for c in small_payload["cells"]:
         by.setdefault((c["regime"], c["arm"], c["profile"]), {})[c["policy"]] = c
     for key, v in by.items():
-        assert v["engine"]["attempts_spent"] < v["ladder"]["attempts_spent"], key
+        assert set(v) == {"ladder", "engine", "null", "one_shot"}, key
+
+
+def test_null_policy_preserves_every_mandate_and_spends_nothing(small_payload):
+    """The bound that makes the preserved bar interpretable: DEAD and
+    OPTED_OUT are reachable only through attempt(), so never attempting
+    preserves everything. If this fails, `preserved` no longer means what
+    protocol.md says it means."""
+    for c in small_payload["cells"]:
+        if c["policy"] != "null":
+            continue
+        assert c["attempts_spent"] == 0
+        assert c["recovered_paise"] == 0
+        assert c["mandates_preserved"] == c["n_mandates"]
+
+
+def test_one_shot_spends_exactly_one_attempt_per_mandate(small_payload):
+    for c in small_payload["cells"]:
+        if c["policy"] == "one_shot":
+            assert c["attempts_spent"] == c["n_mandates"]
+
+
+def test_false_reauth_is_measured_not_assumed(small_payload):
+    """issuer_outage pre-registered false-REAUTH as its own falsification
+    criterion. A criterion that is never computed is not a criterion."""
+    eng = [c for c in small_payload["cells"] if c["policy"] == "engine"]
+    assert eng
+    for c in eng:
+        assert c["false_reauth_count"] <= c["n_reauth"]
+    assert any(c["n_reauth"] > 0 for c in eng)
+
+
+def test_coverage_is_scored_over_actual_gate_queries(small_payload):
+    """Coverage was previously replayed over the 200 slot-1 beliefs only,
+    which both missed the concentrated post-update queries where the gate
+    emits singletons AND ignored arm/profile, printing six numbers as
+    thirty-two. It must now reflect every query the gate actually received."""
+    for c in small_payload["cells"]:
+        if c["policy"] != "engine" or c["gate_kind"] != "conformal":
+            continue
+        assert c["coverage_n"] > c["n_mandates"], (
+            "coverage sample is no larger than one row per mandate -- it is "
+            "still measuring slot 1 only"
+        )
 
 
 def test_money_is_integer_paise_everywhere(small_payload):
@@ -177,7 +299,8 @@ def test_report_prints_coverage_when_the_real_gate_was_live(small_payload):
 def test_report_renders_without_figures(small_payload):
     md = report_mod.render(small_payload, figures=False)
     for required in ("recovered", "attempts", "preserved",
-                     "missed recovery", "false off-ramp", "Where we lose"):
+                     "would have paid", "false off-ramp", "false REAUTH",
+                     "Where we lose"):
         assert required in md, required
 
 

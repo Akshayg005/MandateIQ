@@ -85,8 +85,17 @@ Mandate Recovery Engine -- tasks
 "@
     }
 
-    "test"      { & $Py -m pytest -q --cov=src --cov-report=term-missing }
-    "test-fast" { & $Py -m pytest -q -m $TestFastFilter }
+    # Invoke-Step, NOT a bare call. A bare `& $Py ...` as the last statement
+    # of a switch branch does NOT set this script's exit code: PowerShell
+    # returns 0 and the failure vanishes. `.\run.ps1 test` therefore reported
+    # success on a RED suite, which made CLAUDE.md's own definition-of-done
+    # step 3 ("`.\run.ps1 test` passes before any commit") unfalsifiable.
+    # Found 2026-08-31 in the B13 end-of-project pass and proven with a
+    # minimal repro; same class as the 2026-08-29 vacuous-checks audit.
+    # Invoke-Step existed and was correct -- it was simply never called from
+    # any branch except ci and lint.
+    "test"      { Invoke-Step "tests"      { & $Py -m pytest -q --cov=src --cov-report=term-missing } }
+    "test-fast" { Invoke-Step "tests-fast" { & $Py -m pytest -q -m $TestFastFilter } }
 
     "lint" {
         Invoke-Step "invariant guards" { & $Py scripts\guard_invariants.py --all }
@@ -138,13 +147,13 @@ Mandate Recovery Engine -- tasks
     # figure from the artifact it just wrote, so reports/regimes.md can never
     # drift from reports/regimes.json.
     "eval" {
-        & $Py -m eval.run --config eval/frozen/sim_config.yaml --all-regimes --both-profiles
-        & $Py -m eval.report --figures
+        Invoke-Step "sweep"  { & $Py -m eval.run --config eval/frozen/sim_config.yaml --all-regimes --both-profiles }
+        Invoke-Step "report" { & $Py -m eval.report --figures }
     }
     # "nominal" is an ARM, not a regime -- the regimes are baseline,
     # issuer_outage, delayed_salary, stacking_spike, festival_season,
     # retry_storm (eval/regimes.py). This line predated that file.
-    "eval-quick" { & $Py -m eval.run --config eval/frozen/sim_config.yaml --regime baseline --arm nominal --profile strict --quiet }
+    "eval-quick" { Invoke-Step "eval-quick" { & $Py -m eval.run --config eval/frozen/sim_config.yaml --regime baseline --arm nominal --profile strict --quiet } }
     # NOTE: no "golden" case here. PowerShell's switch runs EVERY matching
     # branch unless a branch breaks, and a second "golden" case (the one that
     # honours -NoCache) lives further down. Having both meant `.\run.ps1
@@ -155,12 +164,12 @@ Mandate Recovery Engine -- tasks
     # model against a 500/model/day free-tier cap, and cannot complete --
     # POSTMORTEM.md incident 8, where it died at call 400. 140 + 5*30*2 = 440
     # fits, and bench refuses to start anything that does not.
-    "bench"      { & $Py bench\llm_vs_stats.py --n 140 --repeats 5 --variance-n 30 }
-    "shadow"     { & $Py -m src.execute.shadow }
-    "chaos"      { & $Py -m eval.chaos --kills=$Kills }
+    "bench"      { Invoke-Step "bench" { & $Py bench\llm_vs_stats.py --n 140 --repeats 5 --variance-n 30 } }
+    "shadow"     { Invoke-Step "shadow" { & $Py -m src.execute.shadow } }
+    "chaos"      { Invoke-Step "chaos" { & $Py -m eval.chaos --kills=$Kills } }
     # Re-renders from the EXISTING artifact without re-running the sweep.
     # Use .\run.ps1 eval for the full reproduce-from-scratch path.
-    "report"     { & $Py -m eval.report --figures }
+    "report"     { Invoke-Step "report" { & $Py -m eval.report --figures } }
 
     "freeze" {
         git add eval/frozen
@@ -257,11 +266,11 @@ print(c.order.create({'amount':100,'currency':'INR'})['id'])
         & $Py -m uvicorn src.ingest.app:app --reload --port 8000
     }
 
-    "coverage" { & $Py scripts\decline_coverage.py }
+    "coverage" { Invoke-Step "coverage" { & $Py scripts\decline_coverage.py } }
 
     "golden" {
-        if ($NoCache) { & $Py eval\golden_check.py --no-cache }
-        else { & $Py eval\golden_check.py }
+        if ($NoCache) { Invoke-Step "golden (live)"   { & $Py eval\golden_check.py --no-cache } }
+        else          { Invoke-Step "golden (cached)" { & $Py eval\golden_check.py } }
     }
 
     "clean" {

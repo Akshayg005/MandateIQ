@@ -4303,3 +4303,195 @@ the human's instruction not to shrink it: a full arm is
 answers are banked. At free-tier rates that arm needs ~21 more days. The
 options remain what B12 recorded — buy paid quota, or ship flash-lite as the
 only LLM row — and it stays a human call.
+
+### 2026-08-31 · B13 review pass · What two read-only reviews found, and what changed
+
+`payments-domain` and `stats-reviewer` were run against B13 after the block
+was first ticked. Between them they invalidated two published numbers, found
+one arithmetic impossibility being reported as a measurement, and found three
+checks that could not fail. Everything below is fixed and re-measured unless
+marked otherwise. The block's gate still holds — both clauses were re-verified
+after the fixes — but several **conclusions in the first draft of the report
+were wrong**, and the corrected ones are less flattering.
+
+**1. The conformal gate's smoothing key was derived from the belief. (stats,
+critical.)** `ConformalCauseGate._key()` hashed `b.probs`. Vovk's smoothed
+p-value is valid because the tie-break draw `u` is independent of the score
+and redrawn per row; keying on the score makes `u` a deterministic function of
+it, so rows sharing a belief share one `u` and there is nothing to average
+over. The harness reaches only two distinct beliefs, so the whole study ran on
+two `u` values — and because WONT_PAY's calibration pool is a single tie atom
+at 0.90, its p-value reduced to `u` exactly. **The inclusion decision for the
+only class that can fire the off-ramp was a hash of a constant string.**
+Reported coverage of 0.980 was one draw from a range spanning 0.105 to 0.980.
+
+Fixed: the key is now a per-decision id supplied by `bind()`
+(`<mandate>:<cycle>:s<slot>`), as `SplitConformal.pred_set()` already
+documented. An unbound gate raises rather than falling back to anything
+belief-derived. Determinism — same mandate, same slot, same set — is
+preserved. Three regression tests, including one on the exact belief the
+harness produces, since smoothing only bites on ties.
+
+**2. Coverage was scored over 4% of the gate's queries, and ignored arm and
+profile. (stats, high.)** `_measure_coverage()` replayed the 200 slot-1
+beliefs. The gate is actually consulted ~4,700 times per cell, and the
+unmeasured queries are the concentrated post-update ones where it emits
+singletons — i.e. where a conformal error becomes a wrong ACTION rather than
+an abstention. It was also a pure function of `(seed, cfg)`, so six distinct
+numbers were printed as thirty-two. Replaced with `_RecordingGate`, which
+logs every query the gate actually receives; per-class coverage is now
+reported alongside the marginal, because Mondrian's whole purpose is
+class-conditional coverage.
+
+**Corrected numbers.** Marginal coverage **0.876–0.925 against a 0.95 target
+— the gate UNDER-covers**, worst per-class down to ~0.84. Mean set size 2.5,
+not 2.87. The first draft's "the gate holds coverage" was an artifact of both
+bugs above.
+
+**3. `OFFER = 0` is arithmetic, not measurement. (both reviews, critical.)**
+The proxy decline alphabet has exactly two symbols and `cause_map` assigns
+`WONT_PAY` a prior of 0.10 under **both**, so the WONT_PAY likelihood ratio is
+constant and no observation this simulator can produce moves belief mass
+toward `WONT_PAY`. Its probability is pinned at 0.10 after slot 1 and is
+non-increasing thereafter; the singleton is unreachable for any alpha, seed or
+regime. The first draft read this as "a payment decline is a weak signal of
+intent" — true about the world, false about this number. The report now says
+the off-ramp lane is **untested, not tested-and-negative**, that
+`retry_storm`'s hypothesis about it is vacuous rather than falsified, and that
+`false off-ramp = 0` is not a safety result. A positive-control test now
+proves the gate CAN return `{WONT_PAY}` when calibrated on separable data, so
+"never fires" is a property of the fixture and not a broken gate.
+
+**4. The headline was unfalsifiable. (payments-domain, and my own flagged
+doubt — confirmed.)** "The engine preserves more in 16 of 16 cells" is not
+distinguishable from "the engine attempts less". Two cause-blind reference
+policies are now first-class arms in `eval/run.py`:
+
+* `null` — never attempt. Preserves **200/200 in every cell**, because DEAD
+  and OPTED_OUT are reachable only through `attempt()`.
+* `one_shot` — one attempt on day 2, no model, no belief, no gate.
+  **Preserves more than the engine in 14 of 16 cells while spending fewer
+  attempts** (200 vs 161–379).
+
+Both now appear in the three-bar table, the figures and the README. B5 had
+already recorded this confound; B13's first draft reproduced it by omitting
+the column. The test that asserted the engine always spends fewer attempts
+than the ladder has been **deleted** — it pinned the confound by test.
+
+**5. REAUTH never fires on an observed dead instrument, and the code was
+discarding the evidence. (payments-domain, critical.)** After a terminal
+outcome the harness re-solves and recorded only OFFER/REAUTH/STOP;
+`Action.ATTEMPT` fell through every branch unrecorded. Measured: on
+baseline/nominal, 19 mandates observed DEAD, **0 returned REAUTH, 16 returned
+ATTEMPT**. `belief.update()` compounds naive-Bayes with no floor, so one
+`CARD_EXPIRED` cannot overtake the slot-1 `INSUFFICIENT_FUNDS` prior. Now
+counted as `n_attempt_after_terminal` (502 across all cells) and reported. The
+underlying belief-update weakness is **not fixed** — it is a B7/B8 design
+issue, disclosed here.
+
+**6. `issuer_outage`'s own pre-registered falsification criterion was never
+computed. (payments-domain.)** It says in as many words: "if false-REAUTH
+rises sharply here, that is a real loss and must be reported as one." Nothing
+computed it. Now measured: **810 of 1,494 REAUTHs across all cells are issued
+on mandates whose true cause is not `CANT_PAY_EVER`.** A criterion that is
+never computed is not a criterion.
+
+**7. `strict` vs `permissive`: the report's explanation was wrong.
+(payments-domain.)** The first draft said the constraint "never binds at the
+optimum this policy chooses". In fact the two profiles are provably the same
+function: `with_attempt()` sets `plan_day = on_day` *and* appends to
+`committed_days`, so `max(plan_day + 0, plan_day + 1)` equals
+`max(plan_day + 1, plan_day + 1)` at every reachable context — the candidate
+day *sets* are identical, not merely the chosen optimum. A policy with perfect
+timing discrimination would still produce identical results. The requirement
+to evaluate both RBI interpretations is currently satisfied in form and empty
+in substance. Corrected in the report; the fix (modelling the 24h lead as a
+real lead) is **not done**.
+
+**8. Every rupee in the report was float-divided outside `money.py`, and the
+guard was scoped so it could not see it. (payments-domain.)**
+`_rupees()` divided paise by one hundred in float with Western grouping,
+printing ₹20,22,513.53 as "2,022,514" — breaking invariant 2 twice over.
+`guard_invariants.py` ran its money checks only over `PROTECTED_DIRS`, so
+`--all` reported "clean" while the violation sat in the file that writes the
+report. **A guard scoped to where a rule is already obeyed is not a guard.**
+Both sides fixed: `_rupees()` delegates to `money.fmt()`, and the guard now
+scans `MONEY_DIRS` (adds `eval/`, `bench/`, `scripts/`, `src/execute/`,
+`src/ledger/`, `src/ingest/`). `eval/frozen/` is exempt — it is immutable, so
+a finding there is unactionable.
+
+**9. Report aggregations that would have overstated silently.** `n_offer` was
+summed across both profiles into a per-profile row (double-count the moment
+OFFER fires); `_losses` scanned only `strict` (a permissive-only loss would
+never print — live the moment finding 7 is fixed); the headline mixed two
+denominators in one sentence; coverage min/max ranged over the conformal
+subset while claiming all cells. All fixed.
+
+**10. The counterfactual docstring overclaimed.** It said the deepcopy replays
+"the same random draws the real run would have seen". False: one RNG serves
+the whole batch, so those draws are the ones the real run gives to *later*
+mandates. It is common-random-numbers variance reduction, which is sound, not
+an exact realisation. Two further biases now disclosed rather than fixed
+(fixing either means editing the frozen simulator): the coupled arm's
+household-balance snapshot is biased by position-within-household, and the
+counterfactual always lands inside the days-1-5 salary window, making
+`missed_recovery` an upper bound rather than a point estimate.
+
+**Not changed, deliberately: the regimes themselves.** `payments-domain`
+argues the five never perturb `CANT_PAY_EVER.base_dead` (the 27x likelihood
+ratio carrying the entire belief layer), never model external debit-order
+competition, never stress the decline-signal channel, and that
+`delayed_salary` cannot separate the policies because both the ladder and the
+engine attempt entirely inside days 1-5. **These criticisms are correct and
+the regimes stay as they are.** They are pre-registered; editing them after
+seeing results is exactly what pre-registration exists to prevent, and a
+sixth regime chosen now would be chosen knowing what breaks the engine. They
+are recorded here as known limits of the stress set, and belong in B16's
+"What this can't do".
+
+### 2026-08-31 · B13 review pass · Two checks that could not fail
+
+Found while running the end-of-project sweep, both the same class as the
+2026-08-29 vacuous-checks audit.
+
+**`.\run.ps1 test` returned 0 on a red suite.** Every single-task branch in
+`run.ps1` called `& $Py ...` bare. A bare native call as the last statement of
+a switch branch does not set the script's exit code, so PowerShell returned 0
+and the failure vanished — making CLAUDE.md's own definition-of-done step 3
+("`.\run.ps1 test` passes before any commit") unfalsifiable. Proven with a
+minimal repro before fixing. `Invoke-Step` already existed and was correct; it
+was simply never called from any branch except `ci` and `lint`. Now wired
+through `test`, `test-fast`, `eval`, `eval-quick`, `golden`, `bench`,
+`shadow`, `chaos`, `report` and `coverage`. Verified: `.\run.ps1 golden`
+under an exhausted quota now exits 1, where it previously exited 0.
+
+`payments-domain` independently found the same defect in the `eval` branch
+specifically, noting the sharper consequence: if the sweep died,
+`eval.report` would render the **stale** `regimes.json`, print "wrote
+regimes.md", and exit 0 — silently breaking the block's own "every number
+reproducible by one command" gate.
+
+**The golden-set freshness check reported a partial cache as current.**
+`check_freshness()` tested `path.exists()`. `_persisting()` flushes after
+every live call so an interrupted run resumes without re-billing — which means
+a run that dies partway leaves a cache file holding a handful of answers. A
+quota-killed run during this session left `intent__<version>.json` with **1 of
+30** rows, after which the advisory reported "cache is current" and `ci`'s
+golden step went green over an unverified golden set. Now compares cached keys
+against the golden set's own rows and reports `PARTIAL -- n of N`. Currently,
+honestly, PARTIAL: `intent.py` changed in B12 and the intent arm has not been
+re-run against the live model since, because the free-tier quota is spent.
+
+### 2026-08-31 · B13 · reports/results.json, written at last
+
+`scripts/checkpoint.py` has looked for `reports/results.json` since the
+scaffold commit, and the `run-eval` skill lists writing it as step 2. Nothing
+ever wrote it, so STATE.md printed "no eval run yet" for thirteen blocks
+while evaluations were in fact running. `eval/report.py` now emits it in the
+shape `checkpoint.py` already parses, and fills the README results table
+between `<!-- RESULTS:BEGIN -->` markers — refusing to touch the README at all
+if the markers are absent, rather than guessing where the table is.
+
+The README table carries the `null` and `one_shot` rows next to the engine,
+for the reason in finding 4: the preserved-mandates column is not
+interpretable without them.

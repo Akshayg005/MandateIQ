@@ -10,8 +10,8 @@ would be a regime this harness is not entitled to run.
 
 That constraint is real and it shapes what a regime can say. The frozen
 simulator reads a fixed set of knobs -- cause_mix, the per-cause hazard base
-rates and logit adjustments, amount/category mixes, and the per-arm
-parameters. A regime is a coherent story told in those knobs and nothing
+rates and logit adjustments, the amount and category mixes, and the
+per-arm parameters. A regime is a coherent story told in those knobs and nothing
 else. Where a story could only be told by new simulator code (a true
 time-varying outage window, for instance), the regime approximates it with
 the knobs that exist and SAYS SO in `approximation`, rather than quietly

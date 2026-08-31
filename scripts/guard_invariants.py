@@ -32,6 +32,22 @@ from hookio import ROOT, resolve_paths  # noqa: E402
 
 # --- invariant 1: no generative models in the deterministic core ------------
 PROTECTED_DIRS = ("src/model/", "src/policy/", "src/core/", "src/classify/")
+
+# Invariant 2 ("all money is integer paise"; "nothing but money.py formats
+# currency") is not a property of the core alone -- it is a property of every
+# number this project publishes. MONEY_DIRS is the wider scope the money
+# checks run over.
+#
+# Added 2026-08-31: eval/report.py formatted every rupee figure in
+# reports/regimes.md by dividing paise by one hundred in float, in Western
+# grouping and
+# outside money.py, rendering Rs 20,22,513.53 as "2,022,514". It survived
+# because the money checks ran only over PROTECTED_DIRS -- i.e. exactly where
+# the rule already held -- so `guard_invariants --all` reported "clean" while
+# the violation sat in the file that writes the report. A guard scoped to
+# where a rule is already obeyed is not a guard. (payments-domain review.)
+MONEY_DIRS = PROTECTED_DIRS + ("eval/", "bench/", "scripts/", "src/execute/",
+                               "src/ledger/", "src/ingest/")
 LLM_IMPORT = re.compile(
     r"^\s*(?:import|from)\s+("
     r"anthropic|openai|cohere|litellm|vertexai"
@@ -135,6 +151,11 @@ def check(path: pathlib.Path) -> list[str]:
                 "Protected dirs cannot import src.llm/. The LLM edge is only for "
                 "src/execute/ and the integration boundary -- pass results in as plain values."
             )
+    # eval/frozen/ is immutable after the Day-1 freeze (invariant 4), so a
+    # money finding inside it cannot be acted on -- it would only make
+    # `--all` permanently red. Its one hit is English prose in a docstring,
+    # not code.
+    if any(d in rel for d in MONEY_DIRS) and "eval/frozen/" not in rel:
         m = FLOAT_MONEY.search(text)
         if m:
             problems.append(
@@ -144,7 +165,8 @@ def check(path: pathlib.Path) -> list[str]:
         if m:
             problems.append(
                 f"division on a money value: '{m.group(0).strip()}' (invariant 2). "
-                "Use // with an explicit rounding decision, documented."
+                "Use // with an explicit rounding decision, or src.core.money "
+                "for display -- nothing else formats currency."
             )
 
     if (

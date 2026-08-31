@@ -31,12 +31,31 @@ Three things here are deliberate and easy to get wrong:
    every cell so report.py can print the coverage claim only where the real
    gate actually ran.
 
-3. **Error costs are exact per-mandate counterfactuals, not estimates.**
-   When the engine stops early we deepcopy the simulator at that exact
-   moment -- RNG state included -- and keep grinding on the copy. That
-   answers "would this mandate have paid if we had not stopped?" from the
-   same random draws the real run would have seen, rather than from a
-   re-seeded rerun that answers a different question.
+3. **Error costs are per-mandate counterfactuals under common random
+   numbers -- NOT the exact realisation.** When the engine stops early we
+   deepcopy the simulator at that moment and keep grinding on the copy. An
+   earlier version of this docstring claimed the copy replays "the same
+   random draws the real run would have seen"; that is false and worth
+   stating plainly, because one `np.random.Generator` serves the whole
+   batch, so the draws the counterfactual consumes are the ones the real
+   run gives to LATER mandates. There is no "the draws this mandate would
+   have seen" in a shared-stream simulator. As variance reduction this is
+   sound and better than re-seeding; as an exactness claim it was wrong.
+
+   Two further biases, disclosed rather than fixed (fixing them means
+   changing the frozen simulator, which is not permitted):
+   * Coupled arm: households are four consecutive mandate indices and the
+     batch is iterated in index order, so a deepcopy taken on the first
+     mandate of a household captures the shared balance BEFORE its
+     siblings have drawn on it. `missed_recovery` is therefore biased by
+     position-within-household in exactly the arm built to model
+     contention.
+   * The counterfactual grinds on consecutive days from where we stopped,
+     which always lands inside the days-1-5 salary window and so always
+     collects `salary_window_bonus_logit` -- a bonus under baseline, a
+     penalty under `delayed_salary`. It is close to the most favourable
+     counterfactual available, which makes `missed_recovery` an upper
+     bound on what we gave up, not a point estimate.
 """
 from __future__ import annotations
 
@@ -104,6 +123,10 @@ class CellResult:
     gate_kind: str
 
     n_mandates: int = 0
+    # Total value at stake in this cell -- the denominator a recovery
+    # PERCENTAGE needs. Without it the report can only quote absolute paise,
+    # and "recovered_pct" in reports/results.json was rendering as "?".
+    billable_paise: int = 0
     # the three bars
     recovered_paise: int = 0
     attempts_spent: int = 0
@@ -120,21 +143,69 @@ class CellResult:
     n_reauth: int = 0
     n_stop: int = 0
     n_above_afa: int = 0
+    # Post-terminal re-solves that returned ATTEMPT -- i.e. the allocator
+    # wanting to retry an instrument the issuer just confirmed dead. Counted
+    # because it was previously falling through unrecorded.
+    n_attempt_after_terminal: int = 0
     # the two error costs (protocol.md: reported alongside, never folded in)
     missed_recovery_count: int = 0
     missed_recovery_paise: int = 0
     false_offramp_count: int = 0
     false_offramp_paise: int = 0
+    # issuer_outage's own pre-registered falsification criterion: REAUTH
+    # issued on a mandate whose true cause is NOT CANT_PAY_EVER.
+    false_reauth_count: int = 0
+    false_reauth_paise: int = 0
     # gate evidence, engine only
     coverage_marginal: float | None = None
     coverage_n: int = 0
     singleton_wont_pay_rate: float | None = None
+    singleton_rate: float | None = None
     mean_set_size: float | None = None
+    coverage_per_class: dict[str, float] = field(default_factory=dict)
     violations: list[str] = field(default_factory=list)
     seconds: float = 0.0
 
 
 # --- the engine policy -------------------------------------------------------
+
+
+def _bind(gate, key: str):
+    """Bind a per-decision smoothing key if the gate takes one. FullSetGate
+    is keyless by construction (it ignores the belief entirely), so this is
+    a no-op there and the driver stays gate-agnostic."""
+    bind = getattr(gate, "bind", None)
+    return bind(key) if bind is not None else gate
+
+
+class _RecordingGate:
+    """Delegates to the real gate and records every query.
+
+    Coverage was previously measured by replaying only the 200 slot-1
+    beliefs. The gate is actually consulted ~4,900 times per cell -- the
+    allocator re-solves after every attempt with an updated belief -- and
+    the unmeasured queries are exactly the concentrated post-update ones
+    where the gate emits singletons and where a conformal error becomes a
+    wrong ACTION rather than an abstention. Replaying slot 1 also ignored
+    `arm` and `profile` entirely, so six distinct numbers were being printed
+    as thirty-two. Recording what the gate was actually asked fixes both.
+    (stats-reviewer, 2026-08-31.)
+    """
+
+    def __init__(self, inner, mandate_id: str | None = None) -> None:
+        self._inner = inner
+        self._mandate_id = mandate_id
+        self.queries: list[tuple[str, frozenset]] = []
+
+    def bind(self, key: str) -> "_RecordingGate":
+        g = _RecordingGate(_bind(self._inner, key), key.split(":")[0])
+        g.queries = self.queries          # one shared log per cell
+        return g
+
+    def pred_set(self, b: Belief) -> frozenset[Cause]:
+        s = self._inner.pred_set(b)
+        self.queries.append((self._mandate_id or "", s))
+        return s
 
 
 def _initial_context(m, profile: Profile, costs: PolicyCosts) -> AllocationContext:
@@ -199,8 +270,12 @@ def _run_engine_mandate(m, sim: Simulator, profile: Profile, hazard,
     last_day = 1
 
     while ctx.attempts_used < MAX_ATTEMPTS:
+        # Bind the conformal gate to THIS decision point. The smoothing key
+        # must be a per-row id, never a function of the belief -- see
+        # ConformalCauseGate's docstring for the bug that motivated this.
+        g = _bind(gate, f"{m.mandate_id}:{m.cycle_id}:s{ctx.attempts_used + 1}")
         try:
-            plan = solve(b, ctx, hazard=hazard, costs=costs, gate=gate)
+            plan = solve(b, ctx, hazard=hazard, costs=costs, gate=g)
         except AllocatorError as exc:
             cell.violations.append(f"{m.mandate_id}: AllocatorError: {exc}")
             stopped_action = Action.STOP
@@ -229,8 +304,9 @@ def _run_engine_mandate(m, sim: Simulator, profile: Profile, hazard,
             # the right next action (CLAUDE.md's own cause->action table).
             if dc is not None:
                 b = belief_mod.update(b, dc, source_version=PROXY_SOURCE_VERSION)
+                gf = _bind(gate, f"{m.mandate_id}:{m.cycle_id}:final")
                 try:
-                    final = solve(b, ctx, hazard=hazard, costs=costs, gate=gate)
+                    final = solve(b, ctx, hazard=hazard, costs=costs, gate=gf)
                     stopped_action = final.chosen_action
                 except AllocatorError as exc:
                     cell.violations.append(f"{m.mandate_id}: final AllocatorError: {exc}")
@@ -243,8 +319,25 @@ def _run_engine_mandate(m, sim: Simulator, profile: Profile, hazard,
         cell.n_offer += 1
     elif stopped_action == Action.REAUTH:
         cell.n_reauth += 1
+        # A pre-registered falsification criterion for issuer_outage: does
+        # the engine over-issue REAUTH on instruments that are in fact
+        # alive? Ground truth, read to SCORE and never to decide -- the same
+        # privileged read eval/gate_criteria.py already makes.
+        if m.initial_cause != Cause.CANT_PAY_EVER:
+            cell.false_reauth_count += 1
+            cell.false_reauth_paise += m.amount_paise
     elif stopped_action == Action.STOP:
         cell.n_stop += 1
+    elif stopped_action == Action.ATTEMPT:
+        # The post-terminal re-solve asked "now what?" and the allocator said
+        # ATTEMPT -- on a mandate whose instrument the issuer just confirmed
+        # DEAD, or which just OPTED_OUT. The first version of this function
+        # counted only OFFER/REAUTH/STOP, so this case fell through every
+        # branch and was silently discarded; payments-domain found it by
+        # re-running the same solve path and getting 16 ATTEMPTs and 0
+        # REAUTHs on 19 observed-DEAD mandates. Counting it is what makes
+        # that visible in the report instead of invisible in the code.
+        cell.n_attempt_after_terminal += 1
 
     # -- error costs, by exact counterfactual --------------------------------
     resolved = bool(attempts) and attempts[-1].outcome != Outcome.STILL_PENDING
@@ -338,40 +431,45 @@ def fit_gate(base_cfg: dict, *, alpha: float = 0.05):
     )
 
 
-def _measure_coverage(gate, sim: Simulator, cfg: dict, seed: int, cell: CellResult) -> None:
-    """Empirical coverage of the live gate on THIS cell's batch.
+def _score_recorded_queries(recorder: "_RecordingGate", truth: dict[str, Cause],
+                            cell: CellResult) -> None:
+    """Empirical behaviour of the live gate over the queries it ACTUALLY
+    received in this cell -- every (mandate, slot) decision point, not just
+    slot 1.
 
-    Uses SimMandate.initial_cause, which is privileged ground truth the
-    policy itself must never read (simulator.py's own warning). It is read
-    here for the same reason eval/gate_criteria.py reads it: to score, not to
-    decide. The belief scored is the one the gate was actually asked about --
-    the post-slot-1 belief -- reconstructed from the same RNG stream the run
-    used, so this measures the deployed gate rather than a fresh one.
+    Uses SimMandate.initial_cause, privileged ground truth the policy itself
+    must never read (simulator.py's own warning). Read here to SCORE, not to
+    decide -- the same read eval/gate_criteria.py already makes.
+
+    Per-class coverage is reported alongside the marginal because Mondrian
+    conformal's entire purpose is class-conditional coverage, and a marginal
+    number can sit at target while one class is badly under-covered.
     """
-    if not isinstance(gate, ConformalCauseGate):
+    qs = recorder.queries
+    cell.coverage_n = len(qs)
+    if not qs:
         return
-    rng = random.Random(seed + _SLOT1_OFFSET)
-    covered = singleton_wp = 0
-    sizes = []
-    for m in sim.mandates:
-        b = initial_belief(m.initial_cause, cfg, rng)
-        s = gate.pred_set(b)
-        sizes.append(len(s))
-        if m.initial_cause in s:
-            covered += 1
-        if s == frozenset({Cause.WONT_PAY}):
-            singleton_wp += 1
-    n = len(sizes)
-    cell.coverage_n = n
-    cell.coverage_marginal = covered / n if n else None
-    cell.singleton_wont_pay_rate = singleton_wp / n if n else None
-    cell.mean_set_size = sum(sizes) / n if n else None
+    sizes = [len(s) for _, s in qs]
+    covered = sum(1 for mid, s in qs if truth.get(mid) in s)
+    cell.coverage_marginal = covered / len(qs)
+    cell.mean_set_size = sum(sizes) / len(qs)
+    cell.singleton_wont_pay_rate = sum(
+        1 for _, s in qs if s == frozenset({Cause.WONT_PAY})
+    ) / len(qs)
+    cell.singleton_rate = sum(1 for s in sizes if s == 1) / len(qs)
+    per_class: dict[str, float] = {}
+    for c in CAUSE_ORDER:
+        rows = [(mid, s) for mid, s in qs if truth.get(mid) == c]
+        if rows:
+            per_class[c.value] = sum(1 for _, s in rows if c in s) / len(rows)
+    cell.coverage_per_class = per_class
 
 
 # --- cells -------------------------------------------------------------------
 
 
-def _fill_bars(cell: CellResult, batch) -> None:
+def _fill_bars(cell: CellResult, batch, mandates=()) -> None:
+    cell.billable_paise = sum(m.amount_paise for m in mandates)
     cell.n_mandates = batch.n_mandates
     cell.recovered_paise = batch.total_recovered_paise
     cell.attempts_spent = batch.total_attempts_spent
@@ -392,7 +490,7 @@ def run_ladder_cell(regime: str, arm: str, profile: Profile, cfg: dict,
                       policy="ladder", seed=seed, gate_kind="n/a")
     sim = Simulator(arm, seed=seed, config=cfg)
     batch = baseline_ladder.run(sim, profile)
-    _fill_bars(cell, batch)
+    _fill_bars(cell, batch, sim.mandates)
     cell.n_attempt = batch.total_attempts_spent
     cell.n_above_afa = sum(
         1 for m in sim.mandates if m.amount_paise > afa_free_limit_paise(m.category)
@@ -408,17 +506,62 @@ def run_engine_cell(regime: str, arm: str, profile: Profile, cfg: dict, seed: in
                       policy="engine", seed=seed, gate_kind=gate_kind)
     sim = Simulator(arm, seed=seed, config=cfg)
     slot1_rng = random.Random(seed + _SLOT1_OFFSET)
+    recorder = _RecordingGate(gate)
 
     results = []
     for m in sim.mandates:
         if m.amount_paise > afa_free_limit_paise(m.category):
             cell.n_above_afa += 1
         b0 = initial_belief(m.initial_cause, cfg, slot1_rng)
-        attempts = _run_engine_mandate(m, sim, profile, hazard, costs, gate, b0, cell)
+        attempts = _run_engine_mandate(m, sim, profile, hazard, costs, recorder, b0, cell)
         results.append(_result_for(m, attempts))
 
-    _fill_bars(cell, aggregate(results, arm=arm, profile=profile.value))
-    _measure_coverage(gate, Simulator(arm, seed=seed, config=cfg), cfg, seed, cell)
+    _fill_bars(cell, aggregate(results, arm=arm, profile=profile.value), sim.mandates)
+    if gate_kind == "conformal":
+        _score_recorded_queries(
+            recorder, {m.mandate_id: m.initial_cause for m in sim.mandates}, cell
+        )
+    cell.seconds = time.perf_counter() - t0
+    return cell
+
+
+def run_null_cell(regime: str, arm: str, profile: Profile, cfg: dict, seed: int,
+                  policy: str) -> CellResult:
+    """Two cause-blind, model-free reference policies. Neither is a candidate
+    for anything; both exist to make the engine's headline falsifiable.
+
+    `null`     -- never attempt. Spends nothing, recovers nothing, and
+                  PRESERVES EVERY MANDATE, because DEAD and OPTED_OUT are
+                  reachable only through attempt(). It is the upper bound of
+                  the mandates-preserved bar and it needs no model at all.
+    `one_shot` -- exactly one attempt per mandate, on day 2, no belief, no
+                  hazard, no gate.
+
+    B5 already measured that a do-nothing policy clears mandates-preserved on
+    all three arms with no model (gates.md, the B5 note). B13's first draft
+    reported "the engine preserves more in 16 of 16 cells" without carrying
+    that column forward, which made the headline unfalsifiable: every metric
+    here is monotonically decreasing in attempt count by construction, so
+    "preserves more" follows from "attempts less" and says nothing about
+    knowing WHY a payment failed. payments-domain measured one_shot beating
+    the engine on that bar in 14 of 16 cells. Printing both columns is what
+    stops the report overstating the system.
+    """
+    t0 = time.perf_counter()
+    cell = CellResult(regime=regime, arm=arm, profile=profile.value,
+                      policy=policy, seed=seed, gate_kind="n/a")
+    sim = Simulator(arm, seed=seed, config=cfg)
+    results = []
+    for m in sim.mandates:
+        if m.amount_paise > afa_free_limit_paise(m.category):
+            cell.n_above_afa += 1
+        if policy == "null":
+            results.append(_result_for(m, []))
+            continue
+        r = sim.attempt(m.mandate_id, slot=2, on_day=2)
+        cell.n_attempt += 1
+        results.append(_result_for(m, [r]))
+    _fill_bars(cell, aggregate(results, arm=arm, profile=profile.value), sim.mandates)
     cell.seconds = time.perf_counter() - t0
     return cell
 
@@ -452,14 +595,16 @@ def run_all(*, regime_names: Sequence[str], arms: Sequence[str],
                 cells.append(run_ladder_cell(regime, arm, profile, cfg, seed))
                 cells.append(run_engine_cell(regime, arm, profile, cfg, seed,
                                              hazard, costs, gate, gate_kind))
+                cells.append(run_null_cell(regime, arm, profile, cfg, seed, "null"))
+                cells.append(run_null_cell(regime, arm, profile, cfg, seed, "one_shot"))
                 if verbose:
-                    lad, eng = cells[-2], cells[-1]
+                    lad, eng, nul, one = cells[-4], cells[-3], cells[-2], cells[-1]
                     print(
                         f"  {regime:16s} {arm:13s} {profile.value:11s} "
-                        f"ladder[rec={lad.recovered_paise:>10d} att={lad.attempts_spent:>4d} "
-                        f"pres={lad.mandates_preserved:>3d}]  "
-                        f"engine[rec={eng.recovered_paise:>10d} att={eng.attempts_spent:>4d} "
-                        f"pres={eng.mandates_preserved:>3d}]",
+                        f"ladder[{lad.recovered_paise:>9d}/{lad.attempts_spent:>3d}/{lad.mandates_preserved:>3d}] "
+                        f"engine[{eng.recovered_paise:>9d}/{eng.attempts_spent:>3d}/{eng.mandates_preserved:>3d}] "
+                        f"one_shot[{one.recovered_paise:>9d}/{one.attempts_spent:>3d}/{one.mandates_preserved:>3d}] "
+                        f"null[pres={nul.mandates_preserved:>3d}]   (rec/att/pres)",
                         file=sys.stderr,
                     )
 

@@ -279,20 +279,68 @@ def _report(
     print("=" * 70)
 
 
-def check_freshness() -> bool:
-    """Advisory, no live calls: does a cache file exist for the CURRENT
-    NORMALIZER_VERSION / INTENT_VERSION? If not, the prompts changed (or
-    this is a fresh clone) since the golden set was last actually run
-    against the live models, and `.\\run.ps1 golden` should be run before
-    shipping. Never fatal -- see main()'s --check-freshness handling and
-    the module docstring on why this is not in the Stop hook's blocking
-    path (payments-domain review, 2026-08-31)."""
+def _cache_is_complete(path: pathlib.Path, rows: list[dict], key: str) -> bool:
+    """Is this cache file a COMPLETE answer set for `rows`, not merely
+    present?
+
+    Existence was the original test, and it is not enough. `_persisting()`
+    flushes after every live call -- deliberately, so an interrupted run
+    resumes instead of re-billing -- which means a run that dies partway
+    (a 429 on the free-tier daily cap is the way this actually happens)
+    leaves a cache file holding a handful of answers. An existence check
+    then reports the golden set as verified when 1 row of 30 was ever
+    scored. Found 2026-08-31 during the B13 end-of-project pass, by a
+    crashed run making this function start lying.
+
+    Compares against the golden set's own rows rather than a stored count,
+    so adding a row to declines.jsonl / intent.jsonl correctly marks the
+    cache incomplete.
+    """
+    if not path.exists():
+        return False
+    cache = _load_cache(path)
+    return all(row[key] in cache for row in rows)
+
+
+def freshness_report() -> tuple[bool, str]:
+    """Advisory, no live calls. Returns (ok, human-readable detail).
+
+    Two ways to be stale: the prompt changed (so the version-namespaced
+    cache file does not exist at all), or a previous run did not finish (so
+    it exists but is partial). Both mean the golden set has not actually
+    been scored against the live models for the prompts currently in the
+    tree, and `.\\run.ps1 golden` should be run before shipping. Never fatal
+    -- see main()'s --check-freshness handling and the module docstring on
+    why this is not in the Stop hook's blocking path (payments-domain
+    review, 2026-08-31).
+    """
     from src.llm.intent import INTENT_VERSION
     from src.llm.normalizer import NORMALIZER_VERSION
 
-    decline_fresh = (CACHE_DIR / f"declines__{NORMALIZER_VERSION}.json").exists()
-    intent_fresh = (CACHE_DIR / f"intent__{INTENT_VERSION}.json").exists()
-    return decline_fresh and intent_fresh
+    decline_rows = _load_jsonl(DECLINES_PATH)
+    intent_rows = _load_jsonl(INTENT_PATH)
+    decline_path = CACHE_DIR / f"declines__{NORMALIZER_VERSION}.json"
+    intent_path = CACHE_DIR / f"intent__{INTENT_VERSION}.json"
+
+    parts, ok = [], True
+    for label, path, rows, key in (
+        ("declines", decline_path, decline_rows, "raw"),
+        ("intent", intent_path, intent_rows, "text"),
+    ):
+        if not path.exists():
+            parts.append(f"{label}: NO CACHE for the current prompt version")
+            ok = False
+        elif not _cache_is_complete(path, rows, key):
+            n = len(_load_cache(path))
+            parts.append(f"{label}: PARTIAL -- {n} of {len(rows)} rows cached")
+            ok = False
+        else:
+            parts.append(f"{label}: {len(rows)}/{len(rows)} cached")
+    return ok, "; ".join(parts)
+
+
+def check_freshness() -> bool:
+    return freshness_report()[0]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -308,13 +356,15 @@ def main(argv: list[str] | None = None) -> int:
         # calls, so it's cheap enough for the Stop hook / `ci` to call on
         # every session end without adding the multi-minute cost caching
         # was built to avoid. Always exits 0: warns, never blocks.
-        if check_freshness():
-            print("golden-set cache is current for the active prompts.")
+        ok, detail = freshness_report()
+        if ok:
+            print(f"golden-set cache is current for the active prompts ({detail}).")
         else:
             print(
-                "WARNING: golden-set cache is missing or stale for the current "
-                "normalizer/intent prompt version -- run `.\\run.ps1 golden` "
-                "before shipping. (Advisory only, not blocking session end.)",
+                f"WARNING: golden-set cache is missing, stale, or INCOMPLETE for "
+                f"the current normalizer/intent prompt version -- {detail}. Run "
+                f"`.\\run.ps1 golden` before shipping. (Advisory only, not "
+                f"blocking session end.)",
                 file=sys.stderr,
             )
         return 0
