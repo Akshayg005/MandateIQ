@@ -24,3 +24,32 @@ reports/*.log
 reports/.bench_cache/
 .env.bak*
 .env.*.bak
+
+# Written by `.\run.ps1 up`, read by `down`, to close the windows it opened.
+.run-panes.json
+
+# Third-party agent skills installed with `npx skills add` (taste-skill,
+# ui-ux-pro-max). ~11MB of vendored prompts that are tooling, not this
+# project's code. skills-lock.json is committed instead, so the set is
+# reproducible without carrying the payload in a payments repo.
+.agents/
+.claude/skills/banner-design/
+.claude/skills/brand/
+.claude/skills/brandkit/
+.claude/skills/design/
+.claude/skills/design-system/
+.claude/skills/design-taste-frontend/
+.claude/skills/design-taste-frontend-v1/
+.claude/skills/full-output-enforcement/
+.claude/skills/gpt-taste/
+.claude/skills/high-end-visual-design/
+.claude/skills/image-to-code/
+.claude/skills/imagegen-frontend-mobile/
+.claude/skills/imagegen-frontend-web/
+.claude/skills/industrial-brutalist-ui/
+.claude/skills/minimalist-ui/
+.claude/skills/redesign-existing-projects/
+.claude/skills/slides/
+.claude/skills/stitch-design-taste/
+.claude/skills/ui-styling/
+.claude/skills/ui-ux-pro-max/

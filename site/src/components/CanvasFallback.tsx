@@ -62,7 +62,7 @@ export function CanvasFallback({ narrative: n }: { narrative: Narrative }) {
               {n.engineRecoveredPct} vs {n.ladderRecoveredPct}
             </span>
             <span className="fallback-stat-label">
-              recovered — the engine recovers less
+              recovered. The engine recovers less
             </span>
           </div>
           <div className="fallback-stat">

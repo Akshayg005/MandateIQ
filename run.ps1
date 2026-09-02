@@ -51,6 +51,63 @@ function Invoke-Step([string]$Label, [scriptblock]$Block) {
     }
 }
 
+# --- helpers for `up` / `down` ---------------------------------------------
+# Each long-running server gets its OWN console window rather than a
+# background job. A judge watching a demo needs to see uvicorn's reload log
+# and vite's port line, and needs to be able to close one thing without
+# killing the rest; a PowerShell job hides both.
+#
+# Returns the wrapper process so `up` can record its id. Window TITLES are not
+# a usable handle here: a process started from another session reports an
+# empty MainWindowTitle, so matching on it finds nothing and silently does
+# not clean up. The pid file is deterministic.
+function Start-Pane([string]$Title, [string]$WorkDir, [string]$Command) {
+    $inner = "`$host.UI.RawUI.WindowTitle = '$Title'; Set-Location '$WorkDir'; $Command"
+    return Start-Process -FilePath "powershell.exe" -ArgumentList @(
+        "-NoExit", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", $inner
+    ) -WindowStyle Normal -PassThru
+}
+
+# Where `up` records the console windows it opened, so `down` can close them.
+$PaneFile = Join-Path $PSScriptRoot ".run-panes.json"
+
+# Poll rather than sleep a fixed amount: a cold `npm run dev` on this repo is
+# ~1s and a cold uvicorn ~4s, but a first run that has to compile is far
+# slower, and a fixed sleep either wastes time or opens the browser at a
+# connection-refused page.
+function Wait-Url([string]$Url, [int]$TimeoutSec = 60) {
+    $deadline = (Get-Date).AddSeconds($TimeoutSec)
+    while ((Get-Date) -lt $deadline) {
+        try {
+            Invoke-WebRequest -Uri $Url -UseBasicParsing -TimeoutSec 2 | Out-Null
+            return $true
+        } catch {
+            # A server that is up but returns 4xx/5xx still counts as
+            # listening -- only a connection failure means "not yet".
+            if ($_.Exception.Response) { return $true }
+            Start-Sleep -Milliseconds 400
+        }
+    }
+    return $false
+}
+
+function Test-Command([string]$Name) {
+    $null -ne (Get-Command $Name -ErrorAction SilentlyContinue)
+}
+
+# npm install is slow and almost never needed; only run it when the folder is
+# genuinely absent, so a normal `up` is a couple of seconds.
+function Confirm-NodeModules([string]$Dir) {
+    if (Test-Path (Join-Path $Dir "node_modules")) { return $true }
+    Write-Host "   installing npm dependencies in $Dir (first run only)..." -ForegroundColor Yellow
+    Push-Location $Dir
+    try {
+        if (Test-Path "package-lock.json") { npm ci --no-audit --no-fund }
+        else { npm install --no-audit --no-fund }
+    } finally { Pop-Location }
+    return (Test-Path (Join-Path $Dir "node_modules"))
+}
+
 switch ($Task.ToLower()) {
 
     "help" {
@@ -76,6 +133,8 @@ Mandate Recovery Engine -- tasks
 
   .\run.ps1 freeze            BLOCK B2 ONLY -- commit and record the eval hash
   .\run.ps1 checkpoint -Day B4  end of session -- regenerate STATE.md
+  .\run.ps1 up                START EVERYTHING -- db, api, dashboard, site
+  .\run.ps1 down              stop everything `up` started
   .\run.ps1 state             print the session-start orientation block
   .\run.ps1 verify            full pre-flight: guards, keys, docker, hooks
   .\run.ps1 serve             run the webhook ingest API (uvicorn, port 8000)
@@ -322,6 +381,225 @@ print(c.order.create({'amount':100,'currency':'INR'})['id'])
             # PLAN.md's storyboard placeholders do not.
             Invoke-Step "render" { npm run render-check }
         } finally { Pop-Location }
+    }
+
+    # ------------------------------------------------------------------
+    # Start the whole project: Postgres, the ingest API, the reviewer
+    # dashboard and the landing page, each in its own window.
+    #
+    # Degrades on purpose rather than refusing to start. Docker down means no
+    # API, but both front-ends read STAGED JSON and still come up -- that is
+    # the state a reviewer clones into, and the demo they most need to see is
+    # the one that does not require a database. Anything skipped is reported
+    # at the end with the reason, so nothing fails silently.
+    # ------------------------------------------------------------------
+    "up" {
+        Write-Host "`n  MANDATE RECOVERY ENGINE -- starting everything" -ForegroundColor Cyan
+        Write-Host "  ---------------------------------------------`n"
+
+        $skipped = @()
+        $started = @()
+        $panes = @()
+
+        # 1. Postgres -----------------------------------------------------
+        $pgReady = $false
+        Write-Host "== postgres" -ForegroundColor Cyan
+        if (-not (Test-Command "docker")) {
+            Write-Host "   SKIP -- docker not on PATH" -ForegroundColor Yellow
+            $skipped += "postgres (no docker)"
+        } else {
+            docker start mrdb 2>&1 | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "   SKIP -- container 'mrdb' would not start (is Docker Desktop running?)" -ForegroundColor Yellow
+                $skipped += "postgres (container did not start)"
+            } else {
+                for ($i = 0; $i -lt 30; $i++) {
+                    docker exec mrdb pg_isready 2>&1 | Out-Null
+                    if ($LASTEXITCODE -eq 0) { $pgReady = $true; break }
+                    Start-Sleep -Milliseconds 500
+                }
+                if ($pgReady) {
+                    Write-Host "   ready on localhost:15432" -ForegroundColor Green
+                    $started += "postgres  localhost:15432"
+                } else {
+                    Write-Host "   SKIP -- container started but never accepted connections" -ForegroundColor Yellow
+                    $skipped += "postgres (never became ready)"
+                }
+            }
+        }
+
+        # 2. Report artifacts --------------------------------------------
+        # Both front-ends render reports/ and recompute nothing, so if the
+        # eval has never been run there is nothing to show. Say so precisely;
+        # the page's own error state says the same thing.
+        Write-Host "`n== report artifacts" -ForegroundColor Cyan
+        if (-not (Test-Path "reports\results.json")) {
+            Write-Host "   MISSING reports\results.json -- run .\run.ps1 eval first." -ForegroundColor Yellow
+            Write-Host "   The UIs will start and show their 'could not load results' state." -ForegroundColor Yellow
+            $skipped += "staged data (no reports\results.json)"
+        } else {
+            & $Py scripts\dashboard_data.py      | Out-Null
+            & $Py scripts\dashboard_data.py site | Out-Null
+            Write-Host "   staged into dashboard\public\data and site\public\data" -ForegroundColor Green
+        }
+
+        # 3. Node dependencies -------------------------------------------
+        Write-Host "`n== node dependencies" -ForegroundColor Cyan
+        $haveNode = Test-Command "npm"
+        if (-not $haveNode) {
+            Write-Host "   SKIP -- npm not on PATH; no front-end will start" -ForegroundColor Yellow
+            $skipped += "dashboard and site (no npm)"
+        } else {
+            $dashOk = Confirm-NodeModules (Join-Path $PSScriptRoot "dashboard")
+            $siteOk = Confirm-NodeModules (Join-Path $PSScriptRoot "site")
+            Write-Host "   ok" -ForegroundColor Green
+        }
+
+        # 4. The servers --------------------------------------------------
+        Write-Host "`n== launching" -ForegroundColor Cyan
+
+        if ($pgReady) {
+            # No --reload here, unlike `serve`. The reloader is a supervisor
+            # whose multiprocessing worker INHERITS the listening socket, so
+            # when the supervisor dies the port stays served by an orphan that
+            # Get-NetTCPConnection still attributes to the dead parent -- which
+            # made `down` unable to free port 8000. Nobody is editing source
+            # during a demo, so the reloader buys nothing and costs that.
+            $panes += (Start-Pane "MandateIQ api" $PSScriptRoot "& '$Py' -m uvicorn src.ingest.app:app --port 8000").Id
+            Write-Host "   api        http://localhost:8000/docs" -ForegroundColor Green
+            $started += "api       http://localhost:8000/docs"
+        } else {
+            Write-Host "   api        SKIPPED -- needs postgres" -ForegroundColor Yellow
+            $skipped += "api (needs postgres)"
+        }
+
+        if ($haveNode -and $dashOk) {
+            $panes += (Start-Pane "MandateIQ dashboard" (Join-Path $PSScriptRoot "dashboard") "npm run dev").Id
+            Write-Host "   dashboard  http://localhost:4317" -ForegroundColor Green
+            $started += "dashboard http://localhost:4317"
+        }
+        if ($haveNode -and $siteOk) {
+            $panes += (Start-Pane "MandateIQ site" (Join-Path $PSScriptRoot "site") "npm run dev").Id
+            Write-Host "   site       http://localhost:4318" -ForegroundColor Green
+            $started += "site      http://localhost:4318"
+        }
+        if ($panes.Count) { $panes | ConvertTo-Json -Compress | Set-Content $PaneFile -Encoding UTF8 }
+
+        # 5. Wait, then open the browser ----------------------------------
+        Write-Host "`n== waiting for servers" -ForegroundColor Cyan
+        $opened = @()
+        if ($haveNode -and $siteOk) {
+            if (Wait-Url "http://localhost:4318" 90) {
+                Write-Host "   site is up" -ForegroundColor Green
+                $opened += "http://localhost:4318"
+            } else { Write-Host "   site did not answer in 90s -- check its window" -ForegroundColor Yellow }
+        }
+        if ($haveNode -and $dashOk) {
+            if (Wait-Url "http://localhost:4317" 90) {
+                Write-Host "   dashboard is up" -ForegroundColor Green
+                $opened += "http://localhost:4317"
+            } else { Write-Host "   dashboard did not answer in 90s -- check its window" -ForegroundColor Yellow }
+        }
+        foreach ($u in $opened) { Start-Process $u | Out-Null }
+
+        # 6. Summary ------------------------------------------------------
+        Write-Host "`n  ---------------------------------------------" -ForegroundColor Cyan
+        Write-Host "  RUNNING" -ForegroundColor Green
+        foreach ($s in $started) { Write-Host "    $s" }
+        if ($skipped.Count) {
+            Write-Host "`n  NOT RUNNING" -ForegroundColor Yellow
+            foreach ($s in $skipped) { Write-Host "    $s" -ForegroundColor Yellow }
+        }
+        Write-Host "`n  Each server has its own window. Close them, or run" -ForegroundColor DarkGray
+        Write-Host "  .\run.ps1 down  to stop everything at once.`n" -ForegroundColor DarkGray
+    }
+
+    # Stops what `up` started. Deliberately targets THIS project's ports
+    # rather than killing every node/python on the machine.
+    "down" {
+        Write-Host "`n== stopping servers" -ForegroundColor Cyan
+        foreach ($port in 8000, 4317, 4318) {
+            # Loop, and kill the whole tree.
+            #
+            # `uvicorn --reload` is a supervisor whose child worker inherits
+            # the listening socket, so Stop-Process on the pid the socket
+            # reports leaves the worker alive and the port still served --
+            # measured, not theorised: `down` said "stopped pid 14596" and
+            # http://localhost:8000/docs kept answering. taskkill /T takes the
+            # children with it, and re-querying catches whatever survives a
+            # pass.
+            $killedAny = $false
+            for ($pass = 0; $pass -lt 5; $pass++) {
+                $conns = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
+                if (-not $conns) { break }
+                foreach ($pid_ in ($conns.OwningProcess | Sort-Object -Unique)) {
+                    if (Get-Process -Id $pid_ -ErrorAction SilentlyContinue) {
+                        taskkill /PID $pid_ /T /F 2>&1 | Out-Null
+                        Write-Host "   :$port  stopped pid $pid_ (and children)" -ForegroundColor Green
+                        $killedAny = $true
+                        continue
+                    }
+                    # The owner is already dead but the port is still served:
+                    # a child inherited the socket and Windows still reports
+                    # the socket against the parent. Kill the orphans by
+                    # parentage -- there is nothing else left to match on.
+                    $orphans = Get-CimInstance Win32_Process -Filter "ParentProcessId=$pid_" -ErrorAction SilentlyContinue
+                    foreach ($o in $orphans) {
+                        taskkill /PID $($o.ProcessId) /T /F 2>&1 | Out-Null
+                        Write-Host "   :$port  stopped orphan pid $($o.ProcessId) (parent $pid_ already gone)" -ForegroundColor Green
+                        $killedAny = $true
+                    }
+                }
+                Start-Sleep -Milliseconds 400
+            }
+            $left = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
+            if ($left) {
+                Write-Host "   :$port  STILL LISTENING -- stop it by hand" -ForegroundColor Red
+            } elseif (-not $killedAny) {
+                Write-Host "   :$port  nothing listening"
+            }
+        }
+        # Killing the listener leaves the -NoExit wrapper window sitting there
+        # empty, so close the windows `up` recorded. Only ids from that file
+        # are touched, and only if they are still powershell -- a pid gets
+        # reused fast on Windows, and a stale file must never take out
+        # whatever happens to hold that number now.
+        Write-Host "`n== closing server windows" -ForegroundColor Cyan
+        if (-not (Test-Path $PaneFile)) {
+            Write-Host "   no record of any (.run-panes.json absent)"
+        } else {
+            # [int[]] on purpose: in Windows PowerShell 5.1 ConvertFrom-Json
+            # emits the whole array as ONE pipeline object, so a bare @(...)
+            # yields a single element holding an Object[] and the loop body
+            # runs once with every id at once.
+            $ids = [int[]](Get-Content $PaneFile -Raw | ConvertFrom-Json)
+            $closed = 0
+            foreach ($paneId in $ids) {
+                $proc = Get-Process -Id $paneId -ErrorAction SilentlyContinue
+                if (-not $proc) { continue }
+                if ($proc.ProcessName -ne "powershell") {
+                    Write-Host "   skipped pid $paneId -- now '$($proc.ProcessName)', not ours" -ForegroundColor Yellow
+                    continue
+                }
+                try {
+                    Stop-Process -Id $paneId -Force -ErrorAction Stop
+                    Write-Host "   closed window pid $paneId" -ForegroundColor Green
+                    $closed++
+                } catch {
+                    Write-Host "   could not close pid $paneId -- $($_.Exception.Message)" -ForegroundColor Yellow
+                }
+            }
+            if ($closed -eq 0) { Write-Host "   none still open" }
+            Remove-Item $PaneFile -ErrorAction SilentlyContinue
+        }
+
+        Write-Host "`n== stopping postgres" -ForegroundColor Cyan
+        if (Test-Command "docker") {
+            docker stop mrdb 2>&1 | Out-Null
+            if ($LASTEXITCODE -eq 0) { Write-Host "   mrdb stopped" -ForegroundColor Green }
+            else { Write-Host "   mrdb was not running" }
+        } else { Write-Host "   docker not on PATH" }
+        Write-Host ""
     }
 
     "coverage" { Invoke-Step "coverage" { & $Py scripts\decline_coverage.py } }

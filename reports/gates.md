@@ -675,12 +675,22 @@ un.ps1 verify passes 5/5 including the postgres check that had
              * counters        -- site/ssr-check.tsx asserts the real figures
                reach the output AND that PLAN.md's placeholders do not;
                verified to fail by reintroducing "14 mandates lost".
-           NOT ticked because of the fourth. Frame pacing measured while
-           scrolling the scene: 320 samples, median 16.7ms (59.9fps), p95
-           16.9ms (59.2fps), one 283ms hitch at scene entry consistent with
-           first-frame shader compilation. That is this machine under
-           headless Chromium, which is not the same claim as "60fps on a mid
-           laptop" -- it needs one run on a real display before it is ticked,
-           and the entry hitch is worth a look. -->
+           The fourth, measured over CDP while scrolling the scene:
+             * before: 320 samples, median 16.7ms (59.9fps), p95 16.9ms,
+               WORST FRAME 283ms at scene entry -- a visible freeze, and
+               exactly what the user reported ("gets stuck when scrolling,
+               then smooth").
+             * after:  358 samples, median 16.7ms (59.9fps), p95 16.9ms,
+               worst frame 33.4ms. One dropped frame instead of a freeze,
+               and 38 more frames delivered in the same 6s window.
+           Three causes, all fixed in Scene.tsx: `phase` state sat in the
+           component rendering <Canvas>, so the first phase change
+           reconciled the whole R3F tree mid-scroll (Canvas now lives in a
+           memoized child); the scroll handler called
+           getBoundingClientRect() per event against a 520vh container
+           (Motion's useScroll replaces it); and shaders compiled on the
+           first visible frame (<Warmup> calls gl.compile at mount).
+           STILL NOT ticked: that is headless Chromium on this machine, not
+           "60fps on a mid laptop". One run on a real display closes it. -->
 
 - [ ] **B16** ship: README has "What this can't do" with ≥4 items; video under 5:00; three takes max

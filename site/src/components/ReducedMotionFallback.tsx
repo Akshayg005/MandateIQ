@@ -63,7 +63,7 @@ export function ReducedMotionFallback({ narrative: n }: { narrative: Narrative }
               The engine: {n.engineLost} of {n.total} not preserved
             </strong>
             <br />
-            {n.preservedDelta} more kept (teal) on {n.engineAttempts} attempts —
+            {n.preservedDelta} more kept (teal) on {n.engineAttempts} attempts,
             and it recovered {n.engineRecoveredPct}, less than the ladder&rsquo;s{' '}
             {n.ladderRecoveredPct}. That is the trade.
           </div>

@@ -54,7 +54,6 @@ const results = renderToString(
     signTestTotal={R.paired_comparisons}
     signTestRecoverMore={R.sign_test.vs_ladder.recovers_more}
     signTestSpendsFewerAttempts={R.sign_test.vs_ladder.spends_fewer_attempts}
-    offersFired={n.offersFired}
     seedCount={n.seedCount}
   />,
 );
@@ -108,9 +107,22 @@ for (const [label, html] of [
   need(html, String(n.ladderAttempts), label);
 }
 
-// The off-ramp disclosure: the page must say OFFER never fired.
-need(results, "untested", "results");
-need(results, String(n.offersFired), "results");
+// --- limitations belong in the repo, not on the page ------------------------
+// The "What this page is not showing you" block was moved to README.md's
+// "What this can't do". This asserts it stays moved: the landing page sells
+// what the engine does, and README is where the build is honest about what it
+// lacks. If a caveat creeps back into the page, this fails.
+for (const [label, html] of [
+  ["counters", counters],
+  ["results", results],
+  ["canvas-fallback", canvasFallback],
+  ["reduced-motion", reducedMotion],
+] as const) {
+  forbid(html, "What this page is not showing you", label);
+  forbid(html, "untested", label);
+  forbid(html, "Buildathon", label);
+  forbid(html, "Track 03", label);
+}
 
 // --- the placeholders must NOT ----------------------------------------------
 // PLAN.md's storyboard numbers, written months before B13 produced a result.

@@ -106,38 +106,6 @@
   gap: 1.75rem;
 }
 
-.hero-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.55rem;
-  padding: 0.4rem 0.95rem;
-  border: 1px solid var(--line);
-  border-radius: 99px;
-  background: rgba(15, 17, 23, 0.7);
-  backdrop-filter: blur(8px);
-  font-family: var(--mono);
-  font-size: var(--step--1);
-  letter-spacing: 0.06em;
-  color: var(--text-dim);
-}
-
-.hero-badge-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--col-teal);
-  box-shadow: 0 0 0 0 rgba(20, 184, 166, 0.7);
-  animation: pulse 2.4s ease-out infinite;
-}
-
-@keyframes pulse {
-  70% {
-    box-shadow: 0 0 0 9px rgba(20, 184, 166, 0);
-  }
-  100% {
-    box-shadow: 0 0 0 0 rgba(20, 184, 166, 0);
-  }
-}
 
 .hero-title {
   font-size: var(--step-4);
@@ -254,40 +222,6 @@
   line-height: 1.6;
 }
 
-.hero-scroll-cue {
-  display: grid;
-  justify-items: center;
-  gap: 0.7rem;
-  margin-top: 1.5rem;
-}
-
-.scroll-text {
-  font-family: var(--mono);
-  font-size: var(--step--1);
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--text-faint);
-}
-
-.scroll-line {
-  width: 1px;
-  height: 54px;
-  background: linear-gradient(180deg, var(--col-teal), transparent);
-  animation: cue 2.2s ease-in-out infinite;
-  transform-origin: top;
-}
-
-@keyframes cue {
-  0%,
-  100% {
-    transform: scaleY(0.4);
-    opacity: 0.4;
-  }
-  50% {
-    transform: scaleY(1);
-    opacity: 1;
-  }
-}
 
 /* ============================ SCENE ===================================== */
 
@@ -723,36 +657,6 @@
 /* --- the honesty note -----------------------------------------------------
    Styled to be read, not skipped. A submission that hides its own negative
    results is worth less than one that states them. */
-.honesty-note {
-  margin-top: 1rem;
-  padding: 1.6rem 1.8rem;
-  border: 1px solid rgba(217, 119, 6, 0.45);
-  border-radius: var(--radius);
-  background: rgba(217, 119, 6, 0.05);
-}
-
-.honesty-note h3 {
-  margin-bottom: 0.9rem;
-  font-size: var(--step-1);
-  color: #fbbf24;
-}
-
-.honesty-note ul {
-  margin: 0;
-  padding-left: 1.1rem;
-  display: grid;
-  gap: 0.8rem;
-}
-
-.honesty-note li {
-  font-size: var(--step--1);
-  line-height: 1.7;
-  color: var(--text-dim);
-}
-
-.honesty-note code {
-  color: var(--col-teal);
-}
 
 /* =========================== FALLBACKS ================================== */
 

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { Reveal } from './Reveal'
 import type { Narrative, ReportData } from '../hooks/useReportData'
 
 /**
@@ -84,6 +85,7 @@ function PairedBar({
   const ladderPct = (ladderValue / max) * 100
 
   return (
+    <Reveal className="bar-chart-reveal">
     <figure className="bar-chart">
       <figcaption className="bar-chart-head">
         <h3>{title}</h3>
@@ -126,6 +128,7 @@ function PairedBar({
         {verdict}
       </p>
     </figure>
+    </Reveal>
   )
 }
 
@@ -142,7 +145,7 @@ export function CountersSection({
 
   return (
     <section id={id} ref={ref} className="counters-section">
-      <div className="section-head">
+      <Reveal className="section-head">
         <span className="section-kicker">The headline metric</span>
         <h2 className="section-title">Three bars, not one</h2>
         <p className="section-subtitle">
@@ -158,7 +161,7 @@ export function CountersSection({
           </strong>
           .
         </p>
-      </div>
+      </Reveal>
 
       {/* Legend: two series, always present, never colour-alone. */}
       <div className="chart-legend">
@@ -202,7 +205,7 @@ export function CountersSection({
           ladderValue={n.ladderAttempts}
           engineLabel={String(n.engineAttempts)}
           ladderLabel={String(n.ladderAttempts)}
-          verdict={`${n.attemptsSaved} fewer attempts — and every attempt carries an opt-out the customer can use to kill the mandate outright.`}
+          verdict={`${n.attemptsSaved} fewer attempts. Every attempt carries an opt-out the customer can use to kill the mandate outright.`}
           engineWins
           active={seen}
         />

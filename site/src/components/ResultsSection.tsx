@@ -15,7 +15,6 @@ interface ResultsSectionProps {
   signTestTotal: number
   signTestRecoverMore: number
   signTestSpendsFewerAttempts: number
-  offersFired: number
   seedCount: number
 }
 
@@ -36,7 +35,6 @@ export function ResultsSection({
   signTestTotal,
   signTestRecoverMore,
   signTestSpendsFewerAttempts,
-  offersFired,
   seedCount,
 }: ResultsSectionProps) {
   return (
@@ -44,7 +42,7 @@ export function ResultsSection({
       <h2 className="section-label">Full Results</h2>
       <p className="section-subtitle">
         All numbers from{' '}
-        <code>reports/results.json</code> — reproducible via{' '}
+        <code>reports/results.json</code>, reproducible via{' '}
         <code>.\run.ps1 eval</code>
       </p>
 
@@ -92,7 +90,7 @@ export function ResultsSection({
                 {oneShotRecovered}{' '}
                 <span className="pct">({oneShotRecoveredPct})</span>
               </td>
-              <td>—</td>
+              <td>n/a</td>
               <td className="col-highlight">{oneShotMandatesPreserved}</td>
             </tr>
           </tbody>
@@ -117,34 +115,9 @@ export function ResultsSection({
         </p>
       </div>
 
-      {/* The same disclosure the reviewer dashboard leads with. The scroll
-          narrative above deliberately does not dramatise the off-ramp, because
-          in every published run it never fired. */}
-      <div className="honesty-note">
-        <h3>What this page is not showing you</h3>
-        <ul>
-          <li>
-            <code>OFFER</code> — the off-ramp, and the reason this system exists
-            — fired <strong>{offersFired} times</strong>. The belief layer pins
-            P(WONT_PAY) at 0.10, so the <code>{'{WONT_PAY}'}</code> singleton the
-            conformal gate requires is unreachable for any alpha, seed or regime.
-            The off-ramp lane is <strong>untested</strong>, not
-            tested-and-negative. The animation above shows the two policies that
-            did run, and no amber &ldquo;customer parks intact&rdquo; stream,
-            because no such event occurred.
-          </li>
-          <li>
-            Every figure here is a mean over {seedCount} seeds of the
-            baseline/nominal cell. Per-mandate detail lives in the reviewer
-            dashboard, which reads the seed-0 batch — the two must not be
-            compared directly.
-          </li>
-          <li>
-            Against <em>one attempt, no model</em> the engine does not win on
-            preservation. That row is in the table above on purpose.
-          </li>
-        </ul>
-      </div>
+      {/* The limitations that used to sit here now live in README.md's
+          "What this can't do". The page shows what the engine does; the
+          repository is where the build is honest about what it lacks. */}
     </section>
   )
 }

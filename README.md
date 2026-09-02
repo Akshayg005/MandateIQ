@@ -63,16 +63,46 @@ Evaluation protocol was frozen before any policy code was written:
 
 ## What this can't do
 
-*(Day 12 — at least four honest items. Start here:)*
-1. The evaluation is synthetic. It measures whether encoding real
-   constraints beats ignoring them, not a lift number that transfers to
-   production traffic.
-2. Exit intent is weakly identified from payment data alone. Without
-   merchant product-usage signals, intent AUC is modest — which is exactly
+The landing page sells the idea. This section is where the build is honest
+about what it does not have. Every claim below is reproducible from
+`reports/`.
+
+1. **The off-ramp never fires.** `OFFER` was chosen **0 times** in every
+   published run. `cause_map` pins P(WONT_PAY) at 0.10 under both symbols
+   the proxy alphabet can emit, so the `{WONT_PAY}` singleton the conformal
+   gate requires is unreachable for any alpha, seed or regime. The off-ramp
+   lane is **untested, not tested-and-negative** - and it is the reason the
+   system exists, so this is the most important line in this file.
+2. **The evaluation is synthetic.** It measures whether encoding real
+   constraints beats ignoring them. It is not a lift number that transfers
+   to production traffic.
+3. **A model-free policy beats the engine on two of three bars.** Against
+   `one attempt, no model`, the engine preserves fewer mandates in 214 of
+   256 paired comparisons and spends more attempts in 226 of 256. Its only
+   edge is money, 146 of 256. More seeds made this finding stronger, not
+   weaker.
+4. **7,380 of 13,354 re-auth requests went to the wrong mandates** - ones
+   whose true cause is not CANT_PAY_EVER. That is the issuer_outage
+   regime's own pre-registered falsification criterion, failing.
+5. **4,032 post-terminal re-solves returned ATTEMPT** on instruments the
+   issuer had just confirmed dead. The belief layer cannot conclude
+   CANT_PAY_EVER from an observed dead instrument.
+6. **There is no timing discrimination.** Every attempt lands on day 2, so
+   the `strict` and `permissive` compliance profiles are provably the same
+   function on this evaluation.
+7. **Exit intent is weakly identified from payment data alone.** Without
+   merchant product-usage signals, intent AUC is modest - which is exactly
    why the system offers rather than acts.
-3. Whether a retry requires its own 24h pre-notification is unresolved in
-   the RBI circular. We ship both interpretations rather than pick one.
-4. *(add yours — the ones you found while building)*
+8. **Whether a retry requires its own 24h pre-notification is unresolved**
+   in the RBI circular. Both interpretations ship; neither is assumed.
+
+### Reading the numbers correctly
+
+`reports/results.json` publishes **means over 8 seeds** (mandates preserved
+142/200 is 141.875 rounded). `reports/mandates.json` is the **seed-0 batch
+only**, which preserves 135. Both are correct and they are not the same
+number. The landing page renders the means; the reviewer dashboard renders
+seed 0. Do not compare a figure from one against a figure from the other.
 
 ## Regulatory basis
 

@@ -20,11 +20,6 @@ export function HeroSection({ id }: HeroSectionProps) {
       </div>
 
       <div className="hero-inner">
-        <div className="hero-badge">
-          <span className="hero-badge-dot" />
-          Razorpay AI Buildathon · Track 03
-        </div>
-
         <h1 className="hero-title">
           <span className="hero-line hero-line--muted">Every retry engine asks</span>
           <span className="hero-line hero-line--strike">
@@ -51,7 +46,7 @@ export function HeroSection({ id }: HeroSectionProps) {
             </header>
             <h3>Transient liquidity gap</h3>
             <p>
-              The money isn&rsquo;t there today. Spend a slot — timed to their
+              The money isn&rsquo;t there today. Spend a slot, timed to their
               replenishment rhythm, not to a fixed ladder.
             </p>
           </article>
@@ -75,16 +70,12 @@ export function HeroSection({ id }: HeroSectionProps) {
             </header>
             <h3>Passive resistance</h3>
             <p>
-              They want out. <strong>Offer</strong> an exit — pause, downgrade,
+              They want out. <strong>Offer</strong> an exit: pause, downgrade,
               cancel. The system never cancels. The customer decides.
             </p>
           </article>
         </div>
 
-        <div className="hero-scroll-cue" aria-hidden="true">
-          <span className="scroll-text">Watch the batch run twice</span>
-          <span className="scroll-line" />
-        </div>
       </div>
     </section>
   )

@@ -5,7 +5,7 @@ export function Footer() {
         <div className="footer-brand">
           <span className="footer-logo">MandateIQ</span>
           <span className="footer-tagline">
-            Mandate Recovery Engine — Razorpay AI Buildathon, Track 03
+            Mandate Recovery Engine
           </span>
         </div>
         <div className="footer-links">

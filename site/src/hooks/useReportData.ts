@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
  * The shape of `reports/results.json`, staged into `public/data/` by
  * `python scripts/dashboard_data.py site`.
  *
- * IMPORTANT — every headline figure here is a MEAN over the seeds listed in
+ * IMPORTANT: every headline figure here is a MEAN over the seeds listed in
  * `seeds` (8 of them), not a single run. `seed` is `seeds[0]` and is a legacy
  * field; do not present it as "the" seed. `reports/mandates.json` is the
  * seed-0 batch and is deliberately NOT staged for this page, because a seed-0

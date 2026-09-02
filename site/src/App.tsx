@@ -1,4 +1,4 @@
-import { Suspense, lazy } from 'react'
+import { Suspense, lazy, useEffect } from 'react'
 import { HeroSection } from './components/HeroSection'
 import { CountersSection } from './components/Counters'
 import { ResultsSection } from './components/ResultsSection'
@@ -13,9 +13,13 @@ import './App.css'
 
 // Lazy-load the three.js bundle -- by far the largest dependency, and the
 // page's argument survives without it (see CanvasFallback).
-const Scene = lazy(() =>
-  import('./components/Scene').then((m) => ({ default: m.Scene })),
-)
+//
+// `loadScene` is hoisted so it can also be called eagerly on mount: the chunk
+// is ~970KB and parsing it is work. Starting that while the reader is still
+// on the hero means it is not competing with the first scrolled frame, which
+// is where the stutter used to be felt.
+const loadScene = () => import('./components/Scene')
+const Scene = lazy(() => loadScene().then((m) => ({ default: m.Scene })))
 
 function LoadingSpinner() {
   return (
@@ -30,6 +34,14 @@ function App() {
   const report = useReportData()
   const prefersReducedMotion = useReducedMotion()
   const webgl = useWebGLSupport()
+
+  // Warm the three.js chunk immediately, before results.json has resolved and
+  // long before the reader reaches the scene. Fire-and-forget: if it fails,
+  // Suspense will surface the same error at render time.
+  useEffect(() => {
+    if (prefersReducedMotion || webgl === 'unavailable') return
+    void loadScene().catch(() => {})
+  }, [prefersReducedMotion, webgl])
 
   // Nothing on this page invents a number, so nothing on this page renders
   // before the report is in hand. The loading and error states are explicit
@@ -50,7 +62,7 @@ function App() {
         <HeroSection id="hero" />
         <div className="report-status report-status--error">
           <p>
-            <strong>Could not load results.json</strong> — {report.message}
+            <strong>Could not load results.json</strong>. {report.message}
           </p>
           <p>
             Every figure on this page is read from <code>reports/results.json</code>
@@ -114,7 +126,6 @@ function App() {
         signTestSpendsFewerAttempts={
           data.sign_test.vs_ladder.spends_fewer_attempts
         }
-        offersFired={narrative.offersFired}
         seedCount={narrative.seedCount}
       />
 
