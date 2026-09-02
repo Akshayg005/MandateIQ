@@ -81,6 +81,8 @@ Mandate Recovery Engine -- tasks
   .\run.ps1 serve             run the webhook ingest API (uvicorn, port 8000)
   .\run.ps1 dashboard         B14 -- export per-mandate artifact, stage, serve
   .\run.ps1 dashboard-build   stage + lint + production build of the dashboard
+  .\run.ps1 site              B15 -- stage results.json, serve the landing page
+  .\run.ps1 site-build        stage + lint + production build of the landing page
   .\run.ps1 coverage          decline_class / UNKNOWN-rate breakdown from ingested_event
   .\run.ps1 clean             remove caches
 
@@ -296,6 +298,28 @@ print(c.order.create({'amount':100,'currency':'INR'})['id'])
             # tsc proves it compiles; this proves it RENDERS, against the
             # artifacts the sweep actually wrote, and that B14's five
             # drill-down fields reach the output.
+            Invoke-Step "render" { npm run render-check }
+        } finally { Pop-Location }
+    }
+
+    # B15. The landing page stages results.json only -- its headline figures
+    # are means over 8 seeds, and mandates.json is the seed-0 batch, so the
+    # two must not share a page. Same staging script as the dashboard, so
+    # there is one answer to "where did that number come from".
+    "site" {
+        Invoke-Step "stage" { & $Py scripts\dashboard_data.py site }
+        Push-Location site
+        try { npm run dev } finally { Pop-Location }
+    }
+
+    "site-build" {
+        Invoke-Step "stage" { & $Py scripts\dashboard_data.py site }
+        Push-Location site
+        try {
+            Invoke-Step "lint"  { npm run lint }
+            Invoke-Step "build" { npm run build }
+            # Proves the gate: real figures reach the rendered output, and
+            # PLAN.md's storyboard placeholders do not.
             Invoke-Step "render" { npm run render-check }
         } finally { Pop-Location }
     }
