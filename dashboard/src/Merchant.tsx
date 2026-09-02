@@ -233,9 +233,8 @@ export default function Merchant({
       {!mandates ? (
         <section className="panel">
           <div className="empty">
-            <code>mandates.json</code> is not staged. Run{" "}
-            <code>python -m eval.export_mandates</code> then{" "}
-            <code>python scripts\dashboard_data.py</code>.
+            The per-mandate detail for this batch has not been generated, so
+            the table below is empty. The summary above is unaffected.
           </div>
         </section>
       ) : (

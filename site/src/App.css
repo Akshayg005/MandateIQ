@@ -920,3 +920,13 @@
     animation: none;
   }
 }
+
+/* The dashboard runs as a separate server. When it is not up the link stays
+   in place but stops pretending to be clickable, rather than sending the
+   reader to a browser connection-error page. */
+.nav-link--down {
+  border-color: var(--line);
+  color: var(--text-faint);
+  cursor: not-allowed;
+}
+.nav-link--down:hover { background: none; border-color: var(--line); }

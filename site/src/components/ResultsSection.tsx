@@ -41,9 +41,8 @@ export function ResultsSection({
     <section id={id} className="results-section">
       <h2 className="section-label">Full Results</h2>
       <p className="section-subtitle">
-        All numbers from{' '}
-        <code>reports/results.json</code>, reproducible via{' '}
-        <code>.\run.ps1 eval</code>
+        Every number here comes from a saved evaluation run, and the whole run
+        can be reproduced from the repository.
       </p>
 
       <div className="results-table-wrap">

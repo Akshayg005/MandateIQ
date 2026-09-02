@@ -65,13 +65,12 @@ function App() {
         <HeroSection id="hero" />
         <div className="report-status report-status--error">
           <p>
-            <strong>Could not load results.json</strong>. {report.message}
+            <strong>The results could not be loaded.</strong>
           </p>
           <p>
-            Every figure on this page is read from <code>reports/results.json</code>
-            , staged by <code>python scripts/dashboard_data.py site</code>. Rather
-            than show placeholder numbers, it shows nothing. Run{' '}
-            <code>.\run.ps1 site</code> to regenerate.
+            Every figure on this page is read from a saved evaluation run.
+            Rather than show placeholder numbers, it shows nothing at all. The
+            repository README explains how to regenerate the run.
           </p>
         </div>
         <Footer />

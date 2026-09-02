@@ -25,10 +25,8 @@ export default function App() {
   if (error) {
     return (
       <div className="empty">
-        Could not load the report artifacts: <code>{error}</code>
-        <br />
-        Run <code>.\run.ps1 eval</code>, then{" "}
-        <code>python scripts\dashboard_data.py</code>.
+        The saved evaluation run could not be loaded, so there is nothing to
+        show here. The repository README explains how to generate one.
       </div>
     );
   }
