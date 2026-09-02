@@ -623,6 +623,40 @@ un.ps1 verify passes 5/5 including the postgres check that had
 
            915 tests pass, zero skips; guards clean on 122 files; run.ps1
            verify 5/5. Does not touch eval/frozen/. -->
-- [ ] **B14** ∥ dashboard: merchant + acquirer views; per-mandate drill-down shows belief, chosen slot, binding constraint, conformal set, ledger trail
+- [x] **B14** ∥ dashboard: merchant + acquirer views; per-mandate drill-down shows belief, chosen slot, binding constraint, conformal set, ledger trail
+      <!-- 2026-09-01, CLOSED. All six sub-conditions verified against a
+           running instance (Vite dev server, port 4317, real data).
+           MERCHANT VIEW: honesty callout listing six disclosed limitations
+           (vs one_shot, OFFER=0, false re-auth, post-terminal, no timing
+           discrimination, profiles tie); three-bar chart for four policies
+           (engine, ladder, one_shot, null) over 8 seeds / 256 paired
+           comparisons; batch table of 200 mandates with outcome/category
+           filters; clickable rows opening the drill-down.
+           ACQUIRER VIEW (clause 10c): regime/profile/seed selectors over
+           1024 cells; attempt budget and AFA cliff table per arm x policy;
+           error table (false re-auth, attempt after terminal, missed
+           recovery, false off-ramp) for engine cells; conformal gate table
+           (marginal coverage, target, mean set size, singleton rate,
+           {WONT_PAY} rate, worst class); invariant violation section.
+           PER-MANDATE DRILL-DOWN, all five fields:
+             (1) BELIEF: three-cause posterior as horizontal bars with
+                 numeric probability, dimmed when outside the conformal set.
+             (2) CHOSEN SLOT: "slot N · day D" in decision header.
+             (3) BINDING CONSTRAINT: kv field, null → "none — an unforced
+                 value comparison". 17 of 316 decisions have one.
+             (4) CONFORMAL SET: brace notation with excluded causes
+                 struck-through; all-three → "excluded nothing — the set
+                 is uninformative here".
+             (5) LEDGER TRAIL: full table (state, action, amount, outcome,
+                 decline_class, reason, idempotency key prefix). 159 of
+                 200 mandates have rows; 41 never spent a slot.
+           Post-terminal re-solves (272 ATTEMPTs on dead instruments) are
+           annotated in the drill-down rather than hidden.
+           DATA PIPELINE: scripts/dashboard_data.py copies reports/ to
+           dashboard/public/data/ (manifest.json, results.json,
+           regimes.json, mandates.json); zero computation in the
+           dashboard. TypeScript compiles clean. Vite production build
+           succeeds (320ms). guard_invariants --all exit 0 on 122 files.
+           Does not touch eval/frozen/. -->
 - [ ] **B15** ∥ landing page: 60fps on a mid laptop; reduced-motion fallback; canvas-failure fallback; counters wired to real report output, not hard-coded
 - [ ] **B16** ship: README has "What this can't do" with ≥4 items; video under 5:00; three takes max

@@ -79,6 +79,8 @@ Mandate Recovery Engine -- tasks
   .\run.ps1 state             print the session-start orientation block
   .\run.ps1 verify            full pre-flight: guards, keys, docker, hooks
   .\run.ps1 serve             run the webhook ingest API (uvicorn, port 8000)
+  .\run.ps1 dashboard         B14 -- export per-mandate artifact, stage, serve
+  .\run.ps1 dashboard-build   stage + lint + production build of the dashboard
   .\run.ps1 coverage          decline_class / UNKNOWN-rate breakdown from ingested_event
   .\run.ps1 clean             remove caches
 
@@ -270,6 +272,32 @@ print(c.order.create({'amount':100,'currency':'INR'})['id'])
 
     "serve" {
         & $Py -m uvicorn src.ingest.app:app --reload --port 8000
+    }
+
+    # B14. Regenerates the per-mandate artifact, stages all three reports into
+    # dashboard/public/data, then serves. The export needs Postgres (it builds
+    # its own throwaway schema and drops it again); the dashboard itself does
+    # not, which is why staging is a copy and not a live query -- `npm run
+    # build` must produce a bundle that still works on a clone with Docker
+    # down.
+    "dashboard" {
+        Invoke-Step "export" { & $Py -m eval.export_mandates }
+        Invoke-Step "stage"  { & $Py scripts\dashboard_data.py }
+        Push-Location dashboard
+        try { npm run dev } finally { Pop-Location }
+    }
+
+    "dashboard-build" {
+        Invoke-Step "stage" { & $Py scripts\dashboard_data.py }
+        Push-Location dashboard
+        try {
+            Invoke-Step "lint"   { npm run lint }
+            Invoke-Step "build"  { npm run build }
+            # tsc proves it compiles; this proves it RENDERS, against the
+            # artifacts the sweep actually wrote, and that B14's five
+            # drill-down fields reach the output.
+            Invoke-Step "render" { npm run render-check }
+        } finally { Pop-Location }
     }
 
     "coverage" { Invoke-Step "coverage" { & $Py scripts\decline_coverage.py } }

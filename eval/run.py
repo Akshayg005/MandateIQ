@@ -84,7 +84,7 @@ from eval.frozen.simulator import Simulator, load_config
 from src.core.types import Action, Cause, MandateState, Outcome, Profile
 from src.model import conformal
 from src.policy import belief as belief_mod
-from src.policy.allocator import AllocationContext, AllocatorError, solve
+from src.policy.allocator import AllocationContext, AllocatorError, Plan, solve
 from src.policy.constraints import MAX_ATTEMPTS, afa_free_limit_paise
 from src.policy.costs import PolicyCosts, load as load_costs
 from src.policy.gate import ConformalCauseGate, FullSetGate
@@ -255,10 +255,33 @@ def _counterfactual_recovers(sim: Simulator, mandate_id: str, from_slot: int,
     return False
 
 
+@dataclass
+class DecisionTrace:
+    """One solve() call and what came back from it -- the Plan the allocator
+    actually produced, plus the simulated outcome if that Plan was executed.
+
+    B14's drill-down (belief, chosen slot, binding constraint, conformal set)
+    is satisfiable only from a Plan, and this loop otherwise reduces every
+    Plan to a counter and discards it. Recording is strictly additive: it
+    draws no randomness and takes no branch, so a traced run and an untraced
+    run are the same run. tests/eval/test_export_mandates.py compares the
+    whole CellResult across both to keep that true.
+
+    `outcome` is None for a decision that spent no slot -- a REAUTH, an
+    OFFER, a STOP, or the post-terminal re-solve -- which is exactly the
+    distinction the dashboard needs to show an action that cost nothing.
+    """
+
+    plan: "Plan"
+    outcome: str | None = None
+
+
 def _run_engine_mandate(m, sim: Simulator, profile: Profile, hazard,
-                        costs: PolicyCosts, gate, b, cell: CellResult):
+                        costs: PolicyCosts, gate, b, cell: CellResult,
+                        trace: list[DecisionTrace] | None = None):
     """Drive one mandate through the allocator. Returns the ordered attempts
-    actually made; mutates `cell`'s action counters and error costs.
+    actually made; mutates `cell`'s action counters and error costs. When
+    `trace` is given, appends one DecisionTrace per solve() call.
 
     Adapted from eval/allocator_sweep.py's _run_one_mandate, which answers a
     different question (B8's gate criteria: did we attempt, how often) and so
@@ -283,6 +306,8 @@ def _run_engine_mandate(m, sim: Simulator, profile: Profile, hazard,
 
         if plan.chosen_action != Action.ATTEMPT:
             stopped_action = plan.chosen_action
+            if trace is not None:
+                trace.append(DecisionTrace(plan))
             break
 
         committed = plan.committed[0]
@@ -292,6 +317,8 @@ def _run_engine_mandate(m, sim: Simulator, profile: Profile, hazard,
                 f"ceiling {ctx.ceiling_paise}"
             )
         result = sim.attempt(m.mandate_id, slot=committed.slot, on_day=committed.on_day)
+        if trace is not None:
+            trace.append(DecisionTrace(plan, outcome=result.outcome.name))
         attempts.append(result)
         last_day = committed.on_day
         ctx = ctx.with_attempt(committed.on_day)
@@ -308,6 +335,13 @@ def _run_engine_mandate(m, sim: Simulator, profile: Profile, hazard,
                 try:
                     final = solve(b, ctx, hazard=hazard, costs=costs, gate=gf)
                     stopped_action = final.chosen_action
+                    if trace is not None:
+                        # The post-terminal re-solve spends no slot, so it
+                        # carries no outcome -- but it is the decision that
+                        # produces a REAUTH, and the drill-down would be
+                        # missing the engine's answer to "the instrument is
+                        # dead, now what?" without it.
+                        trace.append(DecisionTrace(final))
                 except AllocatorError as exc:
                     cell.violations.append(f"{m.mandate_id}: final AllocatorError: {exc}")
             break
@@ -500,7 +534,8 @@ def run_ladder_cell(regime: str, arm: str, profile: Profile, cfg: dict,
 
 
 def run_engine_cell(regime: str, arm: str, profile: Profile, cfg: dict, seed: int,
-                    hazard, costs: PolicyCosts, gate, gate_kind: str) -> CellResult:
+                    hazard, costs: PolicyCosts, gate, gate_kind: str,
+                    traces: dict[str, list[DecisionTrace]] | None = None) -> CellResult:
     t0 = time.perf_counter()
     cell = CellResult(regime=regime, arm=arm, profile=profile.value,
                       policy="engine", seed=seed, gate_kind=gate_kind)
@@ -513,7 +548,11 @@ def run_engine_cell(regime: str, arm: str, profile: Profile, cfg: dict, seed: in
         if m.amount_paise > afa_free_limit_paise(m.category):
             cell.n_above_afa += 1
         b0 = initial_belief(m.initial_cause, cfg, slot1_rng)
-        attempts = _run_engine_mandate(m, sim, profile, hazard, costs, recorder, b0, cell)
+        trace = [] if traces is not None else None
+        attempts = _run_engine_mandate(m, sim, profile, hazard, costs, recorder, b0,
+                                       cell, trace=trace)
+        if traces is not None:
+            traces[m.mandate_id] = trace
         results.append(_result_for(m, attempts))
 
     _fill_bars(cell, aggregate(results, arm=arm, profile=profile.value), sim.mandates)

@@ -10,6 +10,7 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+ssr-out
 *.local
 
 # Editor directories and files
@@ -22,3 +23,8 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Staged copies of reports/*.json, which are themselves gitignored as
+# generated artifacts. Committing them here would put the same generated
+# JSON in git under a second path. Regenerate with .\run.ps1 dashboard.
+public/data/
