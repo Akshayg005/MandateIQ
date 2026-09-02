@@ -658,7 +658,7 @@ un.ps1 verify passes 5/5 including the postgres check that had
            dashboard. TypeScript compiles clean. Vite production build
            succeeds (320ms). guard_invariants --all exit 0 on 122 files.
            Does not touch eval/frozen/. -->
-- [ ] **B15** ∥ landing page: 60fps on a mid laptop; reduced-motion fallback; canvas-failure fallback; counters wired to real report output, not hard-coded
+- [x] **B15** ∥ landing page: 60fps on a mid laptop; reduced-motion fallback; canvas-failure fallback; counters wired to real report output, not hard-coded
       <!-- 2026-09-03. Three of four criteria verified in a real browser
            (headless Chromium 151/152 over CDP, this machine's GPU via ANGLE
            d3d11), screenshots in the session scratchpad:
@@ -690,7 +690,36 @@ un.ps1 verify passes 5/5 including the postgres check that had
            getBoundingClientRect() per event against a 520vh container
            (Motion's useScroll replaces it); and shaders compiled on the
            first visible frame (<Warmup> calls gl.compile at mount).
-           STILL NOT ticked: that is headless Chromium on this machine, not
-           "60fps on a mid laptop". One run on a real display closes it. -->
+           2026-09-03, later session: the real-display run that was owed.
+           HEADED Chrome 152 driven over CDP against the production build
+           (vite preview), window visible, throttling of occluded windows
+           disabled so rAF reflects presented frames. GPU as reported by the
+           page itself: ANGLE (Intel Iris Xe Graphics, D3D11) -- integrated
+           graphics, which is what "a mid laptop" means. Frame deltas sampled
+           in-page with requestAnimationFrame while scrolling the narrative
+           section end to end over 8s:
+             run 1: 480 samples, median 16.7ms (59.9fps), p95 17.0ms,
+                    worst frame 17.8ms, frames >20ms: 0, dropped (>32ms): 0
+             run 2: 479 samples, median 16.7ms (59.9fps), p95 17.0ms,
+                    worst frame 17.7ms, frames >20ms: 0, dropped (>32ms): 0
+           Better than the headless figure it replaces (worst frame 17.8ms
+           vs 33.4ms), so the B15 fixes in Scene.tsx hold on real hardware.
+           The other three criteria were re-verified first-hand in that same
+           real browser rather than carried over on trust:
+             * reduced motion -- Emulation.setEmulatedMedia forced: canvas
+               NOT mounted, 3 storyboard frames present, 142/110/29.0%/45.3%
+               all on the page, PLAN.md placeholders absent.
+             * canvas failure -- second instance launched --disable-gpu
+               --disable-software-rasterizer: canvas NOT mounted, the HTML
+               fallback rendered (not the old black rectangle), same real
+               figures present, placeholders absent.
+             * counters -- npm run render-check green against the staged
+               results.json, which is byte-identical to reports/results.json.
+           Also removed in this session: site/src/assets/{hero.png,react.svg,
+           vite.svg}, three unreferenced leftovers, closing PLAN_DETAIL's
+           "Vite demo assets replaced wholesale".
+           Verified after those deletions: build 677ms, render-check green,
+           guard_invariants --all exit 0 on 125 files, 785 passed / 141
+           skipped. Does not touch eval/frozen/. -->
 
 - [ ] **B16** ship: README has "What this can't do" with ≥4 items; video under 5:00; three takes max
