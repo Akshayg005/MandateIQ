@@ -146,20 +146,16 @@ export function CountersSection({
   return (
     <section id={id} ref={ref} className="counters-section">
       <Reveal className="section-head">
-        <span className="section-kicker">The headline metric</span>
-        <h2 className="section-title">Three bars, not one</h2>
+        <h2 className="section-title">
+          Most retry systems report one number. That number hides the cost.
+        </h2>
         <p className="section-subtitle">
-          Recovery rate alone is the incumbent&rsquo;s metric. Across{' '}
-          {data.paired_comparisons} paired comparisons over {n.seedCount} seeds,
-          this engine preserves more mandates in{' '}
-          <strong>
-            {data.sign_test.vs_ladder.preserves_more}/{data.paired_comparisons}
-          </strong>{' '}
-          and recovers more money in only{' '}
-          <strong>
-            {data.sign_test.vs_ladder.recovers_more}/{data.paired_comparisons}
-          </strong>
-          .
+          We ran the same {n.seedCount} batches through both policies and
+          compared them one batch at a time, {data.paired_comparisons}{' '}
+          comparisons in all. This engine kept more customers in{' '}
+          <strong>{data.sign_test.vs_ladder.preserves_more}</strong> of them,
+          and collected more money in only{' '}
+          <strong>{data.sign_test.vs_ladder.recovers_more}</strong>.
         </p>
       </Reveal>
 
@@ -177,35 +173,35 @@ export function CountersSection({
 
       <div className="bar-charts">
         <PairedBar
-          title="Mandates preserved"
+          title="Customers still subscribed at the end"
           unit={`of ${n.total}`}
           engineValue={n.enginePreserved}
           ladderValue={n.ladderPreserved}
           engineLabel={`${n.enginePreserved}/${n.total}`}
           ladderLabel={`${n.ladderPreserved}/${n.total}`}
-          verdict={`${n.preservedDelta} more customers still have a live mandate next cycle.`}
+          verdict={`${n.preservedDelta} more people are still subscribed next month.`}
           engineWins
           active={seen}
         />
         <PairedBar
-          title="Money recovered"
-          unit="this cycle"
+          title="Money collected"
+          unit="this billing cycle"
           engineValue={n.engineRecoveredPaise}
           ladderValue={n.ladderRecoveredPaise}
           engineLabel={`${data.recovered} (${n.engineRecoveredPct})`}
           ladderLabel={`${data.baseline.recovered} (${n.ladderRecoveredPct})`}
-          verdict="The engine loses this bar. Deliberately recovering less this cycle to protect lifetime value is the thesis, not a bug."
+          verdict="The engine loses this one, on purpose. Collecting less today to keep someone subscribed for another year is the whole argument."
           engineWins={false}
           active={seen}
         />
         <PairedBar
-          title="Attempts spent"
-          unit={`of ${n.total} × 4 NPCI allows`}
+          title="Attempts used"
+          unit="four allowed per customer, ever"
           engineValue={n.engineAttempts}
           ladderValue={n.ladderAttempts}
           engineLabel={String(n.engineAttempts)}
           ladderLabel={String(n.ladderAttempts)}
-          verdict={`${n.attemptsSaved} fewer attempts. Every attempt carries an opt-out the customer can use to kill the mandate outright.`}
+          verdict={`${n.attemptsSaved} fewer attempts. Every attempt is another chance for someone to cancel outright.`}
           engineWins
           active={seen}
         />
@@ -216,13 +212,13 @@ export function CountersSection({
           target={n.preservedDelta}
           prefix="+"
           active={seen}
-          label="mandates preserved versus the incumbent"
+          label="more customers kept than the system in use today"
         />
         <AnimatedStat
           target={n.attemptsSaved}
           prefix="−"
           active={seen}
-          label="attempts not spent on someone who was leaving"
+          label="fewer attempts, each one a chance to annoy someone"
         />
       </div>
     </section>

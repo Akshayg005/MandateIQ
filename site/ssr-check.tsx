@@ -84,7 +84,7 @@ need(counters, `data-target="+${n.preservedDelta}"`, "counters");
 need(counters, `data-target="−${n.attemptsSaved}"`, "counters");
 // The engine loses the money bar, and the page must say so rather than
 // quietly drawing only the bars it wins.
-need(counters, "loses this bar", "counters");
+need(counters, "loses this one, on purpose", "counters");
 need(counters, String(n.engineAttempts), "counters");
 need(counters, String(n.ladderAttempts), "counters");
 need(counters, R.recovered_pct, "counters");

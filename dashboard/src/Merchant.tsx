@@ -12,10 +12,16 @@ import { useMemo, useState } from "react";
 import type { Bars, MandateRecord, Results } from "./data";
 import Drilldown from "./Drilldown";
 
-const PRESERVED_DENOM = 200;
-
 function preservedCount(b: Bars): number {
   return Number(b.mandates_preserved.split("/")[0]);
+}
+
+/* The batch size comes from the report ("142/200"), never from a constant.
+   A hardcoded 200 here would silently mis-scale every bar the day the
+   evaluation runs a different batch size. */
+function preservedDenom(b: Bars): number {
+  const d = Number(b.mandates_preserved.split("/")[1]);
+  return Number.isFinite(d) && d > 0 ? d : 1;
 }
 
 function BarRow({
@@ -45,10 +51,10 @@ function BarRow({
 
 function ThreeBars({ r }: { r: Results }) {
   const arms: Array<{ name: string; bars: Bars; ref: boolean }> = [
-    { name: "engine (ours)", bars: r, ref: false },
-    { name: "ladder (incumbent)", bars: r.baseline, ref: true },
-    { name: "one_shot (no model)", bars: r.reference_one_shot, ref: true },
-    { name: "null (never attempt)", bars: r.reference_null, ref: true },
+    { name: "This engine", bars: r, ref: false },
+    { name: "Fixed retry schedule", bars: r.baseline, ref: true },
+    { name: "Try once, then stop", bars: r.reference_one_shot, ref: true },
+    { name: "Never retry at all", bars: r.reference_null, ref: true },
   ];
   const maxRec = Math.max(...arms.map((a) => a.bars.recovered_paise));
   const maxAtt = Math.max(...arms.map((a) => a.bars.attempts_spent));
@@ -56,7 +62,7 @@ function ThreeBars({ r }: { r: Results }) {
   return (
     <>
       <div className="bargroup">
-        <h3>money recovered</h3>
+        <h3>Money collected this cycle</h3>
         <div className="bars">
           {arms.map((a) => (
             <BarRow
@@ -71,7 +77,7 @@ function ThreeBars({ r }: { r: Results }) {
       </div>
 
       <div className="bargroup">
-        <h3>attempts spent (lower is better)</h3>
+        <h3>Attempts used <em>(fewer is better)</em></h3>
         <div className="bars">
           {arms.map((a) => (
             <BarRow
@@ -86,13 +92,13 @@ function ThreeBars({ r }: { r: Results }) {
       </div>
 
       <div className="bargroup">
-        <h3>mandates preserved (the bar the incumbent does not report)</h3>
+        <h3>Customers still subscribed at the end <em>(the number the incumbent never reports)</em></h3>
         <div className="bars">
           {arms.map((a) => (
             <BarRow
               key={a.name}
               label={a.name}
-              width={(preservedCount(a.bars) / PRESERVED_DENOM) * 100}
+              width={(preservedCount(a.bars) / preservedDenom(a.bars)) * 100}
               value={a.bars.mandates_preserved}
               reference={a.ref}
             />
@@ -108,49 +114,64 @@ function Honesty({ r }: { r: Results }) {
   const n = r.paired_comparisons;
   return (
     <div className="limits">
-      <h2>What this table does not say</h2>
+      <h2>Read this before the numbers</h2>
+      <p className="limits-lede">
+        We ran the same {r.seeds.length} batches through every policy and
+        compared them one batch at a time, {n} comparisons in all. Here is where
+        this engine wins and where it does not.
+      </p>
       <ul>
         <li>
-          Against the incumbent ladder the thesis holds and is stable: across{" "}
-          {n} paired comparisons over {r.seeds.length} seeds, the engine
-          preserves more in {r.sign_test.vs_ladder.preserves_more}/{n} and
-          spends fewer attempts in{" "}
-          {r.sign_test.vs_ladder.spends_fewer_attempts}/{n} — at a cost in
-          money, winning there only {r.sign_test.vs_ladder.recovers_more}/{n}.
+          <strong>Against the incumbent, it holds up.</strong> It kept more
+          customers in {r.sign_test.vs_ladder.preserves_more} of the {n}{" "}
+          comparisons and used fewer attempts in{" "}
+          {r.sign_test.vs_ladder.spends_fewer_attempts} of {n}. It collected
+          more money in only {r.sign_test.vs_ladder.recovers_more} of {n}, which
+          is the trade this project is arguing for.
         </li>
         <li>
           <strong>
-            Against <code>one_shot</code> — one attempt, no model — it does not.
+            Against simply trying once and stopping, it does not.
           </strong>{" "}
-          That policy preserves more in {st.preserves_fewer}/{n} and the engine
-          spends more attempts in {st.spends_more_attempts}/{n}. The engine
-          wins only on money, {st.recovers_more}/{n}. More seeds made this
-          finding stronger, not weaker. The defensible claim is against the
-          incumbent, not against every trivial baseline.
+          That policy has no model in it at all, and it kept more customers than
+          this engine in {st.preserves_fewer} of {n} comparisons while this
+          engine used more attempts in {st.spends_more_attempts} of {n}. The
+          engine only comes out ahead on money, {st.recovers_more} of {n}.
+          Running more batches made that result stronger, not weaker. The claim
+          worth defending is against the incumbent, not against every simple
+          rule you could write.
         </li>
         <li>
-          <code>OFFER</code> fired {r.offers_fired_total} times — and that is
-          arithmetic, not measurement. <code>cause_map</code> pins
-          P(WONT_PAY) at 0.10 under both symbols the proxy alphabet can emit,
-          so the {"{WONT_PAY}"} singleton the off-ramp requires is unreachable
-          for any alpha, seed or regime. The off-ramp lane is{" "}
-          <strong>untested</strong>, not tested-and-negative.
+          <strong>
+            The off-ramp never actually ran. It was chosen{" "}
+            {r.offers_fired_total} times, across every batch and every stress
+            test.
+          </strong>{" "}
+          Offering someone a graceful exit is the whole reason this project
+          exists, and the safety check in front of it is set so tightly that it
+          can never be satisfied by this data. So that path is untested, not
+          tested and found wanting. It is the biggest gap here.
         </li>
         <li>
-          {r.false_reauth_total} of {r.reauth_total} re-auth requests went to
-          mandates whose true cause is <em>not</em> CANT_PAY_EVER — the
-          issuer_outage regime&rsquo;s own pre-registered falsification
-          criterion.
+          <strong>
+            It asks the wrong people to re-authorise, often.
+          </strong>{" "}
+          {r.false_reauth_total} of {r.reauth_total} re-authorisation requests
+          went to customers whose payment had not actually died. That is the
+          failure the issuer-outage stress test was written to catch, and it
+          catches it.
         </li>
         <li>
-          {r.attempt_after_terminal_total} post-terminal re-solves returned
-          ATTEMPT on instruments the issuer had just confirmed dead. The belief
-          layer cannot conclude CANT_PAY_EVER from an observed dead instrument.
+          <strong>It keeps trying after a bank says stop.</strong>{" "}
+          {r.attempt_after_terminal_total} times it decided to attempt again on
+          a card or account the bank had just confirmed dead. The engine cannot
+          yet learn that fact from the decline itself.
         </li>
         <li>
-          Every attempt lands on day 2. There is no timing discrimination, so
-          the <code>strict</code> and <code>permissive</code> profiles are
-          provably the same function here.
+          <strong>Every attempt lands on the same day.</strong> The engine is
+          not really choosing <em>when</em> to retry yet, only whether to. That
+          also means the two compliance rulebooks it supports behave
+          identically on this data, so this run does not tell them apart.
         </li>
       </ul>
     </div>
@@ -197,9 +218,7 @@ export default function Merchant({
       <Honesty r={results} />
 
       <section className="panel">
-        <h2>
-          three bars · {results.headline_cell} · {results.seeds.length} seeds
-        </h2>
+        <h2>Four policies, three ways to judge them</h2>
         <div className="body">
           <ThreeBars r={results} />
           <p className="note">
@@ -222,7 +241,7 @@ export default function Merchant({
       ) : (
         <>
           <section className="panel">
-            <h2>the batch — click a mandate for its decision trail</h2>
+            <h2>Every mandate in the batch. Click one to see why.</h2>
             <div className="body">
               <div className="filters">
                 <label htmlFor="oc">outcome</label>

@@ -485,22 +485,29 @@ print(c.order.create({'amount':100,'currency':'INR'})['id'])
         }
         if ($panes.Count) { $panes | ConvertTo-Json -Compress | Set-Content $PaneFile -Encoding UTF8 }
 
-        # 5. Wait, then open the browser ----------------------------------
+        # 5. Wait, then open ONE tab --------------------------------------
+        # The landing page only. It links through to the dashboard ("Open the
+        # data") and the dashboard links back ("Overview"), so opening both
+        # would just hand the reader two tabs and no idea which to look at
+        # first. The dashboard is still waited on, because a link to a server
+        # that is not up yet is worse than a slower start.
         Write-Host "`n== waiting for servers" -ForegroundColor Cyan
-        $opened = @()
-        if ($haveNode -and $siteOk) {
-            if (Wait-Url "http://localhost:4318" 90) {
-                Write-Host "   site is up" -ForegroundColor Green
-                $opened += "http://localhost:4318"
-            } else { Write-Host "   site did not answer in 90s -- check its window" -ForegroundColor Yellow }
-        }
+        $landing = $null
         if ($haveNode -and $dashOk) {
             if (Wait-Url "http://localhost:4317" 90) {
                 Write-Host "   dashboard is up" -ForegroundColor Green
-                $opened += "http://localhost:4317"
             } else { Write-Host "   dashboard did not answer in 90s -- check its window" -ForegroundColor Yellow }
         }
-        foreach ($u in $opened) { Start-Process $u | Out-Null }
+        if ($haveNode -and $siteOk) {
+            if (Wait-Url "http://localhost:4318" 90) {
+                Write-Host "   site is up" -ForegroundColor Green
+                $landing = "http://localhost:4318"
+            } else { Write-Host "   site did not answer in 90s -- check its window" -ForegroundColor Yellow }
+        }
+        # Fall back to the dashboard if the landing page is the thing that
+        # failed, so `up` still lands the reader somewhere useful.
+        if (-not $landing -and $haveNode -and $dashOk) { $landing = "http://localhost:4317" }
+        if ($landing) { Start-Process $landing | Out-Null }
 
         # 6. Summary ------------------------------------------------------
         Write-Host "`n  ---------------------------------------------" -ForegroundColor Cyan

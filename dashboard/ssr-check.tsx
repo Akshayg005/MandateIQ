@@ -41,9 +41,15 @@ for (const m of M.mandates) { renderToString(<Drilldown m={m} />); drills++; }
 const need = (hay: string, s: string, label: string) => {
   if (!hay.includes(s)) { console.log("MISSING in " + label + ": " + s); process.exitCode = 1; }
 };
-need(merchant, "mandates preserved", "merchant");
+// The third bar -- the one the incumbent never reports -- must be on screen.
+need(merchant, "Customers still subscribed", "merchant");
+need(merchant, R.mandates_preserved, "merchant");
 need(merchant, R.recovered, "merchant");
-need(merchant, "one_shot", "merchant");
+// The model-free reference arm must stay on the chart. Asserted by its
+// on-screen label, which is now plain language rather than the internal
+// policy name -- the point of the check is that the arm the engine LOSES to
+// is visible, not what it is called in the code.
+need(merchant, "Try once, then stop", "merchant");
 need(acquirer, "conformal gate", "acquirer");
 need(acquirer, "above AFA", "acquirer");
 const withLedger = M.mandates.find((x: any) => x.ledger.length);

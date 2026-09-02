@@ -1,5 +1,6 @@
 import { Suspense, lazy, useEffect } from 'react'
-import { HeroSection } from './components/HeroSection'
+import { HeroSection, CauseSection } from './components/HeroSection'
+import { SiteNav } from './components/SiteNav'
 import { CountersSection } from './components/Counters'
 import { ResultsSection } from './components/ResultsSection'
 import { Footer } from './components/Footer'
@@ -49,6 +50,7 @@ function App() {
   if (report.status === 'loading') {
     return (
       <div className="app-root">
+        <SiteNav />
         <HeroSection id="hero" />
         <div className="report-status">Loading results…</div>
         <Footer />
@@ -59,6 +61,7 @@ function App() {
   if (report.status === 'error') {
     return (
       <div className="app-root">
+        <SiteNav />
         <HeroSection id="hero" />
         <div className="report-status report-status--error">
           <p>
@@ -80,7 +83,9 @@ function App() {
 
   return (
     <div className="app-root">
+      <SiteNav />
       <HeroSection id="hero" />
+      <CauseSection id="how" />
 
       {/* Three ways this renders, decided before the canvas is mounted:
           reduced motion gets the static storyboard; a machine without a

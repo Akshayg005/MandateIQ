@@ -9,6 +9,7 @@ import { useEffect, useState } from "react";
 import Acquirer from "./Acquirer";
 import Merchant from "./Merchant";
 import { loadAll, type Data } from "./data";
+import { SITE_URL } from "./links";
 
 type View = "merchant" | "acquirer";
 
@@ -38,30 +39,41 @@ export default function App() {
   return (
     <>
       <header className="top">
-        <h1>Mandate Recovery Engine</h1>
-        <span className="sub">
-          decision engine for failed recurring debits · RBI e-mandate framework
-          2026
-        </span>
-        <span className="prov">
-          freeze {manifest.freeze_hash.slice(0, 12)} · commit{" "}
-          {manifest.git_sha.slice(0, 12)} · {results.seeds.length} seeds ·{" "}
-          {regimes.cells.length} cells
+        <a className="back" href={SITE_URL}>
+          <span aria-hidden="true">&larr;</span> Overview
+        </a>
+        <div className="top-title">
+          <h1>The data behind the numbers</h1>
+          <span className="sub">
+            Every figure on this page is read from a saved report. Nothing here
+            is recalculated in the browser.
+          </span>
+        </div>
+        <span className="prov" title="Which run produced these numbers">
+          <b>run</b> {manifest.git_sha.slice(0, 7)}
+          <b>frozen</b> {manifest.freeze_hash.slice(0, 8)}
+          <b>seeds</b> {results.seeds.length}
+          <b>cells</b> {regimes.cells.length}
         </span>
       </header>
 
-      <nav className="tabs">
+      <nav className="tabs" aria-label="View">
         <button
           aria-selected={view === "merchant"}
           onClick={() => setView("merchant")}
         >
-          Merchant
+          What happened to the batch
+          <em>
+            One merchant
+            {mandates ? `, ${mandates.mandates.length} mandates` : ""}
+          </em>
         </button>
         <button
           aria-selected={view === "acquirer"}
           onClick={() => setView("acquirer")}
         >
-          Acquirer · clause 10(c)
+          How it holds up under stress
+          <em>Every regime, both rulebooks</em>
         </button>
       </nav>
 

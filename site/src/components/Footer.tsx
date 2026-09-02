@@ -1,3 +1,4 @@
+import { REPO_URL } from '../links'
 export function Footer() {
   return (
     <footer className="site-footer">
@@ -10,7 +11,7 @@ export function Footer() {
         </div>
         <div className="footer-links">
           <a
-            href="https://github.com"
+            href={REPO_URL}
             target="_blank"
             rel="noopener noreferrer"
             className="footer-link"
