@@ -67,8 +67,13 @@ export interface Narrative {
   ladderRecoveredPct: string
   engineAttempts: number
   ladderAttempts: number
+  /** Raw magnitudes, for bar lengths. Percentages are for labels, not widths. */
+  engineRecoveredPaise: number
+  ladderRecoveredPaise: number
   /** Mandates the engine preserves that the ladder does not. */
   preservedDelta: number
+  /** Attempts the engine does NOT spend. Positive means it spends fewer. */
+  attemptsSaved: number
   /** 0 in every published run. The off-ramp lane is untested, not negative. */
   offersFired: number
   seedCount: number
@@ -87,7 +92,10 @@ export function deriveNarrative(d: ReportData): Narrative {
     ladderRecoveredPct: d.baseline.recovered_pct,
     engineAttempts: d.attempts_spent,
     ladderAttempts: d.baseline.attempts_spent,
+    engineRecoveredPaise: d.recovered_paise,
+    ladderRecoveredPaise: d.baseline.recovered_paise,
     preservedDelta: engine.preserved - ladder.preserved,
+    attemptsSaved: d.baseline.attempts_spent - d.attempts_spent,
     offersFired: d.offers_fired_total,
     seedCount: d.seeds?.length ?? 1,
   }

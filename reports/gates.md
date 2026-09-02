@@ -659,4 +659,28 @@ un.ps1 verify passes 5/5 including the postgres check that had
            succeeds (320ms). guard_invariants --all exit 0 on 122 files.
            Does not touch eval/frozen/. -->
 - [ ] **B15** ∥ landing page: 60fps on a mid laptop; reduced-motion fallback; canvas-failure fallback; counters wired to real report output, not hard-coded
+      <!-- 2026-09-03. Three of four criteria verified in a real browser
+           (headless Chromium 151/152 over CDP, this machine's GPU via ANGLE
+           d3d11), screenshots in the session scratchpad:
+             * reduced motion  -- Emulation.setEmulatedMedia forced; the
+               static three-frame storyboard renders, 200 dots per frame, and
+               its captions carry the same figures as the scene.
+             * canvas failure  -- launched with --disable-gpu. This FAILED
+               first time: react-three-fiber does not throw during React's
+               render pass when context creation fails, so
+               CanvasErrorBoundary never fired and the reader got a black
+               rectangle with captions floating over nothing. Fixed by
+               probing WebGL before mounting the canvas
+               (site/src/hooks/useWebGLSupport.ts); re-verified.
+             * counters        -- site/ssr-check.tsx asserts the real figures
+               reach the output AND that PLAN.md's placeholders do not;
+               verified to fail by reintroducing "14 mandates lost".
+           NOT ticked because of the fourth. Frame pacing measured while
+           scrolling the scene: 320 samples, median 16.7ms (59.9fps), p95
+           16.9ms (59.2fps), one 283ms hitch at scene entry consistent with
+           first-frame shader compilation. That is this machine under
+           headless Chromium, which is not the same claim as "60fps on a mid
+           laptop" -- it needs one run on a real display before it is ticked,
+           and the entry hitch is worth a look. -->
+
 - [ ] **B16** ship: README has "What this can't do" with ≥4 items; video under 5:00; three takes max

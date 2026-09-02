@@ -33,19 +33,7 @@ const R: ReportData = JSON.parse(
 const n = deriveNarrative(R);
 
 const counters = renderToString(
-  <CountersSection
-    id="counters"
-    enginePreserved={n.enginePreserved}
-    ladderPreserved={n.ladderPreserved}
-    total={n.total}
-    recoveredPct={R.recovered_pct}
-    attemptsPerRecovery={R.attempts_per_recovery}
-    ladderRecoveredPct={R.baseline.recovered_pct}
-    ladderAttemptsPerRecovery={R.baseline.attempts_per_recovery}
-    signTestPreservesMore={R.sign_test.vs_ladder.preserves_more}
-    signTestTotal={R.paired_comparisons}
-    seedCount={n.seedCount}
-  />,
+  <CountersSection id="counters" narrative={n} data={R} />,
 );
 
 const results = renderToString(
@@ -89,10 +77,17 @@ const forbid = (hay: string, s: string, label: string) => {
 };
 
 // --- the real figures must reach the output ---------------------------------
-// The counters animate from 0, so the figure lives in data-target/aria-label
-// rather than in the initial text -- see AnimatedCounter.
-need(counters, `data-target="${R.mandates_preserved}"`, "counters");
-need(counters, `data-target="${R.baseline.mandates_preserved}"`, "counters");
+// Bar labels are plain text; the headline stats animate from 0 and so carry
+// their figure in data-target/aria-label instead -- see AnimatedStat.
+need(counters, R.mandates_preserved, "counters");
+need(counters, R.baseline.mandates_preserved, "counters");
+need(counters, `data-target="+${n.preservedDelta}"`, "counters");
+need(counters, `data-target="−${n.attemptsSaved}"`, "counters");
+// The engine loses the money bar, and the page must say so rather than
+// quietly drawing only the bars it wins.
+need(counters, "loses this bar", "counters");
+need(counters, String(n.engineAttempts), "counters");
+need(counters, String(n.ladderAttempts), "counters");
 need(counters, R.recovered_pct, "counters");
 need(counters, R.baseline.recovered_pct, "counters");
 need(results, R.mandates_preserved, "results");

@@ -8,6 +8,7 @@ import { CanvasFallback } from './components/CanvasFallback'
 import { ReducedMotionFallback } from './components/ReducedMotionFallback'
 import { useReportData } from './hooks/useReportData'
 import { useReducedMotion } from './hooks/useReducedMotion'
+import { useWebGLSupport } from './hooks/useWebGLSupport'
 import './App.css'
 
 // Lazy-load the three.js bundle -- by far the largest dependency, and the
@@ -28,6 +29,7 @@ function LoadingSpinner() {
 function App() {
   const report = useReportData()
   const prefersReducedMotion = useReducedMotion()
+  const webgl = useWebGLSupport()
 
   // Nothing on this page invents a number, so nothing on this page renders
   // before the report is in hand. The loading and error states are explicit
@@ -68,9 +70,18 @@ function App() {
     <div className="app-root">
       <HeroSection id="hero" />
 
+      {/* Three ways this renders, decided before the canvas is mounted:
+          reduced motion gets the static storyboard; a machine without a
+          usable GPU gets the HTML fallback (the probe, not the boundary,
+          catches that -- see useWebGLSupport); everything else gets the
+          scene, with the boundary still watching for a later failure. */}
       <div className="narrative-section" id="narrative">
         {prefersReducedMotion ? (
           <ReducedMotionFallback narrative={narrative} />
+        ) : webgl === 'unavailable' ? (
+          <CanvasFallback narrative={narrative} />
+        ) : webgl === 'probing' ? (
+          <LoadingSpinner />
         ) : (
           <CanvasErrorBoundary
             fallback={<CanvasFallback narrative={narrative} />}
@@ -82,19 +93,7 @@ function App() {
         )}
       </div>
 
-      <CountersSection
-        id="counters"
-        enginePreserved={narrative.enginePreserved}
-        ladderPreserved={narrative.ladderPreserved}
-        total={narrative.total}
-        recoveredPct={data.recovered_pct}
-        attemptsPerRecovery={data.attempts_per_recovery}
-        ladderRecoveredPct={data.baseline.recovered_pct}
-        ladderAttemptsPerRecovery={data.baseline.attempts_per_recovery}
-        signTestPreservesMore={data.sign_test.vs_ladder.preserves_more}
-        signTestTotal={data.paired_comparisons}
-        seedCount={narrative.seedCount}
-      />
+      <CountersSection id="counters" narrative={narrative} data={data} />
 
       <ResultsSection
         id="results"

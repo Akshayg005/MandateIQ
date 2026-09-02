@@ -11,10 +11,17 @@ answer a single one of them. run.py now takes an optional trace; this module
 turns that trace into an artifact.
 
 ONE CELL, NOT ALL 1024. The export covers `baseline / nominal / strict /
-engine`, seed 0 -- the headline cell every published number in
-reports/results.json refers to. A drill-down over 128 cells x 8 seeds would
-be 200k mandate-cycles of JSON answering a question nobody asked; the
-acquirer view gets its breadth from the aggregate artifact instead.
+engine`, seed 0 -- the same cell reports/results.json reports on. A drill-down
+over 128 cells x 8 seeds would be 200k mandate-cycles of JSON answering a
+question nobody asked; the acquirer view gets its breadth from the aggregate
+artifact instead.
+
+SEED 0, NOT THE PUBLISHED MEAN. results.json's headline figures are means
+over the 8 seeds in its `seeds` field -- preserved 142/200 is 141.875 rounded,
+and THIS artifact's seed-0 batch has 135. Both are correct and they are not
+the same number. Anything rendering the two together must say which is which;
+scripts/dashboard_data.py therefore stages this file for the reviewer
+dashboard and withholds it from the landing page, whose counters are means.
 
 === The ledger trail is written by the real executor ========================
 
