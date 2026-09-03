@@ -581,3 +581,64 @@ still unmeasured**. The stats and null arms are complete and reproducible
 offline. The gate was subsequently ticked on an explicit human scope
 decision — the tick records that nothing else was outstanding, not that the
 variance number exists. It does not.
+
+---
+
+## Incident 9 — the gate verification and the reader used different browsers
+**When:** Block B15, 2026-09-03, hours after B15 was ticked
+
+**Symptom:** The human opened the landing page on their own machine and saw
+the no-WebGL fallback — "What the engine does, without the animation" —
+where the 3D scene should be. The same machine, same build, renders that
+scene at a steady 59.9fps. The page's headline feature was invisible to the
+one reader it had been built for, and I had ticked its gate that morning.
+
+**Root cause:** `useWebGLSupport.ts` probed for a context with
+`failIfMajorPerformanceCaveat: true` and treated a refusal as "no GPU here".
+That flag does not mean that. It means the browser is being conservative,
+which it also is with hardware acceleration toggled off, a driver on the
+blocklist, a stale GPU process, or a profile simply carrying different flags
+from a fresh one. The refusal is a statement about the browser's mood, not
+about the hardware, and it was being read as a hardware verdict.
+
+**Why it wasn't caught earlier — and this is the part worth keeping:** it
+was not caught *because of how it was verified*. The B15 canvas-failure
+criterion was checked by launching Chrome with `--disable-gpu`, and the fps
+criterion by launching Chrome against a throwaway `--user-data-dir`. Both
+launches produced a **clean profile with default flags**, which is exactly
+the configuration that passes the strict probe. Every automated check agreed:
+build green, lint green, render-check green, four fps runs at 60fps, the
+fallback firing correctly under `--disable-gpu`. The verification was
+thorough and it was self-consistent and it was measuring a browser that no
+reader has.
+
+Both halves of the probe's contract were tested. What was never tested was
+the case in between them — a real GPU that the browser is being cautious
+about — because a fresh automation profile is never in that state.
+
+**Fix:** The probe is tiered. The strict ask is now only the first question;
+if it is refused, ask again on looser terms and inspect the renderer string
+that comes back. Hardware renders the scene at reduced cost (`degraded`);
+only a software rasteriser — which would genuinely crawl — reaches the HTML
+fallback, which is the case that fallback was written for. The same
+hard-coded flag in `Scene.tsx`'s Canvas `gl` config now follows the tier the
+probe established, rather than independently re-failing inside the Canvas
+where nothing throws.
+
+**Guard added:** the degraded path is now verified by overriding
+`HTMLCanvasElement.prototype.getContext` over CDP to refuse every request
+carrying `failIfMajorPerformanceCaveat: true`, then asserting the canvas
+still mounts. That reproduces the human's machine on demand, which is the
+thing no flag combination gave us. A `console.info` naming the tier and the
+renderer string is left in the shipped page deliberately: when the next
+reader says "I only see the fallback", that one line is the difference
+between diagnosing it and guessing.
+
+**Consequence for B15:** the gate's four criteria did hold, and still hold,
+re-verified on the shipped build. But the tick was taken on evidence from a
+browser configuration that was not representative, and a human found in one
+screenshot what four automated runs had missed. The gate note carries a
+correction saying so. The lesson generalises past this bug and directly into
+B16: **an automation harness that spawns a clean profile is not a witness to
+what a reader sees.** The video capture for B16 will run in the same kind of
+throwaway browser, and is exposed to the same class of error.

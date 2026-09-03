@@ -720,6 +720,29 @@ un.ps1 verify passes 5/5 including the postgres check that had
            "Vite demo assets replaced wholesale".
            Verified after those deletions: build 677ms, render-check green,
            guard_invariants --all exit 0 on 125 files, 785 passed / 141
-           skipped. Does not touch eval/frozen/. -->
+           skipped. Does not touch eval/frozen/.
+
+           CORRECTION, same day, after the tick. The four criteria above do
+           hold and were re-verified on the shipped build. But the evidence
+           for them came from browsers launched with a throwaway
+           --user-data-dir, i.e. a CLEAN PROFILE WITH DEFAULT FLAGS, and that
+           is not the browser a reader has. On the human's own Chrome, same
+           laptop, same build, the page served the no-WebGL fallback instead
+           of the scene: useWebGLSupport asked for a context with
+           failIfMajorPerformanceCaveat: true and read the refusal as "no
+           GPU", when that flag only means the browser is being conservative.
+           A clean automation profile is never in that state, so no run here
+           could have caught it -- the strict-pass and no-context cases were
+           both tested, the case between them was not. Found by the human in
+           one screenshot after four green automated runs.
+           Fixed in fe10ad2: the probe is tiered (strict, then looser terms
+           with a renderer-string check, and only a software rasteriser
+           reaches the fallback), and Scene.tsx's Canvas gl config follows
+           the tier rather than re-failing independently. The degraded path
+           is now verified by overriding getContext over CDP to refuse every
+           strict request and asserting the canvas still mounts. Logged as
+           POSTMORTEM Incident 9. The tick stands; this note records that it
+           was taken on a non-representative browser. Relevant to B16: the
+           video will be captured in the same kind of throwaway browser. -->
 
 - [ ] **B16** ship: README has "What this can't do" with ≥4 items; video under 5:00; three takes max
