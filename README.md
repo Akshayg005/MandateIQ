@@ -242,3 +242,4 @@ Every constant is cited at its definition in `src/policy/constraints.py`.
 | `scripts/guard_*.py` | Invariants enforced mechanically, not by prose |
 | `eval/frozen/` | Pre-registered, immutable |
 | `docs/architecture.svg` | The diagram above — core in blue, LLM edge in amber |
+| `docs/VIDEO_SCRIPT.md` | The 5-minute walkthrough, shot list and take discipline |
