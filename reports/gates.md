@@ -490,6 +490,21 @@ un.ps1 verify passes 5/5 including the postgres check that had
            regimes are config OVERLAYS on the frozen sim_config.yaml and an
            overlay key the base config lacks is refused rather than ignored.
 
+           CORRECTION, 2026-09-03 (B16). Clause 1 as ticked said "identical
+           numbers", and that was true of every number. It was NOT true of
+           the artifact bytes: each cell carried a `seconds` wall-clock
+           timing, so a reader checking the claim by hashing regimes.json --
+           rather than by reading its numbers -- got a mismatch and no way
+           to tell jitter from a real divergence. Nothing read the field.
+           It is still measured in memory and is no longer serialised
+           (UNSERIALISED_CELL_FIELDS, eval/run.py), pinned by three tests in
+           tests/eval/test_run_regimes.py including two full runs of the
+           same seed compared as strings. Re-verified by re-running
+           `.\run.ps1 eval` end to end: all 1024 cells equal the previous
+           artifact field-for-field once `seconds` is dropped, and
+           reports/regimes.md is byte-identical. The gate holds; the
+           evidence for it is now checkable the cheap way.
+
            CLAUSE 2 -- at least one regime where we lose, explained. Three,
            found mechanically by report.py rather than chosen by hand:
              * festival_season -- the largest money loss: -57.6% (nominal)
@@ -746,3 +761,37 @@ un.ps1 verify passes 5/5 including the postgres check that had
            video will be captured in the same kind of throwaway browser. -->
 
 - [ ] **B16** ship: README has "What this can't do" with ≥4 items; video under 5:00; three takes max
+      <!-- 2026-09-03, PARTIAL. Two of the three README deliverables are
+           closed; the video is not, so this gate stays OPEN.
+
+           DONE -- "What this can't do", 8 items, README.md:153. Every one
+           is reproducible from reports/ and the first is the one that hurts:
+           the off-ramp never fires, which makes the lane the project exists
+           for untested rather than tested-and-negative. The clause asked for
+           4; withholding the other 4 to look better would defeat the point
+           of the clause.
+
+           DONE -- the two remaining README placeholders, which were the real
+           open items behind this gate:
+             * "## The problem" was a parenthetical Day-12 stub. Now written:
+               the ladder's defect is one rule applied to two customers with
+               nothing in common, and the three India-specific constraints
+               (RBI 6(a)'s 24h wall, 6(c)'s per-notification opt-out, NPCI's
+               budget of four ever) that stop a Stripe-shaped answer from
+               transferring. The 20-40% involuntary-churn figure is marked
+               as an industry range, NOT as something measured here.
+             * "## Architecture" promised an Excalidraw diagram that did not
+               exist. Shipped as docs/architecture.svg -- hand-authored SVG,
+               so it renders inline on GitHub, diffs as text, and needs no
+               account to open. The colour split IS the argument: blue core
+               moves money and may not import an LLM; amber edge reads
+               language and returns one symbol. Rendered and inspected at
+               1200x812 rather than assumed correct.
+
+           NOT DONE -- video under 5:00, three takes max. Nothing recorded.
+           Incident 9's lesson applies directly and is written down there:
+           the capture will run in a throwaway clean-profile browser, which
+           is exactly the configuration that produced a green verification of
+           a page a real reader could not see. Whatever the video shows, one
+           pass must be watched on the human's own everyday browser before
+           this gate is ticked. -->

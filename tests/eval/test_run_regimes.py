@@ -275,6 +275,46 @@ def test_artifact_round_trips_through_json(small_payload):
     assert json.loads(json.dumps(small_payload)) == small_payload
 
 
+# --- the artifact must be byte-reproducible ----------------------------------
+#
+# B13's gate is "every number reproducible by one command", and it was
+# verified by deleting the artifact and re-running: identical numbers. True
+# of every value that carries meaning -- but each cell also carried a
+# `seconds` wall-clock timing, so a reader who checks the claim by comparing
+# hashes rather than by reading numbers gets a mismatch and has no way to
+# tell a timing jitter from a real divergence. Nothing reads the field. It is
+# measured in memory and excluded from the artifact.
+
+
+def test_no_wall_clock_field_reaches_the_artifact(small_payload):
+    for c in small_payload["cells"]:
+        assert "seconds" not in c, (
+            "a wall-clock field in the artifact makes it non-reproducible "
+            "byte-for-byte; see _serialise_cell in eval/run.py"
+        )
+
+
+def test_every_other_cell_field_survives_serialisation(small_payload):
+    """The exclusion must be exactly one named field. A blanket filter that
+    silently dropped a metric would make the artifact quietly incomplete."""
+    from dataclasses import fields
+
+    expected = {f.name for f in fields(run_mod.CellResult)} - run_mod.UNSERIALISED_CELL_FIELDS
+    assert run_mod.UNSERIALISED_CELL_FIELDS == {"seconds"}
+    for c in small_payload["cells"]:
+        assert set(c) == expected
+
+
+def test_two_runs_of_the_same_seed_serialise_identically():
+    """The actual claim, checked directly rather than by proxy: the same
+    command twice produces the same bytes."""
+    kwargs = dict(regime_names=["baseline"], arms=["nominal"],
+                  profiles=[Profile.strict], seed=0, verbose=False)
+    first = json.dumps(run_mod.run_all(**kwargs), indent=2)
+    second = json.dumps(run_mod.run_all(**kwargs), indent=2)
+    assert first == second
+
+
 # --- the report --------------------------------------------------------------
 
 

@@ -4598,3 +4598,95 @@ a mean over seeds is a statistic rather than a ledger entry but invariant 2
 must still hold of every value the report can emit. `coverage_per_class` is
 averaged too, not inherited from the first seed — inheriting it would have
 printed a one-seed number wearing an eight-seed label.
+
+### 2026-09-03 · B16 · A third check that could not fail, and two artifacts finished
+
+Three changes, one of them the same class as the 2026-08-29 vacuous-checks
+audit and the 2026-08-31 `Invoke-Step` bug. That makes three occurrences in
+twelve days, which is a pattern rather than an accident: **the checks in this
+project fail by not checking, not by checking wrongly.**
+
+**1. An unreachable Postgres now fails the suite instead of skipping it.**
+`tests/conftest.py`'s `pg_schema` fixture skipped when the database was down,
+and its docstring argued the case explicitly: an unreachable Postgres is an
+environment problem, not a code one. That reasoning is right about whose fault
+it is and wrong about what to do. 132 tests depend on that fixture and they
+are not incidental ones — ledger, executor, lease, void, recover, commit,
+webhook, dedupe, chaos: every test that exists to prove the ledger write
+precedes the money action, that an attempt cannot double-charge, and that a
+crash mid-flight resolves. With Docker down, `pytest` printed "781 passed, 132
+skipped" and exited 0, so definition-of-done step 3 was satisfiable without
+the money path ever running. Full write-up: POSTMORTEM Incident 10.
+
+`require_pg(reachable, reason)` replaces the skip. Default is `pytest.fail`
+with a message naming the cure (`.\run.ps1 up`); `MANDATEIQ_ALLOW_PG_SKIP=1`
+restores the skip, and the skip reason then names the variable so it reads as
+a decision in a log rather than as weather.
+
+Two design points worth keeping:
+
+- **Fixture, not an importable helper.** `tests/ingest/test_deps.py` had its
+  own hand-rolled copy of the same skip, and `tests/ingest/` cannot
+  `from conftest import ...` — pytest puts each test file's own directory on
+  `sys.path`, not `tests/`. A `pg_required` fixture reaches every subdirectory
+  through normal fixture resolution, which is what makes "route everything
+  through one place" enforceable rather than aspirational.
+- **The opt-out parses affirmatives only.** `=0`, `=false` and set-but-empty
+  are all refused. Set-but-empty is how a shell hands over a variable it does
+  not have; treating "present" as "true" would let a stray CI export silently
+  restore the old hole.
+
+The guard against regression is not the fix, it is `tests/test_pg_guard.py`'s
+final test: it scans every `test_*.py` in the tree for a `pytest.skip`
+mentioning Postgres and fails if it finds one. This hole does not reopen by
+someone reverting `require_pg`; it reopens by someone adding a second skip
+somewhere else, which is exactly how it got here.
+
+Verified in both directions rather than asserted. Against a dead DSN the same
+run produces 22 errors where it produced 22 skips; under the opt-out, 22
+skips each naming the variable. With Postgres up: 913 passed, 0 skipped — so
+the 132 skips had been concealing no failures, only themselves.
+
+Two stale skips removed in passing: `tests/model/test_conformal.py` guarded
+its two LLM-import invariant tests with `except FileNotFoundError:
+pytest.skip("conformal.py does not exist yet")`, left over from the TDD red
+state. Deleting `src/model/conformal.py` would have turned both invariant
+tests green.
+
+**2. `reports/regimes.json` is byte-reproducible now.** B13's gate is "every
+number reproducible by one command" and it was verified by deleting the
+artifact and re-running: identical numbers. True — but each cell also carried
+a `seconds` wall-clock timing, so a reader who checks the claim by hashing
+rather than by reading gets a mismatch, with no way to tell timing jitter
+from a real divergence. The field was written and never read: not by
+`eval/report.py`, not by the dashboard, not by anything.
+
+Excluded at serialisation via a named `UNSERIALISED_CELL_FIELDS` frozenset
+rather than deleted from `CellResult`, and rather than filtered by a rule.
+Named, because a rule ("drop anything float-ish", "drop anything ending in
+_time") would eventually swallow a metric and make the artifact quietly
+incomplete; `test_every_other_cell_field_survives_serialisation` asserts the
+exclusion set is exactly `{"seconds"}` and that every other dataclass field
+reaches the artifact. Kept on the dataclass, because measuring the time costs
+nothing and the reason to remove it was never that it was wrong to measure.
+
+Re-verified by re-running `.\run.ps1 eval` end to end against the previous
+artifact: all 1024 cells equal field-for-field once `seconds` is dropped, and
+`reports/regimes.md` is byte-identical. Two independent full runs agreeing on
+every byte is a stronger statement of the B13 claim than the original
+delete-and-re-run was. The B13 gate note carries the correction.
+
+**3. The architecture diagram is an SVG, not Excalidraw.** The README stub
+promised "Excalidraw diagram — deterministic core and LLM edge in different
+colours". The colour split is the part that matters; the tool was never the
+point. `docs/architecture.svg` is hand-authored SVG, which renders inline on
+GitHub, diffs as text in review, needs no account to open, and can be
+regenerated by editing a file rather than by remembering which browser tab
+held the source. Rendered headless at 1200x812 and inspected, rather than
+assumed to lay out correctly.
+
+What it argues, and why it is checkable: five blue stages carry the decision
+(ingest → classify → model → policy → execute), three amber boxes sit at the
+edges, and no path from a failed debit to a rupee moving crosses an amber
+box. That is enforced by `scripts/guard_invariants.py`, not by the drawing —
+which is the sentence the diagram exists to make legible in five seconds.

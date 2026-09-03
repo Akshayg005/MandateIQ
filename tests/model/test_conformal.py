@@ -761,10 +761,11 @@ def test_conformal_module_has_no_cause_import():
     """Read conformal.py source and assert strings 'Cause' do not appear."""
     conformal_path = Path(__file__).parent.parent.parent / "src" / "model" / "conformal.py"
 
-    try:
-        content = conformal_path.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        pytest.skip("conformal.py does not exist yet (expected in TDD red state)")
+    # Read unguarded. This was a skip while conformal.py was still a red-state
+    # placeholder; leaving it in meant deleting the module would turn an
+    # invariant test green. The module exists -- a missing file is now a
+    # failure, which is what an invariant guard is for.
+    content = conformal_path.read_text(encoding="utf-8")
 
     # Check for 'Cause' imports or references (case-sensitive)
     # A literal string 'Cause' in comments is fine; in code is not.
@@ -785,10 +786,11 @@ def test_conformal_module_has_no_anthropic_or_openai_import():
     """Read conformal.py and assert 'anthropic' and 'openai' strings do not appear."""
     conformal_path = Path(__file__).parent.parent.parent / "src" / "model" / "conformal.py"
 
-    try:
-        content = conformal_path.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        pytest.skip("conformal.py does not exist yet (expected in TDD red state)")
+    # Read unguarded. This was a skip while conformal.py was still a red-state
+    # placeholder; leaving it in meant deleting the module would turn an
+    # invariant test green. The module exists -- a missing file is now a
+    # failure, which is what an invariant guard is for.
+    content = conformal_path.read_text(encoding="utf-8")
 
     forbidden = ["anthropic", "openai"]
     for word in forbidden:

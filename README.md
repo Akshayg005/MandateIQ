@@ -10,9 +10,66 @@
 
 ## The problem
 
-*(Day 12: fixed-ladder halt kills paying customers and harasses leavers.
-Involuntary churn is 20–40% of total churn. Razorpay's documented behaviour
-is T+1/T+2/T+3 then halt — so the baseline here is the incumbent.)*
+A recurring debit fails. Nobody chose that — not the customer, not the
+merchant. The subscription just stops. This is *involuntary* churn, and it is
+routinely put at 20–40% of total churn in the subscription industry; treat
+that range as the reason anyone builds one of these, not as a number this
+repo measured. What this repo measured is on the [Results](#results) table.
+
+The standard response is a fixed ladder: reattempt at T+1, T+2, T+3, then
+halt. That is Razorpay's documented behaviour, so it is what
+[`eval/baseline_ladder.py`](eval/baseline_ladder.py) implements and what
+every number here is scored against — the baseline is the incumbent, not a
+strawman built to lose.
+
+**The ladder's defect is not its schedule. It is that one rule is applied to
+two customers who have nothing in common.**
+
+- Someone short ₹300 for three days running. The ladder spends its four
+  attempts inside those three days, exhausts the NPCI budget, and halts.
+  A paying customer who wanted to stay is now gone.
+- Someone who wants out and is passively letting the debit fail. The ladder
+  spends four attempts on them, and — under the stricter reading of RBI
+  clause 6(a), which is one of the two this repo ships — a pre-transaction
+  notification for each. Grinding a customer who has signalled exit is what
+  the CCPA's 2023 dark-patterns guidelines call a subscription trap. It is
+  legal exposure, not merely unkind.
+
+Both get the same ladder because the ladder only ever asks *will a retry
+succeed?* — a question whose answer is a probability, and probabilities do
+not distinguish a customer who cannot pay today from one who will never pay
+again from one who does not want to.
+
+**Three constraints make this harder in India than the equivalent problem in
+the US, and they are why a Stripe-shaped solution does not transfer.**
+
+1. **You cannot react.** RBI clause 6(a) requires the issuer's
+   pre-transaction notification at least 24 hours before every debit, so an
+   attempt is committed a day before it lands. Reacting to a signal in the
+   last few hours is structurally impossible. You forecast, or you do
+   nothing.
+2. **Every attempt can lose the customer outright.** Clause 6(c) puts an
+   AFA-validated opt-out in that notification — for the transaction *or the
+   whole mandate*. So a notification is not free, and `OPTED_OUT` is a
+   distinct outcome in this codebase, never folded into "declined".
+3. **The budget is four, ever.** NPCI allows 1 original + 3 retries per
+   cycle. Not four per week — four. That makes this a scarce-budget
+   allocation problem, which is why the core is backward induction over four
+   slots rather than a scheduler.
+
+So the question worth asking is not *will a retry succeed* but **which of
+three things went wrong** — and for one of those three answers, the correct
+action is to stop retrying and offer the customer a way out.
+
+| Latent cause | What it means | Correct action |
+|---|---|---|
+| `CANT_PAY_NOW` | Transient liquidity gap | Spend a slot, timed to their replenishment rhythm |
+| `CANT_PAY_EVER` | Instrument dead — expired card, closed account, revoked mandate | Stop retrying. Request re-authorisation |
+| `WONT_PAY` | Wants out, passively resisting | **Offer** an exit: pause, then downgrade, then cancel |
+
+Answering that question means the system will sometimes deliberately recover
+less money this cycle to protect lifetime value. That is the thesis, and the
+[Results](#results) table below is what it costs.
 
 ## Results
 
@@ -45,8 +102,41 @@ is T+1/T+2/T+3 then halt — so the baseline here is the incumbent.)*
 
 ## Architecture
 
-*(Excalidraw diagram — deterministic core and LLM edge in different colours.
-The colour split is the argument.)*
+![Architecture: five deterministic stages carry the money decision; three LLM modules sit at the edges and only read language](docs/architecture.svg)
+
+*Full size: [`docs/architecture.svg`](docs/architecture.svg).*
+
+**The colour split is the argument.** Blue is the decision core: it is
+deterministic and statistical, it moves money, and it may not import an LLM
+client. Amber is the LLM edge: it reads language and hands back one symbol.
+
+Trace any rupee from a failed debit to a retry and you never cross an amber
+box. That is a property of the repo, not a promise in a diagram —
+[`scripts/guard_invariants.py`](scripts/guard_invariants.py) fails the commit
+if `src/model/`, `src/policy/` or `src/core/` imports `google.genai`,
+`anthropic` or `openai`, and it runs from a git hook declared in
+`.claude/settings.json`.
+
+Three LLM calls exist, and each one is deliberately shaped so it *cannot*
+become a decision:
+
+| Module | Reads | Returns | Why it is safe |
+|---|---|---|---|
+| [`src/llm/normalizer.py`](src/llm/normalizer.py) | An issuer's decline string, which differs across banks | One symbol from a closed taxonomy | The symbol → cause probability table is a fixed constant in `src/classify/cause_map.py`. The model picks a label; it never picks a number |
+| [`src/llm/intent.py`](src/llm/intent.py) | Support-ticket text, including Hinglish | Exit-intent evidence | Enters the belief as evidence, then still has to pass the conformal gate before it can change an action |
+| [`src/llm/narrator.py`](src/llm/narrator.py) | The ledger, once per batch | Merchant-facing prose | One-way. Runs after every decision is made, never per transaction, and writes nothing back |
+
+All three go through forced function calling
+(`tool_config.function_calling_config.mode = "ANY"`, declared in
+[`src/llm/tools.py`](src/llm/tools.py)), so malformed JSON is structurally
+impossible rather than caught downstream.
+
+The reason for the split is measured, not asserted:
+[`bench/llm_vs_stats.py`](bench/llm_vs_stats.py) runs an LLM-as-classifier
+baseline against the statistical model on the same held-out split and
+reports AUC, p95 latency, cost per 1k decisions, and run-to-run variance on
+identical input. The variance column is the argument — same input, different
+retry time, is disqualifying in a payments path whatever the accuracy.
 
 ## Reproducing every number
 
@@ -60,6 +150,28 @@ The colour split is the argument.)*
 
 Evaluation protocol was frozen before any policy code was written:
 `reports/FREEZE_HASH`.
+
+`reports/regimes.json` is the single machine-readable artifact; every table
+and figure in `reports/regimes.md` is read out of it and nothing is computed
+at report time, so the report cannot drift from the run. Two runs of the
+same seeds produce **byte-identical** output — the artifact carries no
+wall-clock timing, precisely so that the claim can be checked by hashing and
+not only by reading numbers.
+
+### The test suite needs Postgres, and says so
+
+```powershell
+.\run.ps1 up                 # starts the mrdb container, among other things
+.\run.ps1 test
+```
+
+Without a database the suite **fails**. It does not skip. 132 tests — the
+whole ledger, executor, lease, void, recover, commit, webhook, dedupe and
+chaos surface — depend on Postgres, and while they used to skip quietly, a
+green suite meant nothing about the money path. Set
+`MANDATEIQ_ALLOW_PG_SKIP=1` to restore the old skipping behaviour if you
+genuinely want it; the skip reason then names the variable, so it is visible
+in the log as a decision rather than an accident.
 
 ## What this can't do
 
@@ -129,3 +241,4 @@ Every constant is cited at its definition in `src/policy/constraints.py`.
 | `.claude/` | 8 subagents, 5 skills, 4 hooks |
 | `scripts/guard_*.py` | Invariants enforced mechanically, not by prose |
 | `eval/frozen/` | Pre-registered, immutable |
+| `docs/architecture.svg` | The diagram above — core in blue, LLM edge in amber |

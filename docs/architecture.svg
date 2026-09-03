@@ -1,0 +1,172 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 812" width="1200" height="812" role="img" aria-labelledby="diagram-title diagram-desc">
+<title id="diagram-title">Mandate Recovery Engine architecture</title>
+<desc id="diagram-desc">Five deterministic stages carry the money decision: ingest, classify, model, policy, execute. Three LLM modules sit at the edges and only read language: a decline-string normaliser feeding the classifier, an intent reader feeding the belief as evidence, and a once-per-batch narrator that reads the ledger and writes nothing back. A guard enforced by a git hook forbids any LLM import inside the model, policy and core packages.</desc>
+
+<defs>
+  <marker id="arrow-core" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M 0 0 L 10 5 L 0 10 z" fill="#2B5FA8"/>
+  </marker>
+  <marker id="arrow-llm" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path d="M 0 0 L 10 5 L 0 10 z" fill="#C07617"/>
+  </marker>
+  <style>
+    .h1   { font:600 21px ui-sans-serif,-apple-system,"Segoe UI",Helvetica,Arial,sans-serif; fill:#111827; }
+    .h2   { font:400 13.5px ui-sans-serif,-apple-system,"Segoe UI",Helvetica,Arial,sans-serif; fill:#4B5563; }
+    .cap  { font:700 11.5px ui-sans-serif,-apple-system,"Segoe UI",Helvetica,Arial,sans-serif; letter-spacing:1.4px; }
+    .mono { font:400 11.5px ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace; }
+    .note { font:400 11.5px ui-sans-serif,-apple-system,"Segoe UI",Helvetica,Arial,sans-serif; }
+    .lbl  { font:600 11px ui-sans-serif,-apple-system,"Segoe UI",Helvetica,Arial,sans-serif; }
+    .core-box { fill:#EEF4FC; stroke:#2B5FA8; stroke-width:1.6; }
+    .core-cap { fill:#1B4A8C; }
+    .core-tx  { fill:#16365F; }
+    .llm-box  { fill:#FEF4E6; stroke:#C07617; stroke-width:1.6; stroke-dasharray:6 4; }
+    .llm-cap  { fill:#9A5C0B; }
+    .llm-tx   { fill:#7A4A08; }
+    .ext-box  { fill:#F5F6F8; stroke:#9AA3AF; stroke-width:1.4; }
+    .ext-tx   { fill:#3F4854; }
+    .guard-box{ fill:#FBEDED; stroke:#B93A3A; stroke-width:1.6; }
+    .guard-tx { fill:#8C2020; }
+  </style>
+</defs>
+
+<rect x="0" y="0" width="1200" height="812" fill="#FFFFFF"/>
+
+<text class="h1" x="28" y="36">Mandate Recovery Engine</text>
+<text class="h2" x="28" y="58">Where the money decision is made — and where a model is only allowed to read language.</text>
+
+<rect x="836" y="18" width="336" height="52" rx="6" fill="#FCFCFD" stroke="#E3E6EA"/>
+<rect x="850" y="31" width="13" height="13" rx="2.5" class="core-box"/>
+<text class="note" x="870" y="42" fill="#16365F">deterministic core — no LLM, integer paise</text>
+<rect x="850" y="51" width="13" height="13" rx="2.5" class="llm-box"/>
+<text class="note" x="870" y="62" fill="#7A4A08">LLM edge — language in, symbol out</text>
+
+<rect class="llm-box" x="257" y="92" width="210" height="104" rx="8"/>
+<text class="cap llm-cap" x="271" y="115">LLM EDGE</text>
+<text class="mono llm-tx" x="271" y="137">src/llm/normalizer.py</text>
+<text class="note llm-tx" x="271" y="155">Gemini 3.5 Flash-Lite</text>
+<text class="note llm-tx" x="271" y="172">issuer decline string</text>
+<text class="note llm-tx" x="271" y="188">→ one taxonomy symbol</text>
+
+<rect class="llm-box" x="721" y="92" width="210" height="104" rx="8"/>
+<text class="cap llm-cap" x="735" y="115">LLM EDGE</text>
+<text class="mono llm-tx" x="735" y="137">src/llm/intent.py</text>
+<text class="note llm-tx" x="735" y="155">Gemini 3.5 Flash-Lite</text>
+<text class="note llm-tx" x="735" y="172">support ticket text, Hinglish</text>
+<text class="note llm-tx" x="735" y="188">→ evidence, not a decision</text>
+
+<path d="M 362 196 L 362 236" stroke="#C07617" stroke-width="1.8" marker-end="url(#arrow-llm)" fill="none"/>
+<text class="lbl" x="370" y="222" fill="#9A5C0B">symbol only</text>
+<path d="M 826 196 L 826 236" stroke="#C07617" stroke-width="1.8" marker-end="url(#arrow-llm)" fill="none"/>
+<text class="lbl" x="834" y="222" fill="#9A5C0B">evidence only</text>
+
+<rect class="core-box" x="25" y="238" width="210" height="286" rx="8"/>
+<text class="cap core-cap" x="39" y="262">1 · INGEST</text>
+<text class="mono core-tx" x="39" y="288">src/ingest/webhook.py</text>
+<text class="note core-tx" x="39" y="306">Razorpay webhook, HMAC</text>
+<text class="note core-tx" x="39" y="322">verified before parsing</text>
+<text class="mono core-tx" x="39" y="348">src/ingest/dedupe.py</text>
+<text class="note core-tx" x="39" y="366">exactly-once event log;</text>
+<text class="note core-tx" x="39" y="382">redelivery is a no-op</text>
+<text class="mono core-tx" x="39" y="408">src/ingest/lifecycle_route.py</text>
+<text class="note core-tx" x="39" y="426">mandate paused / revoked</text>
+<text class="note core-tx" x="39" y="454">OPTED_OUT is kept as its</text>
+<text class="note core-tx" x="39" y="470">own outcome — never</text>
+<text class="note core-tx" x="39" y="486">folded into a decline</text>
+<text class="note core-tx" x="39" y="508" fill="#5A6B80">RBI 6(c)</text>
+
+<rect class="core-box" x="257" y="238" width="210" height="286" rx="8"/>
+<text class="cap core-cap" x="271" y="262">2 · CLASSIFY</text>
+<text class="mono core-tx" x="271" y="288">src/classify/</text>
+<text class="mono core-tx" x="271" y="306">  decline_taxonomy.py</text>
+<text class="note core-tx" x="271" y="324">closed symbol set; an</text>
+<text class="note core-tx" x="271" y="340">unseen string is refused,</text>
+<text class="note core-tx" x="271" y="356">not guessed</text>
+<text class="mono core-tx" x="271" y="382">src/classify/cause_map.py</text>
+<text class="note core-tx" x="271" y="400">symbol → P(cause), a fixed</text>
+<text class="note core-tx" x="271" y="416">table with no model in it</text>
+<text class="note core-tx" x="271" y="444">The LLM never returns a</text>
+<text class="note core-tx" x="271" y="460">probability, a rupee amount</text>
+<text class="note core-tx" x="271" y="476">or a retry time. Forced</text>
+<text class="note core-tx" x="271" y="492">function calling, so the</text>
+<text class="note core-tx" x="271" y="508">output shape is structural</text>
+
+<rect class="core-box" x="489" y="238" width="210" height="286" rx="8"/>
+<text class="cap core-cap" x="503" y="262">3 · MODEL</text>
+<text class="mono core-tx" x="503" y="288">src/model/</text>
+<text class="mono core-tx" x="503" y="306">  competing_risks.py</text>
+<text class="note core-tx" x="503" y="324">discrete-time multinomial</text>
+<text class="note core-tx" x="503" y="340">logit over person-period</text>
+<text class="mono core-tx" x="503" y="366">  cif.py</text>
+<text class="note core-tx" x="503" y="384">cumulative incidence,</text>
+<text class="note core-tx" x="503" y="400">one curve per cause</text>
+<text class="mono core-tx" x="503" y="426">  conformal.py</text>
+<text class="note core-tx" x="503" y="444">split conformal, 95%</text>
+<text class="note core-tx" x="503" y="460">coverage; emits a SET,</text>
+<text class="note core-tx" x="503" y="476">which may be all three</text>
+<text class="note core-tx" x="503" y="504" fill="#5A6B80">statsmodels · lifelines</text>
+
+<rect class="core-box" x="721" y="238" width="210" height="286" rx="8"/>
+<text class="cap core-cap" x="735" y="262">4 · POLICY</text>
+<text class="mono core-tx" x="735" y="288">src/policy/allocator.py</text>
+<text class="note core-tx" x="735" y="306">exact backward induction</text>
+<text class="note core-tx" x="735" y="322">over 4 slots — 1 original</text>
+<text class="note core-tx" x="735" y="338">+ 3 retries, NPCI, ever</text>
+<text class="mono core-tx" x="735" y="364">src/policy/gate.py</text>
+<text class="note core-tx" x="735" y="382">offer an exit ONLY if the</text>
+<text class="note core-tx" x="735" y="398">set is exactly {WONT_PAY}</text>
+<text class="mono core-tx" x="735" y="424">src/policy/offramp.py</text>
+<text class="note core-tx" x="735" y="442">pause → downgrade → cancel.</text>
+<text class="note core-tx" x="735" y="458">The system never cancels.</text>
+<text class="mono core-tx" x="735" y="484">src/policy/constraints.py</text>
+<text class="note core-tx" x="735" y="502">every constant cites a clause</text>
+
+<rect class="core-box" x="953" y="238" width="210" height="286" rx="8"/>
+<text class="cap core-cap" x="967" y="262">5 · EXECUTE</text>
+<text class="mono core-tx" x="967" y="288">src/ledger/store.py</text>
+<text class="note core-tx" x="967" y="306">the ledger write happens</text>
+<text class="note core-tx" x="967" y="322">BEFORE the money action</text>
+<text class="mono core-tx" x="967" y="348">src/execute/executor.py</text>
+<text class="mono core-tx" x="967" y="366">  keys.py · lease.py</text>
+<text class="note core-tx" x="967" y="384">idempotency key + lease:</text>
+<text class="note core-tx" x="967" y="400">one attempt, one debit</text>
+<text class="mono core-tx" x="967" y="426">  recover.py · void.py</text>
+<text class="note core-tx" x="967" y="444">a crash mid-flight resolves</text>
+<text class="note core-tx" x="967" y="460">to committed or voided —</text>
+<text class="note core-tx" x="967" y="476">never to a silent double</text>
+<text class="note core-tx" x="967" y="504" fill="#5A6B80">Razorpay test mode only</text>
+
+<path d="M 235 381 L 255 381" stroke="#2B5FA8" stroke-width="2" marker-end="url(#arrow-core)" fill="none"/>
+<path d="M 467 381 L 487 381" stroke="#2B5FA8" stroke-width="2" marker-end="url(#arrow-core)" fill="none"/>
+<path d="M 699 381 L 719 381" stroke="#2B5FA8" stroke-width="2" marker-end="url(#arrow-core)" fill="none"/>
+<path d="M 931 381 L 951 381" stroke="#2B5FA8" stroke-width="2" marker-end="url(#arrow-core)" fill="none"/>
+
+<rect class="ext-box" x="25" y="548" width="442" height="86" rx="8"/>
+<text class="cap ext-tx" x="39" y="572">THE 24-HOUR WALL — RBI 6(a)</text>
+<text class="note ext-tx" x="39" y="594">The issuer pre-notifies at least 24h before every debit, so an</text>
+<text class="note ext-tx" x="39" y="610">attempt is committed a day before it lands. There is no reactive</text>
+<text class="note ext-tx" x="39" y="626">path to build. We forecast, or we do nothing.</text>
+
+<rect class="llm-box" x="489" y="548" width="210" height="86" rx="8"/>
+<text class="cap llm-cap" x="503" y="572">LLM EDGE</text>
+<text class="mono llm-tx" x="503" y="594">src/llm/narrator.py</text>
+<text class="note llm-tx" x="503" y="612">once per BATCH, never per</text>
+<text class="note llm-tx" x="503" y="628">transaction. Read-only.</text>
+
+<rect class="ext-box" x="721" y="548" width="442" height="86" rx="8"/>
+<text class="cap ext-tx" x="735" y="572">WHAT COMES OUT</text>
+<text class="note ext-tx" x="735" y="594">Three bars, always together: recovered · attempts spent · mandates preserved.</text>
+<text class="note ext-tx" x="735" y="610">Recovery alone is the incumbent metric, not this one.</text>
+<text class="note ext-tx" x="735" y="626">dashboard/ (reviewer view) · site/ (landing) · reports/regimes.md</text>
+
+<path d="M 1058 524 L 1058 546" stroke="#2B5FA8" stroke-width="2" marker-end="url(#arrow-core)" fill="none"/>
+<path d="M 990 526 L 990 538 L 710 538 L 710 586 L 703 586" stroke="#C07617" stroke-width="1.8" stroke-dasharray="5 3" marker-end="url(#arrow-llm)" fill="none"/>
+<text class="lbl" x="742" y="533" fill="#9A5C0B">reads the ledger, writes nothing back</text>
+
+<rect class="guard-box" x="25" y="662" width="1138" height="82" rx="8"/>
+<text class="cap guard-tx" x="39" y="686">THE INVARIANT THAT MAKES THE COLOUR SPLIT REAL</text>
+<text class="mono guard-tx" x="39" y="708">src/model/ · src/policy/ · src/core/ may NEVER import google.genai, anthropic, or openai.</text>
+<text class="note guard-tx" x="39" y="728">Enforced by scripts/guard_invariants.py in a git hook, not by intent. Money is integer paise; a float touching a money value is a bug.</text>
+
+<text class="note" x="28" y="776" fill="#6B7280">The argument is the colour split: nothing amber is ever on the path between a failed debit and a rupee moving. Generative models read language here. They do not decide.</text>
+<text class="note" x="28" y="798" fill="#9AA3AF">RBI Digital Payments — E-mandate Framework, 2026 (RBI/DPSS/2026-27/396) · NPCI: 1 original + 3 retries · CCPA dark-patterns guidelines, 2023</text>
+</svg>

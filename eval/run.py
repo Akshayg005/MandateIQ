@@ -164,7 +164,26 @@ class CellResult:
     mean_set_size: float | None = None
     coverage_per_class: dict[str, float] = field(default_factory=dict)
     violations: list[str] = field(default_factory=list)
+    # Wall clock. Measured, deliberately NOT serialised -- see
+    # UNSERIALISED_CELL_FIELDS.
     seconds: float = 0.0
+
+
+# Fields excluded from reports/regimes.json. B13's gate is "every number
+# reproducible by one command"; that holds for every value that means
+# anything, but a per-cell wall-clock timing made the artifact differ
+# byte-for-byte between two runs of the same seed, so anyone checking the
+# claim by hashing rather than by reading got a mismatch and no way to tell
+# jitter from a real divergence. Nothing reads `seconds`. Named explicitly,
+# rather than filtered by a rule, so adding a metric cannot accidentally
+# drop it.
+UNSERIALISED_CELL_FIELDS = frozenset({"seconds"})
+
+
+def _serialise_cell(cell: CellResult) -> dict:
+    """A cell as it appears in the artifact: every field except the
+    non-reproducible ones."""
+    return {k: v for k, v in asdict(cell).items() if k not in UNSERIALISED_CELL_FIELDS}
 
 
 # --- the engine policy -------------------------------------------------------
@@ -679,7 +698,7 @@ def run_all(*, regime_names: Sequence[str], arms: Sequence[str],
             for name, spec in regimes_mod.REGIMES.items()
             if name in regime_names
         },
-        "cells": [asdict(c) for c in cells],
+        "cells": [_serialise_cell(c) for c in cells],
     }
 
 

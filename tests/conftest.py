@@ -24,9 +24,11 @@ why. `chaos`: reserved for B10's induced-kill tests, none exist yet.
 """
 from __future__ import annotations
 
+import os
 import pathlib
 import sys
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 import pytest
@@ -61,6 +63,60 @@ except ImportError:  # pragma: no cover - environment guard
     pass
 
 SCHEMA_PATH = _ROOT / "src" / "ledger" / "schema.sql"
+
+# --- Postgres is required, not optional ------------------------------------
+#
+# Until 2026-09-03 an unreachable Postgres made 132 tests skip and the suite
+# still exit 0. What skipped was the entire money-critical surface: ledger,
+# executor, lease, void, recover, commit, webhook, dedupe, chaos -- every
+# idempotency and crash-recovery test in the repo. CLAUDE.md's
+# definition-of-done step 3 was therefore satisfiable without running any of
+# it, which is the same defect class as POSTMORTEM's Invoke-Step bug: a
+# check that passes by not checking.
+#
+# Default is now to fail. The skip still exists, because there are real
+# situations for it (a docs-only machine, a laptop with no Docker), but it
+# has to be asked for by name so that it shows up in the log as a decision
+# rather than as an accident.
+PG_SKIP_OPT_OUT = "MANDATEIQ_ALLOW_PG_SKIP"
+
+_TRUTHY = frozenset({"1", "true", "yes", "on"})
+
+
+def pg_skip_allowed(env: Mapping[str, str] | None = None) -> bool:
+    """Whether skipping Postgres-backed tests has been explicitly permitted.
+
+    Affirmative values only. `MANDATEIQ_ALLOW_PG_SKIP=0` means no, and
+    set-but-empty -- which is how a shell hands over a variable it does not
+    have -- also means no.
+    """
+    source = os.environ if env is None else env
+    return source.get(PG_SKIP_OPT_OUT, "").strip().lower() in _TRUTHY
+
+
+def require_pg(reachable: bool, reason: str, env: Mapping[str, str] | None = None) -> None:
+    """No-op if Postgres is reachable; otherwise fail -- or skip, but only
+    under the opt-out.
+
+    Every Postgres-availability check in the suite must route through here.
+    `tests/test_pg_guard.py` enforces that mechanically, because the way this
+    hole reopens is a second hand-rolled `pytest.skip` somewhere else.
+    """
+    if reachable:
+        return
+    if pg_skip_allowed(env):
+        pytest.skip(f"Postgres unavailable: {reason} -- skipped because {PG_SKIP_OPT_OUT} is set")
+    pytest.fail(
+        f"Postgres unavailable: {reason}\n"
+        "\n"
+        "This test exercises the ledger / executor / idempotency / crash-recovery\n"
+        "surface, which cannot run without a database. It fails rather than skips\n"
+        "so that a green suite means the money path was actually tested.\n"
+        "\n"
+        "  Fix:      .\\run.ps1 up      (or: docker start mrdb)\n"
+        f"  Opt out:  set {PG_SKIP_OPT_OUT}=1   -- restores the old skip, deliberately",
+        pytrace=False,
+    )
 
 
 @dataclass
@@ -102,6 +158,20 @@ def _pg_reachable() -> tuple[bool, str]:
 
 
 @pytest.fixture
+def pg_required(_pg_reachable) -> None:
+    """Fails the test unless Postgres is reachable.
+
+    Exists as a fixture, rather than as a helper the tests import, so that
+    tests in subdirectories get it through normal pytest fixture resolution
+    -- `tests/ingest/` cannot `from conftest import ...`, and a hand-rolled
+    availability check in a sibling package is exactly how the skip hole
+    reopens.
+    """
+    reachable, reason = _pg_reachable
+    require_pg(reachable, reason)
+
+
+@pytest.fixture
 def pg_schema(_pg_reachable):
     """
     Creates a throwaway schema, applies schema.sql into it with search_path
@@ -110,21 +180,23 @@ def pg_schema(_pg_reachable):
 
     Two distinct failure modes, not to be confused:
     - Postgres itself is unreachable (Docker not running, wrong
-      DATABASE_URL) -> pytest.skip. An environment problem, not a code one.
-      Checked via the session-cached `_pg_reachable` first, so 60 of 61
-      Postgres-dependent tests skip immediately rather than each re-probing
-      an already-known-down Postgres.
+      DATABASE_URL) -> `require_pg`, which FAILS by default and skips only
+      under MANDATEIQ_ALLOW_PG_SKIP. An environment problem rather than a
+      code one, but one that must not be able to produce a green suite --
+      see the note above PG_SKIP_OPT_OUT. Checked via the session-cached
+      `_pg_reachable` first, so the Postgres-dependent tests resolve
+      immediately rather than each re-probing an already-known-down
+      Postgres.
     - schema.sql is missing or broken -> let it raise. That is the thing
       under test.
     """
     reachable, reason = _pg_reachable
-    if not reachable:
-        pytest.skip(f"Postgres unavailable: {reason}")
+    require_pg(reachable, reason)
 
     try:
         conn = psycopg.connect(dsn(), autocommit=True, connect_timeout=3)
     except Exception as exc:
-        pytest.skip(f"Postgres unavailable: {exc}")
+        require_pg(False, str(exc))
 
     schema_name = f"test_b1_{uuid.uuid4().hex[:16]}"
     try:

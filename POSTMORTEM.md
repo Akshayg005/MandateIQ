@@ -642,3 +642,76 @@ correction saying so. The lesson generalises past this bug and directly into
 B16: **an automation harness that spawns a clean profile is not a witness to
 what a reader sees.** The video capture for B16 will run in the same kind of
 throwaway browser, and is exposed to the same class of error.
+
+---
+
+## Incident 10 — 132 money-critical tests skipped, and the suite exited 0
+
+**When:** Block B16, 2026-09-03, found by the human while auditing what was
+actually deliverable
+
+**Symptom:** `.\run.ps1 test` reported success on a machine where Docker was
+not running. The report line was "781 passed, 132 skipped". What skipped was
+every test that touches Postgres: `tests/ledger/`, `tests/execute/`
+(executor, lease, void, recover, commit), `tests/ingest/` (webhook, dedupe,
+lifecycle route) and `tests/eval/test_chaos.py`. That is the entire
+idempotency and crash-recovery surface — every test that exists to prove the
+ledger write happens before the money action, that an attempt cannot double-
+charge, and that a crash mid-flight resolves rather than hangs.
+
+CLAUDE.md's definition of done, step 3, is "`.\run.ps1 test` passes before
+any commit". That step was satisfiable, green, and signed off, without ever
+running the money path.
+
+**Root cause:** `tests/conftest.py`'s `pg_schema` fixture called
+`pytest.skip` when Postgres was unreachable, on the reasoning — written down
+in its own docstring — that an unreachable database is an environment
+problem, not a code one. That reasoning is correct about *whose fault it is*
+and wrong about *what to do*. A skip is an assertion that the test did not
+need to run. Here it meant the opposite: the tests that most needed to run
+were the ones that did not.
+
+**Why it survived this long:** it never produced a red line. Every session
+that ran the suite with Docker down saw green, and the skip count sat in a
+summary line that reads as noise. The pass/skip counts were even copied into
+`STATE.md` at each checkpoint — "781 passed, 132 skipped" — where they were
+recorded faithfully and read by nobody as a problem, including by me.
+
+This is the same defect class as the `Invoke-Step` bug found in the B13
+end-of-project pass (recorded in run.ps1 itself, 2026-08-31): a bare
+`& $Py ...` as the last statement of a switch branch left the script exit
+code at 0, so `.\run.ps1 test` reported success on a RED suite. Different
+mechanism, identical shape — **a check that passes by not checking** — and
+it made the same definition-of-done step unfalsifiable, from the other end.
+Incident 9 is a third instance: a verification whose green came from
+measuring something other than the thing. Three occurrences in twelve days
+is not a coincidence; it is the failure mode to look for first.
+
+**Fix:** `require_pg` in `tests/conftest.py`. An unreachable Postgres now
+FAILS every test that needs it, with a message naming the fix
+(`.\run.ps1 up`). The skip still exists, because a docs-only machine is a
+real situation, but it has to be asked for by name:
+`MANDATEIQ_ALLOW_PG_SKIP=1`, and the skip reason then says so, so it appears
+in a log as a decision rather than as weather. `tests/ingest/test_deps.py`
+had its own hand-rolled copy of the same skip and now takes the shared
+`pg_required` fixture.
+
+**Guard added:** `tests/test_pg_guard.py` — twenty-one tests over the opt-out
+parsing (`=0` and set-but-empty are refused, not treated as consent) and the
+fail-vs-skip branch, plus one test that scans every `test_*.py` in the tree
+for a `pytest.skip` mentioning Postgres and fails if it finds one. That last
+one is the important one: the way this hole reopens is not by someone
+reverting the fix, it is by someone adding a second skip somewhere else.
+
+Verified in both directions rather than asserted: against a dead DSN the
+suite produces 22 errors where it used to produce 22 skips; with
+`MANDATEIQ_ALLOW_PG_SKIP=1` the same run produces 22 skips, each naming the
+variable. With Postgres up, 913 tests pass and nothing skips — so the 132
+skips had been hiding no failures, only hiding themselves.
+
+**Two stale skips removed while in there:**
+`tests/model/test_conformal.py` guarded two LLM-import invariant tests with
+`except FileNotFoundError: pytest.skip("conformal.py does not exist yet")`,
+left over from the TDD red state. `src/model/conformal.py` has existed since
+B6; deleting it would have turned both invariant tests green. They now read
+the file unguarded.

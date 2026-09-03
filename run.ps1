@@ -116,6 +116,10 @@ switch ($Task.ToLower()) {
 Mandate Recovery Engine -- tasks
 
   .\run.ps1 test              full test suite with coverage
+                               NEEDS POSTGRES -- 132 tests cover the ledger,
+                               executor and crash-recovery path and FAIL, not
+                               skip, without it. Start it with .\run.ps1 up.
+                               MANDATEIQ_ALLOW_PG_SKIP=1 restores skipping.
   .\run.ps1 test-fast         unit tests only, skips chaos and slow/simulation
   .\run.ps1 lint              invariant guards across all tracked python
   .\run.ps1 ci                test-fast + lint. Does NOT run eval -- eval.run

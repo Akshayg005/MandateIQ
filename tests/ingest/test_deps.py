@@ -23,7 +23,7 @@ import pytest
 from src.ingest.deps import get_conn
 
 
-def test_get_conn_yields_an_autocommit_connection(_pg_reachable):
+def test_get_conn_yields_an_autocommit_connection(pg_required):
     """autocommit=True is required, not optional: every write reachable
     through this dependency (dedupe.mark, record_ingested_event,
     record_lifecycle_event) is already a single, atomic
@@ -33,18 +33,16 @@ def test_get_conn_yields_an_autocommit_connection(_pg_reachable):
     instead of persisting it.
 
     Does not use the pg_schema fixture (deliberately -- see module
-    docstring), so it consults the session-cached _pg_reachable directly
-    to skip fast rather than paying its own ~6s connect attempt against an
-    already-known-down Postgres (see conftest.py, DECISIONS.md 2026-08-29)."""
-    reachable, reason = _pg_reachable
-    if not reachable:
-        pytest.skip(f"Postgres unavailable: {reason}")
-
+    docstring), so it takes `pg_required`, which consults the session-cached
+    _pg_reachable rather than paying its own ~6s connect attempt against an
+    already-known-down Postgres (see conftest.py, DECISIONS.md 2026-08-29).
+    An unreachable Postgres FAILS this test rather than skipping it -- see
+    require_pg in conftest.py."""
     gen = get_conn()
     try:
         conn = next(gen)
     except Exception as exc:
-        pytest.skip(f"Postgres unavailable: {exc}")
+        pytest.fail(f"Postgres reachable but get_conn() could not connect: {exc}", pytrace=False)
 
     try:
         assert conn.autocommit is True
