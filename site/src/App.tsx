@@ -5,6 +5,7 @@ import { CountersSection } from './components/Counters'
 import { ResultsSection } from './components/ResultsSection'
 import { Footer } from './components/Footer'
 import { CanvasErrorBoundary } from './components/CanvasErrorBoundary'
+import { ScrollProgress } from './components/ScrollProgress'
 import { CanvasFallback } from './components/CanvasFallback'
 import { ReducedMotionFallback } from './components/ReducedMotionFallback'
 import { useReportData } from './hooks/useReportData'
@@ -40,7 +41,8 @@ function App() {
   // long before the reader reaches the scene. Fire-and-forget: if it fails,
   // Suspense will surface the same error at render time.
   useEffect(() => {
-    if (prefersReducedMotion || webgl === 'unavailable') return
+    if (prefersReducedMotion || webgl === 'unavailable' || webgl === 'probing')
+      return
     void loadScene().catch(() => {})
   }, [prefersReducedMotion, webgl])
 
@@ -50,6 +52,7 @@ function App() {
   if (report.status === 'loading') {
     return (
       <div className="app-root">
+        <ScrollProgress />
         <SiteNav />
         <HeroSection id="hero" />
         <div className="report-status">Loading results…</div>
@@ -61,6 +64,7 @@ function App() {
   if (report.status === 'error') {
     return (
       <div className="app-root">
+        <ScrollProgress />
         <SiteNav />
         <HeroSection id="hero" />
         <div className="report-status report-status--error">
@@ -82,15 +86,16 @@ function App() {
 
   return (
     <div className="app-root">
+      <ScrollProgress />
       <SiteNav />
       <HeroSection id="hero" />
       <CauseSection id="how" />
 
-      {/* Three ways this renders, decided before the canvas is mounted:
-          reduced motion gets the static storyboard; a machine without a
-          usable GPU gets the HTML fallback (the probe, not the boundary,
-          catches that -- see useWebGLSupport); everything else gets the
-          scene, with the boundary still watching for a later failure. */}
+      {/* Decided before the canvas is mounted: reduced motion gets the static
+          storyboard; a machine with no GPU behind its context gets the HTML
+          fallback (the probe, not the boundary, catches that -- see
+          useWebGLSupport); everything else gets the scene, at full or reduced
+          cost, with the boundary still watching for a later failure. */}
       <div className="narrative-section" id="narrative">
         {prefersReducedMotion ? (
           <ReducedMotionFallback narrative={narrative} />
@@ -103,7 +108,7 @@ function App() {
             fallback={<CanvasFallback narrative={narrative} />}
           >
             <Suspense fallback={<LoadingSpinner />}>
-              <Scene narrative={narrative} />
+              <Scene narrative={narrative} tier={webgl} />
             </Suspense>
           </CanvasErrorBoundary>
         )}

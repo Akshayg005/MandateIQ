@@ -10,8 +10,11 @@ import { useScroll, useMotionValueEvent, type MotionValue } from 'motion/react'
 import { Vector2, Vector3, MathUtils } from 'three'
 import { MandateCubes } from './MandateCubes'
 import { GridFloor } from './GridFloor'
+import { DustField } from './DustField'
+import { AttemptRings } from './AttemptRings'
 import { PHASES, phaseFor, damp } from './scenePhases'
 import type { Narrative } from '../hooks/useReportData'
+import type { WebGLTier } from '../hooks/useWebGLSupport'
 
 /**
  * WHY THIS FILE IS SHAPED THIS WAY: the scene used to stutter on the first
@@ -35,6 +38,10 @@ import type { Narrative } from '../hooks/useReportData'
  *    calls gl.compile() at mount, so that cost is paid while the reader is
  *    still on the hero rather than at the moment they start scrolling.
  */
+
+/** The two tiers that actually mount a canvas. `probing` and `unavailable`
+ *  are decided in App before this file is reached. */
+export type SceneTier = Extract<WebGLTier, 'full' | 'degraded'>
 
 /** Camera positions per narrative beat, interpolated continuously. */
 const CAM_KEYS: [number, number, number][] = [
@@ -149,28 +156,34 @@ function ProgressDamper({
 const SceneCanvas = memo(function SceneCanvas({
   narrative,
   scrollYProgress,
+  tier,
 }: {
   narrative: Narrative
   scrollYProgress: MotionValue<number>
+  tier: SceneTier
 }) {
   const progressRef = useRef(0)
   const pointerRef = useRef({ x: 0, y: 0 })
+  const full = tier === 'full'
   // Small: at 0.0006+ the additive grid lines fringe red/cyan hard enough to
   // read as a broken render rather than as a lens.
   const aberration = useMemo(() => new Vector2(0.00022, 0.0003), [])
 
   return (
     <Canvas
-      // Capped rather than uncapped: a 3x retina display would otherwise
-      // render 9x the fragments for no visible gain on a scene this dark.
-      dpr={[1, 1.75]}
+      // Capped rather than uncapped, and capped harder on a degraded tier:
+      // fragments are the whole cost here, and the resolution is the only
+      // dial that moves all of them at once.
+      dpr={full ? [1, 1.75] : [1, 1.2]}
       gl={{
-        antialias: true,
+        antialias: full,
         powerPreference: 'high-performance',
-        // true, deliberately. A machine with no usable GPU would otherwise
-        // get a software context at single-digit fps. useWebGLSupport probes
-        // for the same thing before this ever mounts.
-        failIfMajorPerformanceCaveat: true,
+        // Asked for only on the full tier, and ONLY because useWebGLSupport
+        // has already established which tier this is. Demanding it here on a
+        // degraded machine would fail context creation inside the Canvas,
+        // where -- as the probe's comment records -- nothing throws and the
+        // reader gets a black rectangle instead of a fallback.
+        failIfMajorPerformanceCaveat: full,
       }}
       camera={{ position: [0, 2.4, 15], fov: 46, near: 0.1, far: 140 }}
     >
@@ -190,8 +203,17 @@ const SceneCanvas = memo(function SceneCanvas({
       />
       <CameraRig progressRef={progressRef} pointerRef={pointerRef} />
       <GridFloor progressRef={progressRef} />
+      {/* Depth first, so the lattice is read against it rather than beside
+          it. Skipped entirely on a degraded tier: it is the one element here
+          that is purely atmospheric, so it is the first thing to give up. */}
+      {full ? <DustField progressRef={progressRef} pixelRatio={1.75} /> : null}
+      <AttemptRings progressRef={progressRef} />
       <MandateCubes progressRef={progressRef} narrative={narrative} />
 
+      {/* Bloom is what makes the lattice glow rather than sit there, so it
+          survives on both tiers. The aberration and the vignette are lens
+          affectation -- real polish, but the first two passes to drop when
+          the machine has already told us it is being careful. */}
       <EffectComposer>
         <Bloom
           luminanceThreshold={0.55}
@@ -199,8 +221,12 @@ const SceneCanvas = memo(function SceneCanvas({
           intensity={1.15}
           mipmapBlur
         />
-        <ChromaticAberration offset={aberration} />
-        <Vignette eskil={false} offset={0.28} darkness={0.82} />
+        {full ? <ChromaticAberration offset={aberration} /> : <></>}
+        {full ? (
+          <Vignette eskil={false} offset={0.28} darkness={0.82} />
+        ) : (
+          <></>
+        )}
       </EffectComposer>
 
       <Warmup />
@@ -210,9 +236,10 @@ const SceneCanvas = memo(function SceneCanvas({
 
 interface SceneProps {
   narrative: Narrative
+  tier: SceneTier
 }
 
-export function Scene({ narrative }: SceneProps) {
+export function Scene({ narrative, tier }: SceneProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [phase, setPhase] = useState(0)
 
@@ -237,7 +264,11 @@ export function Scene({ narrative }: SceneProps) {
   return (
     <div ref={containerRef} className="scene-scroll">
       <div className="scene-container">
-        <SceneCanvas narrative={narrative} scrollYProgress={scrollYProgress} />
+        <SceneCanvas
+          narrative={narrative}
+          scrollYProgress={scrollYProgress}
+          tier={tier}
+        />
         <div className="scene-overlay">
           <PhaseLabel phase={phase} narrative={narrative} />
         </div>

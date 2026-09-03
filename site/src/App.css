@@ -8,6 +8,21 @@
   overflow-x: clip;
 }
 
+/* --- scroll progress ------------------------------------------------------
+   A hairline over the top of the nav. transform-origin left + scaleX means
+   the only thing that changes per frame is a compositor transform: no layout,
+   no paint, no width animation. Above the nav's z-index 40 so the sticky bar
+   does not cover it. */
+.scroll-progress {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  height: 2px;
+  z-index: 60;
+  transform-origin: 0 50%;
+  background: linear-gradient(90deg, var(--col-teal), #5eead4);
+  will-change: transform;
+}
+
 /* --- report load states ---------------------------------------------------
    Nothing on this page invents a number, so when results.json cannot be read
    the page says so rather than rendering a plausible-looking empty layout. */
@@ -75,8 +90,49 @@
 
 .nav-link--quiet { color: var(--text-faint); }
 
+/* Icon + label on one baseline. The icon inherits currentColor, so it picks
+   up the hover transition already declared on .nav-link for free. */
+.nav-link--icon {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.nav-icon { display: block; flex: none; }
+
 @media (max-width: 700px) {
   .nav-link:not(.nav-link--cta) { display: none; }
+}
+
+/* --- hero scroll cue -----------------------------------------------------
+   The scene below the hero is 520vh, and nothing in a static first viewport
+   says there is anything under it. The line draws down once and stops; it is
+   a signpost, not a looping attention-grabber. */
+.hero-scroll-cue {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: clamp(2rem, 6vh, 3.5rem);
+  color: var(--text-faint);
+  font-size: var(--step--1);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.hero-scroll-line {
+  display: block;
+  width: 34px; height: 1px;
+  background: linear-gradient(90deg, var(--col-teal), transparent);
+  transform-origin: 0 50%;
+  animation: scroll-cue 2.6s ease-in-out infinite;
+}
+
+@keyframes scroll-cue {
+  0%, 100% { transform: scaleX(0.45); opacity: 0.55; }
+  50%      { transform: scaleX(1);    opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hero-scroll-line { animation: none; transform: scaleX(1); }
 }
 
 /* ============================ HERO ====================================== */
