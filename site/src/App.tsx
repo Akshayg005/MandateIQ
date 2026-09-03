@@ -2,6 +2,7 @@ import { Suspense, lazy, useEffect } from 'react'
 import { HeroSection, CauseSection } from './components/HeroSection'
 import { SiteNav } from './components/SiteNav'
 import { CountersSection } from './components/Counters'
+import { HowItWorks } from './components/HowItWorks'
 import { ResultsSection } from './components/ResultsSection'
 import { Footer } from './components/Footer'
 import { CanvasErrorBoundary } from './components/CanvasErrorBoundary'
@@ -113,6 +114,11 @@ function App() {
           </CanvasErrorBoundary>
         )}
       </div>
+
+      {/* Mechanism before charts. The scene above shows the engine behaving
+          differently from the ladder; this says how, so the numbers below are
+          something the reader can account for rather than just accept. */}
+      <HowItWorks id="decides" />
 
       <CountersSection id="counters" narrative={narrative} data={data} />
 

@@ -19,6 +19,7 @@
  *    nothing" rather than as a confident answer.
  */
 import type { Cause, Decision, LedgerRow, MandateRecord } from "./data";
+import { BindingConstraint, ConformalSet, Slot } from "./glossary";
 
 const CAUSES: Cause[] = ["CANT_PAY_NOW", "CANT_PAY_EVER", "WONT_PAY"];
 
@@ -95,9 +96,13 @@ function DecisionBlock({ d }: { d: Decision }) {
       <header>
         {actionTag(d.action)}
         <span className="slot">
-          {d.chosen_slot !== null
-            ? `slot ${d.chosen_slot} · day ${d.chosen_day}`
-            : "no slot spent"}
+          {d.chosen_slot !== null ? (
+            <>
+              <Slot /> {d.chosen_slot} · day {d.chosen_day}
+            </>
+          ) : (
+            "no slot spent"
+          )}
         </span>
         <span className="dim mono">
           {d.outcome ? `→ ${d.outcome}` : "not executed"}
@@ -107,11 +112,15 @@ function DecisionBlock({ d }: { d: Decision }) {
       <BeliefBars d={d} />
 
       <dl className="kv" style={{ marginTop: 8 }}>
-        <dt>conformal set</dt>
+        <dt>
+          <ConformalSet />
+        </dt>
         <dd>
           <ConformalLine d={d} />
         </dd>
-        <dt>binding constraint</dt>
+        <dt>
+          <BindingConstraint />
+        </dt>
         <dd>
           {d.binding_constraint ?? (
             <span className="dim">none — an unforced value comparison</span>

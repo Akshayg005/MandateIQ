@@ -47,7 +47,7 @@ export function SiteNav() {
       </a>
 
       <div className="nav-links">
-        <a className="nav-link" href="#how">
+        <a className="nav-link" href="#decides">
           How it works
         </a>
         <a className="nav-link" href="#results">

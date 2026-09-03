@@ -986,3 +986,260 @@
   cursor: not-allowed;
 }
 .nav-link--down:hover { background: none; border-color: var(--line); }
+
+/* ========================= EXPLAIN-ON-DEMAND ============================
+   Terms that define themselves on hover, focus, or tap. See Explain.tsx for
+   the interaction contract and why all three are required.
+
+   The popover is ALWAYS in the DOM -- visibility is opacity/visibility, never
+   display:none and never conditional rendering. That keeps every definition
+   in the accessible tree and in the server-rendered HTML, which is what lets
+   ssr-check.tsx verify the page explains itself without running a browser. */
+
+.explain {
+  position: relative;
+  display: inline;
+  white-space: normal;
+}
+
+.explain-term {
+  /* Reset the button, keep the sentence. */
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  cursor: help;
+  /* A dotted underline reads as "there is more here" without competing with
+     real links, which are solid and teal. */
+  border-bottom: 1px dotted var(--text-faint);
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+.explain-term:hover,
+.explain-term:focus-visible,
+.explain-term.is-open {
+  color: var(--col-teal);
+  border-bottom-color: var(--col-teal);
+}
+.explain-term:focus-visible {
+  outline: 2px solid var(--col-teal);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+
+/* A small raised question mark, so the affordance survives for anyone who
+   cannot see the dotted underline -- and so touch users know to tap. */
+.explain-marker {
+  display: inline-block;
+  margin-left: 0.15em;
+  font-size: 0.62em;
+  font-weight: 700;
+  line-height: 1;
+  vertical-align: super;
+  opacity: 0.55;
+}
+.explain-term:hover .explain-marker,
+.explain-term.is-open .explain-marker {
+  opacity: 1;
+}
+
+.explain-pop {
+  position: absolute;
+  bottom: calc(100% + 0.6rem);
+  left: 50%;
+  transform: translateX(-50%) translateY(4px);
+  z-index: 70;
+  width: max-content;
+  max-width: min(22rem, calc(100vw - 2.5rem));
+  padding: 0.8rem 0.95rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.55);
+  color: var(--text-dim);
+  font-size: 0.83rem;
+  font-weight: 400;
+  line-height: 1.5;
+  text-align: left;
+  letter-spacing: 0;
+  text-transform: none;
+  /* Hidden but present. visibility (not display) so it stays measurable and
+     stays in the accessibility tree's document order. */
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.16s ease, transform 0.16s ease, visibility 0.16s;
+}
+.explain-pop--wide {
+  max-width: min(28rem, calc(100vw - 2.5rem));
+}
+.explain-pop.is-open {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(-50%) translateY(0);
+  pointer-events: auto;
+}
+.explain-pop em {
+  color: var(--text);
+  font-style: italic;
+}
+
+/* Near the left or right edge the centred popover would overflow the
+   viewport; these classes let a caller pin it to one side instead. */
+.explain-pop--left {
+  left: 0;
+  transform: translateX(0) translateY(4px);
+}
+.explain-pop--left.is-open {
+  transform: translateX(0) translateY(0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .explain-pop {
+    transition: none;
+    transform: translateX(-50%);
+  }
+  .explain-pop.is-open {
+    transform: translateX(-50%);
+  }
+}
+
+/* --- block-level disclosure ---------------------------------------------- */
+
+.explain-more {
+  margin-top: 1rem;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  background: rgba(22, 25, 34, 0.5);
+}
+.explain-more > summary {
+  cursor: pointer;
+  padding: 0.7rem 0.95rem;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  transition: color 0.15s ease;
+}
+.explain-more > summary::-webkit-details-marker {
+  display: none;
+}
+.explain-more > summary::before {
+  content: '+';
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.15rem;
+  height: 1.15rem;
+  flex: none;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--col-teal);
+  font-size: 0.8rem;
+  line-height: 1;
+}
+.explain-more[open] > summary::before {
+  content: '−';
+}
+.explain-more > summary:hover {
+  color: var(--text);
+}
+.explain-more > summary:focus-visible {
+  outline: 2px solid var(--col-teal);
+  outline-offset: 2px;
+}
+.explain-more-body {
+  padding: 0 0.95rem 0.95rem 2.6rem;
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  line-height: 1.65;
+}
+.explain-more-body p + p {
+  margin-top: 0.6rem;
+}
+.explain-more-body strong {
+  color: var(--text);
+}
+
+/* ========================= HOW IT WORKS ================================== */
+
+.how-section {
+  max-width: 68rem;
+  margin: 0 auto;
+  padding: clamp(4rem, 9vw, 7rem) clamp(1.25rem, 4vw, 3rem);
+}
+
+.how-steps {
+  display: grid;
+  gap: 1rem;
+  margin-top: 2.25rem;
+  /* 24rem, not 16: four steps across three columns leaves one orphaned in a
+     row of empty cells. Two columns gives a 2x2 block with the caveat spanning
+     underneath it, and the prose in each card gets a comfortable measure. */
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 24rem), 1fr));
+}
+
+.how-step {
+  display: flex;
+  flex-direction: column;
+  padding: 1.25rem 1.35rem 1.35rem;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.how-step-n {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.7rem;
+  height: 1.7rem;
+  margin-bottom: 0.85rem;
+  border-radius: 50%;
+  background: rgba(20, 184, 166, 0.13);
+  color: var(--col-teal);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+.how-step h3 {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.01em;
+}
+.how-step p {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 0.88rem;
+  line-height: 1.6;
+}
+.how-step .explain-more {
+  margin-top: auto;
+}
+
+/* The one card that is a claim about limits rather than a step. Spans the
+   full row so it reads as a footing under the four steps rather than as a
+   fifth one, and so it is not left orphaned beside empty grid cells. */
+.how-step--caveat {
+  grid-column: 1 / -1;
+  border-color: rgba(245, 158, 11, 0.3);
+  background: rgba(245, 158, 11, 0.05);
+}
+.how-step--caveat .how-step-n {
+  background: rgba(245, 158, 11, 0.15);
+  color: var(--col-amber);
+}
+
+/* Column definitions, sitting outside .results-table-wrap so their popovers
+   are not clipped by its overflow scroller. Quiet by design: a reader who
+   already knows the terms should be able to skip the whole line. */
+.results-legend {
+  max-width: 60rem;
+  margin: 0.9rem auto 0;
+  color: var(--text-faint);
+  font-size: 0.82rem;
+  line-height: 1.7;
+}

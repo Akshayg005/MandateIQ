@@ -17,6 +17,23 @@
 import { useMemo, useState } from "react";
 import type { Regimes } from "./data";
 import { pct, ratio } from "./data";
+import {
+  Afa,
+  Arm,
+  AttemptAfterTerminal,
+  Coverage,
+  ConformalSet,
+  FalseOfframp,
+  FalseReauth,
+  MissedRecovery,
+  NpciCap,
+  Offer,
+  OptedOut,
+  Profile,
+  Reauth,
+  Regime,
+  Seed,
+} from "./glossary";
 
 const NPCI_CAP = 4;
 
@@ -45,19 +62,25 @@ export default function Acquirer({ regimes }: { regimes: Regimes }) {
         <h2>portfolio compliance posture</h2>
         <div className="body">
           <div className="filters">
-            <label htmlFor="rg">regime</label>
+            <label htmlFor="rg">
+              <Regime />
+            </label>
             <select id="rg" value={regime} onChange={(e) => setRegime(e.target.value)}>
               {Object.keys(regimes.regimes).map((r) => (
                 <option key={r} value={r}>{r}</option>
               ))}
             </select>
-            <label htmlFor="pf">profile</label>
+            <label htmlFor="pf">
+              <Profile />
+            </label>
             <select id="pf" value={profile} onChange={(e) => setProfile(e.target.value)}>
               {regimes.profiles.map((p) => (
                 <option key={p} value={p}>{p}</option>
               ))}
             </select>
-            <label htmlFor="sd">seed</label>
+            <label htmlFor="sd">
+              <Seed />
+            </label>
             <select
               id="sd"
               value={seed}
@@ -136,12 +159,20 @@ export default function Acquirer({ regimes }: { regimes: Regimes }) {
             </table>
           </div>
           <p className="note">
-            NPCI allows 1 original + 3 retries = <strong>4 attempts, ever</strong>.
+            NPCI allows 1 original + 3 retries = <NpciCap />.
             &ldquo;att/mandate&rdquo; is the cell&rsquo;s mean; the per-mandate cap is
             enforced in the allocator and no cell may exceed it. Mandates above
-            the AFA-free limit (₹15,000, or ₹1,00,000 for the clause 8(b)
-            categories) are not silently retryable — they belong on the re-auth
+            the <Afa /> are not silently retryable — they belong on the re-auth
             path.
+          </p>
+          {/* Column definitions live out here, not in the <th> cells: the
+              table sits in a .scroll wrapper, and an overflow container clips
+              popovers at its edge. */}
+          <p className="legend">
+            <strong>Columns:</strong> <Arm /> is how wrong the simulator is
+            allowed to be · <Reauth /> asks the customer to re-enrol ·{" "}
+            <Offer /> is an exit offered rather than taken · <OptedOut /> is
+            the customer using the cancel button in the mandatory notice.
           </p>
         </div>
       </section>
@@ -183,6 +214,10 @@ export default function Acquirer({ regimes }: { regimes: Regimes }) {
             recoveries rather than under them.{" "}
             <strong>Missed recovery is an upper bound, not a point estimate</strong>:
             the counterfactual always lands inside the days 1–5 salary window.
+          </p>
+          <p className="legend">
+            <strong>Columns:</strong> <FalseReauth /> ·{" "}
+            <AttemptAfterTerminal /> · <MissedRecovery /> · <FalseOfframp />.
           </p>
         </div>
       </section>
@@ -241,6 +276,14 @@ export default function Acquirer({ regimes }: { regimes: Regimes }) {
             coverage is <em>measured</em> per cell rather than assumed.{" "}
             <strong>It under-covers.</strong> The {"{WONT_PAY}"} singleton rate is
             zero everywhere, which is why the off-ramp never fires.
+          </p>
+          <p className="legend">
+            <strong>Columns:</strong> the model returns a <ConformalSet />{" "}
+            rather than one answer · <Coverage /> is how often that set really
+            contained the truth · <em>singleton rate</em> is how often it shrank
+            to a single explanation, and the {"{WONT_PAY}"} column is how often
+            that single explanation was &ldquo;wants to leave&rdquo; — the only
+            case that can open an exit offer, and it is zero in every cell.
           </p>
         </div>
       </section>

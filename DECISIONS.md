@@ -4690,3 +4690,100 @@ What it argues, and why it is checkable: five blue stages carry the decision
 edges, and no path from a failed debit to a rupee moving crosses an amber
 box. That is enforced by `scripts/guard_invariants.py`, not by the drawing —
 which is the sentence the diagram exists to make legible in five seconds.
+
+### 2026-09-03 · B16 · Explain, do not hide — and the guard that said otherwise
+
+**The human's call, recorded because it reverses a decision this repo already
+made.** B13's review moved the "What this page is not showing you" block off
+the landing page into README's "What this can't do", and `ssr-check.tsx` was
+given a guard to keep it moved — it forbade the string `untested` from every
+rendered section. The reasoning was sound: a wall of disclaimers landing on a
+reader who does not yet know what the product is, is not honesty, it is
+noise.
+
+It went too far. The effect was that the site and the README told different
+stories about the same run, and the site's version was the flattering one. A
+reader who found the README afterwards would be right to ask what else was
+left off — which is the exact reaction the disclosure was supposed to
+prevent.
+
+Asked how to handle it, the human chose: **keep every finding on the page,
+and explain rather than dump — surfacing the explanation only on hover or
+click.** So the rule is now:
+
+- Findings stay on the page. The off-ramp never firing is the single most
+  important thing about these results and it is on the landing page, in its
+  own card, styled as a limit rather than a step.
+- The *full* eight-item list stays in README. A reader at the results table
+  wants the numbers explained, not a second copy of the repo.
+- Every term the page assumes now carries its own definition, revealed on
+  hover, focus or tap.
+
+`ssr-check.tsx`'s guard was rewritten rather than deleted, and it now asserts
+the opposite: `need(how, "never fired")`, `need(how, "untested")`,
+`need(how, "README")`. The `Buildathon` / `Track 03` forbids stay — competition
+framing still does not belong on a page a stranger might land on. A guard
+encoding a superseded decision is worse than no guard, because it looks like
+a reason.
+
+**The `Explain` component, and why the interaction contract has three parts.**
+Hover alone fails every touch device. Click alone makes a mouse user work for
+a definition. Focus alone is invisible to both. So it is all three, on a
+`<button>` so Tab reaches it without any aria-role theatre, with Escape and
+outside-click to dismiss a pinned one. Clicking the term again closes it — a
+tap must not be a one-way door.
+
+The popover is **always in the DOM**; visibility is CSS, never conditional
+rendering. Three things follow: the definitions are in the accessibility tree,
+they are findable by in-page search, and they appear in the server-rendered
+HTML — which is what lets `ssr-check` assert that the page explains itself
+without running a browser. `need(counters, "explain-term")` now fails if a
+term loses its definition.
+
+**Two things found by opening the thing rather than reasoning about it.**
+
+1. *Popovers cannot live inside a scroll container.* Definitions were first
+   put in the results table's `<th>` cells. Per the CSS overflow spec a
+   container that clips one axis clips the other, so `.results-table-wrap`'s
+   `overflow-x: auto` cut every popover off at the table's edge. They now sit
+   in a legend line beneath each table, outside the wrapper. The same applies
+   to every `.scroll` table on the dashboard, and the rule is written at the
+   top of its CSS block so the next person does not rediscover it.
+   Longer headers had also introduced a horizontal scrollbar; moving the
+   definitions out removed that too.
+2. *A centred popover falls off the edge of the window.* The acquirer view's
+   first column legend sits ~100px from the left, and `translateX(-50%)` put
+   half its definition off-screen. A static "pin it left near the edge" class
+   cannot work — the term's position depends on line wrapping, font metrics
+   and the reader's window width. It is measured in a layout effect and
+   nudged back inside, with a `typeof window` fallback to `useEffect` so
+   server rendering does not warn.
+
+**Two apps, two copies of `Explain.tsx`, deliberately.** They are separate
+Vite builds with separate dependency trees and separate palettes (the site is
+dark, the dashboard is a light finance tool). Sharing eighty stable lines
+would cost a workspace, a build step and a versioning story. There are
+exactly two copies and each says so at the top.
+
+**What the landing page gained.** A `How it decides` section between the
+scroll narrative and the charts: four steps and a limit. The narrative showed
+the engine behaving differently from the ladder without ever saying how, so a
+first-time reader reached the results with no model of what produced them —
+and a chart you cannot account for is a claim with a rectangle next to it.
+Each step reads in one sentence and opens to the mechanism. The fifth card is
+the off-ramp finding, styled as a footing under the four rather than as a
+fifth step.
+
+**What the dashboard gained.** An orientation strip as the first thing in
+`<main>` — what the page is, what the two views are for, and what the header
+codes mean — plus a column legend under every table. This view was built for
+a reviewer who already knows the domain and it showed: "conformal gate —
+measured coverage, not claimed" is a correct heading and an unreadable one.
+The numbers did not get simpler; the vocabulary stopped being a prerequisite.
+
+Both glossaries follow one house style: explain the thing rather than the
+jargon for it, never define a term using another undefined term, give the
+number where there is one, and **put the unflattering part in the
+definition**. `offer` says the column is 0 everywhere. `false off-ramp` says
+0 is not evidence of safety because nothing was ever offered. A tooltip that
+quietly omits the caveat is worse than no tooltip.

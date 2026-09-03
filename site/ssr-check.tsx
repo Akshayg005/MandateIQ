@@ -25,6 +25,7 @@ import { CountersSection } from "./src/components/Counters";
 import { ResultsSection } from "./src/components/ResultsSection";
 import { CanvasFallback } from "./src/components/CanvasFallback";
 import { ReducedMotionFallback } from "./src/components/ReducedMotionFallback";
+import { HowItWorks } from "./src/components/HowItWorks";
 import { deriveNarrative, type ReportData } from "./src/hooks/useReportData";
 
 const R: ReportData = JSON.parse(
@@ -57,6 +58,8 @@ const results = renderToString(
     seedCount={n.seedCount}
   />,
 );
+
+const how = renderToString(<HowItWorks id="decides" />);
 
 const canvasFallback = renderToString(<CanvasFallback narrative={n} />);
 const reducedMotion = renderToString(<ReducedMotionFallback narrative={n} />);
@@ -107,22 +110,48 @@ for (const [label, html] of [
   need(html, String(n.ladderAttempts), label);
 }
 
-// --- limitations belong in the repo, not on the page ------------------------
-// The "What this page is not showing you" block was moved to README.md's
-// "What this can't do". This asserts it stays moved: the landing page sells
-// what the engine does, and README is where the build is honest about what it
-// lacks. If a caveat creeps back into the page, this fails.
+// --- the page must explain itself, including what it cannot do --------------
+// SUPERSEDES the earlier rule that caveats live only in README. That rule was
+// written to stop a wall of disclaimers landing on a reader who did not yet
+// know what the product was; it went too far, and left the site and the README
+// telling different stories about the same run. The current rule is: the
+// findings stay on the page, and the page explains them rather than dumping
+// them -- see HowItWorks.tsx, where each one opens on demand.
+//
+// The off-ramp never firing is the single most important thing about these
+// results, so it is asserted PRESENT here rather than forbidden.
+need(how, "never fired", "how");
+need(how, "untested", "how");
+need(how, "README", "how");
+// Every step must carry its plain-language explanation, not just a heading.
+need(how, "explain-more", "how");
+need(how, "closed list", "how");
+need(how, "fails the build", "how");
+
+// Competition framing still does not belong on the page: a reader arriving
+// from a search result is not a judge, and the product has to stand up
+// without the context of a contest.
 for (const [label, html] of [
   ["counters", counters],
   ["results", results],
+  ["how", how],
   ["canvas-fallback", canvasFallback],
   ["reduced-motion", reducedMotion],
 ] as const) {
-  forbid(html, "What this page is not showing you", label);
-  forbid(html, "untested", label);
   forbid(html, "Buildathon", label);
   forbid(html, "Track 03", label);
 }
+
+// --- jargon must arrive with its definition attached ------------------------
+// Every term a first-time reader would not know is wrapped in <Explain>, whose
+// definition is always in the DOM (visibility is CSS, never conditional
+// rendering). So the definitions are assertable here without a browser -- and
+// a term that loses its explanation fails this check rather than silently
+// shipping.
+need(counters, "explain-term", "counters");
+need(results, "explain-term", "results");
+need(counters, "NPCI", "counters");
+need(results, "Razorpay", "results");
 
 // --- the placeholders must NOT ----------------------------------------------
 // PLAN.md's storyboard numbers, written months before B13 produced a result.

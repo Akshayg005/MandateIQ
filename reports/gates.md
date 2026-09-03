@@ -794,4 +794,24 @@ un.ps1 verify passes 5/5 including the postgres check that had
            is exactly the configuration that produced a green verification of
            a page a real reader could not see. Whatever the video shows, one
            pass must be watched on the human's own everyday browser before
-           this gate is ticked. -->
+           this gate is ticked.
+
+           ALSO DONE, same block, at the human's direction.
+
+           * The LLM benchmark can run at all now. `.un.ps1 bench` had been
+             refusing to start since the per-model quotas were measured: the
+             flash arm plans 440 calls against a 20/day cap, which is 22 days.
+             fit_plan_to_quota shrinks a plan instead of refusing it, so flash
+             runs as a 20-call variance-only probe with no accuracy pass and
+             flash-lite keeps its full 440/500. README limitation 9 records
+             that the accuracy numbers are budget-bound. Verified offline; no
+             live calls spent. Quota rolls over 2026-09-04 12:30 IST.
+           * Both apps now explain themselves. The human's call, and it
+             REVERSES this repo's earlier decision to keep caveats out of the
+             landing page -- see DECISIONS.md, 2026-09-03, "Explain, do not
+             hide". Findings stay on the page; every assumed term carries a
+             definition that appears on hover, focus or tap; the landing page
+             gained a "How it decides" section whose fifth card is the
+             off-ramp finding. ssr-check.tsx's guard was rewritten to assert
+             the opposite of what it used to, rather than deleted -- a guard
+             encoding a superseded decision looks like a reason. -->

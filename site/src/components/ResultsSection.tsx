@@ -1,3 +1,14 @@
+import {
+  AttemptsPerRecovery,
+  FixedLadder,
+  OneShot,
+  Preserved,
+  Recovered,
+  Seeds,
+  SignTest,
+  Synthetic,
+} from '../glossary'
+
 interface ResultsSectionProps {
   id: string
   recoveredPct: string
@@ -41,8 +52,9 @@ export function ResultsSection({
     <section id={id} className="results-section">
       <h2 className="section-label">Full Results</h2>
       <p className="section-subtitle">
-        Every number here comes from a saved evaluation run, and the whole run
-        can be reproduced from the repository.
+        Every number here comes from a saved run over <Synthetic />, and the
+        whole run can be reproduced from the repository with one command.
+        Hover or tap any underlined term for what it means.
       </p>
 
       <div className="results-table-wrap">
@@ -50,16 +62,16 @@ export function ResultsSection({
           <thead>
             <tr>
               <th></th>
-              <th>Recovered</th>
-              <th>Attempts / Rec</th>
-              <th className="col-highlight">Mandates Preserved</th>
+              <th>Money collected</th>
+              <th>Attempts per recovery</th>
+              <th className="col-highlight">Customers still subscribed</th>
             </tr>
           </thead>
           <tbody>
             <tr className="row-ladder">
               <td className="row-label">
                 <span className="dot dot--ladder"></span>
-                Fixed Ladder (incumbent)
+                Fixed ladder — what Razorpay does today
               </td>
               <td>
                 {ladderRecovered}{' '}
@@ -96,9 +108,23 @@ export function ResultsSection({
         </table>
       </div>
 
+      {/* Definitions live BELOW the table, not inside its cells. The table
+          wrapper is an overflow-x scroller, and per the CSS overflow spec a
+          container that clips one axis clips the other too -- so a popover
+          opened from a <th> is cut off at the table's edge, which is exactly
+          what happened when these were tried in the header row. Out here they
+          have the whole page to open into, and the table keeps short headings
+          that fit without a horizontal scrollbar. */}
+      <p className="results-legend">
+        What these mean: <Recovered />, <AttemptsPerRecovery />, customers{' '}
+        <Preserved /> · the two comparisons are the <FixedLadder /> and{' '}
+        <OneShot />.
+      </p>
+
       <div className="sign-test-summary">
         <h3>
-          Sign Test ({seedCount} seeds, {signTestTotal} paired comparisons)
+          Head to head — {seedCount} <Seeds />, <SignTest />, {signTestTotal}{' '}
+          comparisons
         </h3>
         <p>
           Engine vs Ladder:{' '}
@@ -109,14 +135,18 @@ export function ResultsSection({
           attempts in {signTestSpendsFewerAttempts}/{signTestTotal}.
         </p>
         <p className="sign-test-note">
-          Deliberately recovering less this cycle to protect lifetime value is
-          the thesis, not a bug.
+          Deliberately collecting less this cycle to keep a customer paying for
+          another year is the whole argument, not a bug. The full list of what
+          this engine cannot do — including the one feature that never fired —
+          is in the repository&rsquo;s README.
         </p>
       </div>
 
-      {/* The limitations that used to sit here now live in README.md's
-          "What this can't do". The page shows what the engine does; the
-          repository is where the build is honest about what it lacks. */}
+      {/* Caveats are not banished from this page -- see HowItWorks.tsx, which
+          carries the off-ramp finding and opens each explanation on demand.
+          What is deliberately NOT repeated here is the full eight-item list:
+          a reader at the results table wants the numbers explained, not a
+          second copy of the README. The link above is the route to it. */}
     </section>
   )
 }

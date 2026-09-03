@@ -11,6 +11,7 @@
 import { useMemo, useState } from "react";
 import type { Bars, MandateRecord, Results } from "./data";
 import Drilldown from "./Drilldown";
+import { Afa, NpciCap, OptedOut, Reauth } from "./glossary";
 
 function preservedCount(b: Bars): number {
   return Number(b.mandates_preserved.split("/")[0]);
@@ -301,6 +302,19 @@ export default function Merchant({
                   </tbody>
                 </table>
               </div>
+              {/* Outside the .scroll wrapper on purpose: an overflow container
+                  clips a popover at its edge, so definitions cannot live in
+                  the header cells. */}
+              <p className="legend">
+                <strong>Columns:</strong> <em>attempts</em> counts charge
+                attempts against the <NpciCap /> · <em>final action</em> is what
+                the engine last decided — ATTEMPT, <Reauth />, OFFER or STOP ·{" "}
+                <em>outcome</em> is what actually happened, where{" "}
+                <OptedOut /> is its own result and never a decline ·{" "}
+                <em>AFA</em> says whether the amount is above the{" "}
+                <Afa /> · <em>ledger rows</em> is how many entries the
+                append-only record holds for that customer.
+              </p>
             </div>
           </section>
 

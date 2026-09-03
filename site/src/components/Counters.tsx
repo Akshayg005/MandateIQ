@@ -1,5 +1,14 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Reveal } from './Reveal'
+import {
+  AttemptsPerRecovery,
+  FixedLadder,
+  FourAttempts,
+  Preserved,
+  Recovered,
+  Seeds,
+  SignTest,
+} from '../glossary'
 import type { Narrative, ReportData } from '../hooks/useReportData'
 
 /**
@@ -54,7 +63,12 @@ function useInView<T extends HTMLElement>() {
 
 interface BarChartProps {
   title: string
+  /** The same measure, wrapped so it defines itself on hover/tap. Rendered
+   *  beside the title rather than replacing it: the heading must still read
+   *  as a heading for anyone who never interacts with it. */
+  titleTerm?: ReactNode
   unit: string
+  unitTerm?: ReactNode
   engineValue: number
   ladderValue: number
   engineLabel: string
@@ -71,7 +85,9 @@ interface BarChartProps {
  */
 function PairedBar({
   title,
+  titleTerm,
   unit,
+  unitTerm,
   engineValue,
   ladderValue,
   engineLabel,
@@ -88,8 +104,14 @@ function PairedBar({
     <Reveal className="bar-chart-reveal">
     <figure className="bar-chart">
       <figcaption className="bar-chart-head">
-        <h3>{title}</h3>
-        <span className="bar-chart-unit">{unit}</span>
+        <h3>
+          {title}
+          {titleTerm ? <span className="bar-chart-help"> {titleTerm}</span> : null}
+        </h3>
+        <span className="bar-chart-unit">
+          {unit}
+          {unitTerm ? <> {unitTerm}</> : null}
+        </span>
       </figcaption>
 
       <div className="bar-rows">
@@ -150,9 +172,9 @@ export function CountersSection({
           Most retry systems report one number. That number hides the cost.
         </h2>
         <p className="section-subtitle">
-          We ran the same {n.seedCount} batches through both policies and
-          compared them one batch at a time, {data.paired_comparisons}{' '}
-          comparisons in all. This engine kept more customers in{' '}
+          We ran the same {n.seedCount} <Seeds /> through both policies and{' '}
+          <SignTest />, {data.paired_comparisons} comparisons in all. This
+          engine kept more customers in{' '}
           <strong>{data.sign_test.vs_ladder.preserves_more}</strong> of them,
           and collected more money in only{' '}
           <strong>{data.sign_test.vs_ladder.recovers_more}</strong>.
@@ -167,13 +189,14 @@ export function CountersSection({
         </span>
         <span className="legend-item">
           <span className="legend-swatch" style={{ background: LADDER }} />
-          Fixed ladder (incumbent)
+          <FixedLadder /> (what is used today)
         </span>
       </div>
 
       <div className="bar-charts">
         <PairedBar
           title="Customers still subscribed at the end"
+          titleTerm={<Preserved />}
           unit={`of ${n.total}`}
           engineValue={n.enginePreserved}
           ladderValue={n.ladderPreserved}
@@ -185,6 +208,7 @@ export function CountersSection({
         />
         <PairedBar
           title="Money collected"
+          titleTerm={<Recovered />}
           unit="this billing cycle"
           engineValue={n.engineRecoveredPaise}
           ladderValue={n.ladderRecoveredPaise}
@@ -196,7 +220,9 @@ export function CountersSection({
         />
         <PairedBar
           title="Attempts used"
-          unit="four allowed per customer, ever"
+          titleTerm={<AttemptsPerRecovery />}
+          unit="NPCI cap:"
+          unitTerm={<FourAttempts />}
           engineValue={n.engineAttempts}
           ladderValue={n.ladderAttempts}
           engineLabel={String(n.engineAttempts)}
