@@ -236,7 +236,10 @@ Mandate Recovery Engine -- tasks
     # --n 200 --repeats 5 (the original pinned args) plans 600 live calls per
     # model against a 500/model/day free-tier cap, and cannot complete --
     # POSTMORTEM.md incident 8, where it died at call 400. 140 + 5*30*2 = 440
-    # fits, and bench refuses to start anything that does not.
+    # fits flash-lite (500/day). It does NOT fit flash (20/day), so each model
+    # plan is now FITTED to its own cap rather than refused: flash runs as a
+    # 20-call variance-only probe with no accuracy pass. See fit_plan_to_quota
+    # in bench/llm_vs_stats.py for what it gives up and why in that order.
     "bench"      { Invoke-Step "bench" { & $Py bench\llm_vs_stats.py --n 140 --repeats 5 --variance-n 30 } }
     "shadow"     { Invoke-Step "shadow" { & $Py -m src.execute.shadow } }
     "chaos"      { Invoke-Step "chaos" { & $Py -m eval.chaos --kills=$Kills } }

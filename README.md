@@ -207,6 +207,24 @@ about what it does not have. Every claim below is reproducible from
    why the system offers rather than acts.
 8. **Whether a retry requires its own 24h pre-notification is unresolved**
    in the RBI circular. Both interpretations ship; neither is assumed.
+9. **The LLM benchmark is quota-bound, and its accuracy numbers would
+   improve with a larger one.** Both arms run on Google free-tier keys.
+   `gemini-3.5-flash-lite` gets 500 calls/day, which funds the full arm: 140
+   accuracy rows plus 5 repeats over a 30-row subsample at two temperatures.
+   `gemini-3.5-flash` gets **20 calls/day**. The same plan would need 22 days
+   there, so its plan is fitted to the cap instead
+   ([`fit_plan_to_quota`](bench/llm_vs_stats.py)) and it runs as a
+   **variance-only probe**: no accuracy pass at all, 10 repeats of one
+   byte-identical row at each temperature. It reports whether identical input
+   produced identical answers and how far the probabilities moved. It reports
+   **no AUC, no log loss and no Brier**, and its numbers are not comparable
+   with the full arm.
+   With a paid-tier quota the fit would not trigger: the flash arm would run
+   the same 440-call plan as flash-lite, and both arms' accuracy estimates
+   would tighten with more rows — the accuracy comparison here is limited by
+   call budget, not by anything the models did. The variance finding is the
+   one that does not need more quota: it is an existence claim, and one
+   disagreement between identical calls settles it.
 
 ### Reading the numbers correctly
 

@@ -755,6 +755,111 @@ PROMPT_VERSION = __import__("hashlib").sha256(
 ).hexdigest()[:12]
 
 
+# variance_report() raises below 2 repeats, and a one-repeat 'variance' would
+# be zero by construction. Named here so the quota fit and the reporter agree
+# on the same floor.
+_MIN_VARIANCE_REPEATS = 2
+
+
+@dataclass(frozen=True)
+class ModelPlan:
+    """What one model will actually run, after its daily quota has had its say.
+
+    `shrunk` and `reason` are carried all the way into the report because a
+    20-call arm and a 440-call arm in the same table are not two rows of one
+    measurement, and a reader who is not told will compare them as if they
+    were.
+    """
+    model: str
+    n: int
+    repeats: int
+    variance_n: int
+    calls: int
+    shrunk: bool
+    reason: str
+
+    @property
+    def variance_only(self) -> bool:
+        return self.n == 0
+
+
+def fit_plan_to_quota(model: str, *, n: int, repeats: int, variance_n: int,
+                      temperatures: Sequence[float], quota: int | None = None) -> ModelPlan:
+    """Shrink a model's plan to fit its daily cap, instead of refusing it.
+
+    `assert_within_budget` refusing a 440-call plan against flash's 20/day cap
+    is correct -- and refusing is where it stopped, which is why
+    reports/bench.json shipped with no LLM row at all. 440 at 20/day is 22
+    days. The deadline is not 22 days away.
+
+    WHAT IS GIVEN UP, AND WHY IN THIS ORDER.
+
+    The accuracy pass goes first, whole. Twenty calls cannot support a rate:
+    a 5-row flip rate of 0/5 has a Wilson interval of [0.000, 0.434], which
+    is indistinguishable from "jitters constantly" -- and worse, it RENDERS as
+    stability, contradicting this arm's own argument for pure sample-size
+    reasons. An AUC over 4 rows sitting beside a 140-row AUC in one table is
+    the same hazard. So the shrunk arm makes no accuracy claim at all.
+
+    `variance_n` then goes to 1, and every remaining call buys a repeat. The
+    claim a small budget CAN support is existence -- "here are two
+    byte-identical calls that returned different answers" -- and existence is
+    a function of repeats, not of row coverage. Eight repeats of one row is 28
+    pairwise comparisons; two repeats of five rows is ten.
+
+    Repeats may end up ABOVE the number requested. That is deliberate: with
+    variance_n pinned to 1 they are the only thing carrying the measurement,
+    and leaving quota unspent would weaken the one claim available.
+
+    Both temperatures survive. PLAN_DETAIL.md forbids a t=0-only run and the
+    sharpest finding available is that variance at t=0.0 is not zero, so
+    buying repeats by dropping a temperature would spend the arm's whole
+    point.
+    """
+    n_temps = len(temperatures)
+    if n_temps < 1:
+        raise ValueError("at least one temperature is required")
+    cap = daily_quota(model) if quota is None else quota
+    requested = n + repeats * variance_n * n_temps
+    if requested <= cap:
+        return ModelPlan(model=model, n=n, repeats=repeats, variance_n=variance_n,
+                         calls=requested, shrunk=False, reason="")
+
+    fitted_repeats = cap // n_temps
+    if fitted_repeats < _MIN_VARIANCE_REPEATS:
+        raise ValueError(
+            f"{model}'s quota of {cap}/day is too small to measure variance at "
+            f"{n_temps} temperature(s): it affords {fitted_repeats} repeat(s) and "
+            f"{_MIN_VARIANCE_REPEATS} are the minimum. A one-repeat 'variance' is "
+            f"zero by construction, which would read as evidence of stability -- "
+            f"the exact false comfort this arm exists to avoid."
+        )
+    calls = fitted_repeats * n_temps
+    reason = (
+        f"{requested} calls requested, {cap}/day available. The accuracy pass "
+        f"(n={n}) is dropped whole rather than reduced -- {cap} calls cannot "
+        f"support a rate or an AUC, only an existence claim -- and the variance "
+        f"subsample is pinned to 1 row so every remaining call buys a repeat: "
+        f"{fitted_repeats} repeats at each of {n_temps} temperatures. This arm "
+        f"reports whether identical input produced identical answers, and how far "
+        f"the probabilities moved. It makes NO accuracy claim and its numbers are "
+        f"not comparable with a full arm's."
+    )
+    return ModelPlan(model=model, n=0, repeats=fitted_repeats, variance_n=1,
+                     calls=calls, shrunk=True, reason=reason)
+
+
+def plans_for(*, models: Sequence[str], n: int, repeats: int, variance_n: int,
+              temperatures: Sequence[float]) -> dict[str, ModelPlan]:
+    """One fitted plan per model. Quotas are per model and are not equal, so
+    a single global plan is what put 440 flash calls against a 20/day cap."""
+    return {
+        m: fit_plan_to_quota(m, n=n, repeats=repeats, variance_n=variance_n,
+                             temperatures=temperatures)
+        for m in models
+    }
+
+
 def plan_budget(*, n: int, repeats: int, variance_n: int, temperatures: Sequence[float],
                 models: Sequence[str]) -> dict[str, int]:
     """Calls this configuration will make, per model. Checked BEFORE any client
@@ -833,9 +938,12 @@ class CallCache:
 @dataclass
 class ArmResult:
     name: str
-    auc: float
-    auc_ci: tuple[float, float]
-    log_loss: float
+    # None on a variance-only arm. A quota-shrunk arm runs no accuracy pass at
+    # all (see fit_plan_to_quota), and printing a 0.0 or an AUC over four rows
+    # beside a 140-row AUC would be worse than printing nothing.
+    auc: float | None
+    auc_ci: tuple[float, float] | None
+    log_loss: float | None
     brier: dict[int, float]
     p95_latency_s: float
     latency_kind: str
@@ -961,9 +1069,16 @@ def llm_arm(
     usd_inr_paise: int,
     pricing: Mapping[str, Any],
     use_cache: bool = True,
+    plan: "ModelPlan | None" = None,
 ) -> ArmResult:
     """Accuracy over the full sample once at t=0.0, then `repeats` passes
-    over a `variance_n` subsample at each temperature."""
+    over a `variance_n` subsample at each temperature.
+
+    A quota-shrunk `plan` (see fit_plan_to_quota) skips the accuracy pass
+    entirely and spends every call on repeats. The arm then carries no AUC,
+    no log loss and no Brier -- deliberately, because the alternative is an
+    AUC over four rows printed in the same column as one over a hundred and
+    forty."""
     client = InstrumentedGemini()
     cache = CallCache(model, enabled=use_cache)
     y_true = test["event_code"].to_numpy(dtype=int)
@@ -996,9 +1111,13 @@ def llm_arm(
                 )
         return np.array(out)
 
-    accuracy_probs = _score(
-        rows, 0.0, "accuracy", repeat=0, row_ids=list(range(len(rows)))
+    variance_only = plan is not None and plan.variance_only
+    accuracy_probs = (
+        None if variance_only
+        else _score(rows, 0.0, "accuracy", repeat=0, row_ids=list(range(len(rows))))
     )
+    if variance_only:
+        print(f"    [{model}] accuracy pass SKIPPED -- {plan.reason}", flush=True)
 
     variance: dict[str, VarianceReport] = {}
     raw_runs: dict[str, list] = {}
@@ -1022,11 +1141,12 @@ def llm_arm(
     output_tokens = sum(rec.output_tokens for rec in client.records)
     groups = test["mandate_id"].to_numpy()
     return ArmResult(
-        name=f"{model} as classifier",
-        auc=macro_ovr_auc(y_true, accuracy_probs),
-        auc_ci=cluster_bootstrap_ci(y_true, accuracy_probs, groups),
-        log_loss=multiclass_log_loss(y_true, accuracy_probs),
-        brier=brier_per_class(y_true, accuracy_probs),
+        name=(f"{model} as classifier" if not variance_only
+              else f"{model} (variance probe, quota-shrunk)"),
+        auc=None if variance_only else macro_ovr_auc(y_true, accuracy_probs),
+        auc_ci=None if variance_only else cluster_bootstrap_ci(y_true, accuracy_probs, groups),
+        log_loss=None if variance_only else multiclass_log_loss(y_true, accuracy_probs),
+        brier={} if variance_only else brier_per_class(y_true, accuracy_probs),
         p95_latency_s=p95([rec.latency_s for rec in client.records]),
         latency_kind="per-call, network",
         cost_per_1k_paise=cost_per_1k_paise(
@@ -1037,17 +1157,26 @@ def llm_arm(
             usd_inr_paise=usd_inr_paise,
             pricing=pricing,
         ),
-        n_scored=len(test),
+        n_scored=0 if variance_only else len(test),
         degenerate_answers=client.degenerate_answers,
         variance=variance,
         note=(
             f"{cache.misses} live calls, {cache.hits} cached; variance subsample n={len(sub)}; "
             f"{client.degenerate_answers} degenerate answer(s) coerced to uniform"
+            + (f". QUOTA-SHRUNK: {plan.reason}" if variance_only else "")
         ),
-        probs=accuracy_probs.tolist(),
+        probs=[] if accuracy_probs is None else accuracy_probs.tolist(),
         variance_runs=raw_runs,
         variance_row_index=[int(i) for i in sub_idx],
     )
+
+
+def _fmt_accuracy(arm: "ArmResult") -> str:
+    """A variance-only arm ran no accuracy pass, so it has no log loss and no
+    AUC. Say that, rather than formatting a None into a zero."""
+    if arm.log_loss is None or arm.auc is None:
+        return "no accuracy pass (variance-only arm)"
+    return f"log loss {arm.log_loss:.4f} AUC {arm.auc:.4f}"
 
 
 def _fmt_latency(seconds: float) -> str:
@@ -1075,9 +1204,16 @@ def render_table(arms: Sequence[ArmResult], *, pricing: Mapping[str, Any], seed:
         det = "0.000 (deterministic)"
         cost = "0 (local)" if a.cost_per_1k_paise == 0 else f"{a.cost_per_1k_paise} paise"
         lat = "n/a" if a.latency_kind == "n/a" else f"{_fmt_latency(a.p95_latency_s)} ({a.latency_kind})"
+        # An em dash, never a zero: a variance-only arm made no accuracy
+        # claim, and a 0.0000 in this column would read as one.
+        ll_cell = "--" if a.log_loss is None else f"{a.log_loss:.4f}"
+        auc_cell = (
+            "--" if a.auc is None or a.auc_ci is None
+            else f"{a.auc:.4f} [{a.auc_ci[0]:.3f}, {a.auc_ci[1]:.3f}]"
+        )
         lines.append(
-            f"| {a.name} | {a.log_loss:.4f} | "
-            f"{a.auc:.4f} [{a.auc_ci[0]:.3f}, {a.auc_ci[1]:.3f}] | {lat} | {cost} | "
+            f"| {a.name} | {ll_cell} | "
+            f"{auc_cell} | {lat} | {cost} | "
             f"{det if v0 is None else f'{v0.argmax_flip_rate:.3f} [{v0.argmax_flip_ci[0]:.2f},{v0.argmax_flip_ci[1]:.2f}]'} | "
             f"{det if v1 is None else f'{v1.argmax_flip_rate:.3f} [{v1.argmax_flip_ci[0]:.2f},{v1.argmax_flip_ci[1]:.2f}]'} | "
             f"{det if v0 is None else f'{v0.cause_ordering_flip_rate:.3f}'} |"
@@ -1086,9 +1222,11 @@ def render_table(arms: Sequence[ArmResult], *, pricing: Mapping[str, Any], seed:
     brier_rows = ["", "Per-class Brier (lower is better):", "",
                   "| arm | STILL_PENDING | RECOVERED | DEAD | OPTED_OUT |", "|---|---|---|---|---|"]
     for a in arms:
-        brier_rows.append(
-            f"| {a.name} | " + " | ".join(f"{a.brier.get(c, float('nan')):.4f}" for c in range(4)) + " |"
+        cells = (
+            ["--"] * 4 if not a.brier
+            else [f"{a.brier.get(c, float('nan')):.4f}" for c in range(4)]
         )
+        brier_rows.append(f"| {a.name} | " + " | ".join(cells) + " |")
 
     swings = [
         f"- {a.name}, {k}: max |delta P(OPTED_OUT)| across repeats = {v.max_optout_swing:.3f}"
@@ -1160,13 +1298,19 @@ def main(n: int = 200, repeats: int = 5, *, variance_n: int = 40, seed: int = 0,
     usd_inr_paise = int(pricing["usd_inr_paise"])
     models = tuple(models or ("gemini-3.5-flash-lite", "gemini-3.5-flash"))
 
+    # Fit each model's plan to ITS OWN daily cap before checking the budget.
+    # The caps are not equal (500 vs 20), and a single global plan is what put
+    # 440 flash calls against a 20/day quota and left the arm unrunnable.
+    plans = plans_for(models=models, n=n, repeats=repeats, variance_n=variance_n,
+                      temperatures=(0.0, 1.0))
     if not dry_run:
-        budget = plan_budget(n=n, repeats=repeats, variance_n=variance_n,
-                             temperatures=(0.0, 1.0), models=models)
-        assert_within_budget(budget, already_spent=already_spent)
-        print("planned live calls: " + ", ".join(
-            f"{m}={c} (quota {daily_quota(m)}/day)" for m, c in sorted(budget.items())
-        ))
+        assert_within_budget({m: pl.calls for m, pl in plans.items()},
+                             already_spent=already_spent)
+        for m, pl in sorted(plans.items()):
+            print(f"planned live calls: {m}={pl.calls} (quota {daily_quota(m)}/day)"
+                  + (" -- SHRUNK" if pl.shrunk else ""))
+            if pl.shrunk:
+                print(f"  {pl.reason}")
 
     train, test = build_test_split(seed=seed)
     if n < len(test):
@@ -1176,23 +1320,25 @@ def main(n: int = 200, repeats: int = 5, *, variance_n: int = 40, seed: int = 0,
     arms: list[ArmResult] = []
     null = null_arm(train, test)
     arms.append(null)
-    print(f"  {null.name}: log loss {null.log_loss:.4f} AUC {null.auc:.4f}")
+    print(f"  {null.name}: {_fmt_accuracy(null)}")
 
     stats, _ = stats_arm(train, test)
     arms.append(stats)
-    print(f"  {stats.name}: log loss {stats.log_loss:.4f} AUC {stats.auc:.4f} ({stats.note})")
+    print(f"  {stats.name}: {_fmt_accuracy(stats)} ({stats.note})")
 
     if dry_run:
         print("dry run -- no live calls made, LLM arms skipped")
     else:
         for model in models:
+            plan = plans[model]
             arm = llm_arm(
-                model=model, test=test, repeats=repeats, variance_n=variance_n,
+                model=model, test=test, repeats=plan.repeats,
+                variance_n=plan.variance_n,
                 temperatures=(0.0, 1.0), usd_inr_paise=usd_inr_paise, pricing=pricing,
-                use_cache=use_cache,
+                use_cache=use_cache, plan=plan,
             )
             arms.append(arm)
-            print(f"  {arm.name}: log loss {arm.log_loss:.4f} AUC {arm.auc:.4f} ({arm.note})")
+            print(f"  {arm.name}: {_fmt_accuracy(arm)} ({arm.note})")
             for label, v in arm.variance.items():
                 print(f"    variance {label}: {v.summary()}")
 
@@ -1217,7 +1363,8 @@ def main(n: int = 200, repeats: int = 5, *, variance_n: int = 40, seed: int = 0,
                 "slot": test["slot"].astype(int).tolist(),
                 "arms": [
                     {
-                        "name": a.name, "auc": a.auc, "auc_ci": list(a.auc_ci),
+                        "name": a.name, "auc": a.auc,
+                        "auc_ci": None if a.auc_ci is None else list(a.auc_ci),
                         "log_loss": a.log_loss,
                         "brier": {str(k): v for k, v in a.brier.items()},
                         "p95_latency_s": a.p95_latency_s, "latency_kind": a.latency_kind,

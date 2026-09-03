@@ -724,3 +724,117 @@ def test_call_cache_can_be_disabled(bench_module, tmp_path, monkeypatch):
     key = bench_module.CallCache.key(temperature=0.0, repeat=0, row_index=1)
     c.put(key, [0.25, 0.25, 0.25, 0.25])
     assert c.get(key) is None, "a disabled cache must never serve a hit"
+
+
+# --- Fitting a plan to a quota, instead of refusing (B16) --------------------
+#
+# The flash arm plans 440 calls against a hard 20/day cap. assert_within_budget
+# correctly refuses it, which means the arm could never run at all -- 440 at
+# 20/day is 22 days, and the deadline is not 22 days away. Refusing is right;
+# refusing and stopping there is what left reports/bench.json with no LLM row
+# in it. fit_plan_to_quota shrinks the plan instead, and says what it gave up.
+
+
+def test_a_plan_that_fits_is_left_exactly_alone(bench_module):
+    plan = bench_module.fit_plan_to_quota(
+        "gemini-3.5-flash-lite", n=140, repeats=5, variance_n=30,
+        temperatures=(0.0, 1.0),
+    )
+    assert plan.n == 140
+    assert plan.repeats == 5
+    assert plan.variance_n == 30
+    assert plan.calls == 440
+    assert plan.shrunk is False
+    assert plan.reason == ""
+
+
+def test_the_flash_arm_is_shrunk_to_a_variance_only_probe(bench_module):
+    """20 calls buys an EXISTENCE claim, never a rate. So the accuracy pass is
+    dropped whole (it would produce an AUC over 4 rows sitting next to a
+    140-row AUC in the same table) and every call goes to repeats."""
+    plan = bench_module.fit_plan_to_quota(
+        "gemini-3.5-flash", n=140, repeats=5, variance_n=30,
+        temperatures=(0.0, 1.0),
+    )
+    assert plan.shrunk is True
+    assert plan.n == 0, "the accuracy pass is dropped, not merely reduced"
+    assert plan.variance_n == 1
+    assert plan.calls <= bench_module.daily_quota("gemini-3.5-flash")
+
+
+def test_a_shrunk_plan_spends_its_whole_budget_on_repeats(bench_module):
+    """With variance_n pinned to 1, repeats are the only thing carrying the
+    measurement, so the fit maximises them -- even ABOVE the requested 5.
+    Leaving quota unspent here would weaken the one claim the arm can make."""
+    quota = bench_module.daily_quota("gemini-3.5-flash")
+    plan = bench_module.fit_plan_to_quota(
+        "gemini-3.5-flash", n=140, repeats=5, variance_n=30,
+        temperatures=(0.0, 1.0),
+    )
+    assert plan.repeats == quota // 2
+    assert plan.repeats > 5, "the fit must not silently keep the smaller ask"
+    assert plan.calls == plan.repeats * 2
+
+
+def test_shrinking_keeps_both_temperatures(bench_module):
+    """PLAN_DETAIL.md forbids running the LLM at temperature 0 only, and the
+    sharpest finding available is that variance at t=0.0 is NOT zero. Buying
+    repeats by dropping a temperature would spend the arm's whole point."""
+    temps = (0.0, 1.0)
+    plan = bench_module.fit_plan_to_quota(
+        "gemini-3.5-flash", n=140, repeats=5, variance_n=30, temperatures=temps,
+    )
+    assert plan.calls == plan.repeats * plan.variance_n * len(temps)
+
+
+def test_a_quota_too_small_to_measure_variance_raises(bench_module):
+    """variance_report needs 2 repeats. A plan that cannot afford 2 per
+    temperature must fail loudly, not emit a one-repeat 'variance' of zero --
+    which would read as evidence of stability and is the exact false comfort
+    this whole arm exists to avoid."""
+    with pytest.raises(ValueError, match="too small to measure"):
+        bench_module.fit_plan_to_quota(
+            "gemini-3.5-flash", n=140, repeats=5, variance_n=30,
+            temperatures=(0.0, 1.0), quota=3,
+        )
+
+
+def test_fitted_plans_always_clear_the_budget_guard(bench_module):
+    """The fit and the guard must agree. If a fitted plan could still trip
+    assert_within_budget, the fit would be decorative."""
+    plans = bench_module.plans_for(
+        models=("gemini-3.5-flash-lite", "gemini-3.5-flash"),
+        n=140, repeats=5, variance_n=30, temperatures=(0.0, 1.0),
+    )
+    budget = {m: p.calls for m, p in plans.items()}
+    bench_module.assert_within_budget(budget)  # must not raise
+    assert budget["gemini-3.5-flash-lite"] == 440
+    assert budget["gemini-3.5-flash"] == 20
+
+
+def test_the_reason_names_the_quota_and_what_was_given_up(bench_module):
+    """A shrunk arm that does not say what it lost is worse than no arm: the
+    reader compares a 20-call number against a 440-call number as if they
+    measured the same thing."""
+    plan = bench_module.fit_plan_to_quota(
+        "gemini-3.5-flash", n=140, repeats=5, variance_n=30,
+        temperatures=(0.0, 1.0),
+    )
+    assert "20/day" in plan.reason
+    assert "440" in plan.reason
+    assert "accuracy" in plan.reason.lower()
+
+
+def test_arm_result_tolerates_a_missing_accuracy_pass(bench_module):
+    """A variance-only arm has no AUC and no log loss, and the table must
+    render a dash rather than crash or, worse, print a zero."""
+    arm = bench_module.ArmResult(
+        name="gemini-3.5-flash as classifier (variance probe)",
+        auc=None, auc_ci=None, log_loss=None, brier={},
+        p95_latency_s=0.9, latency_kind="per-call, network",
+        cost_per_1k_paise=12, n_scored=0,
+        note="variance-only: 20-call quota",
+    )
+    table = bench_module.render_table([arm], pricing=bench_module.load_pricing(), seed=0)
+    assert "—" in table or "--" in table
+    assert "0.0000" not in table.split("\n")[0]
