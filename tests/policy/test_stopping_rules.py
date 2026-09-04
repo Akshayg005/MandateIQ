@@ -197,3 +197,220 @@ def test_signature_is_hashable_and_reflects_state():
 
 def test_signature_equal_for_equal_contexts():
     assert _ctx().signature() == _ctx().signature()
+
+
+# === instrument_dead field and rules (R2, 2026-09-04) =======================
+
+def test_instrument_dead_field_defaults_to_false():
+    """The instrument_dead field must default to False, so every existing
+    construction site (none of which mentions this field) continues to work."""
+    ctx = _ctx()
+    assert ctx.instrument_dead is False
+
+
+def test_instrument_dead_can_be_set_to_true():
+    """The instrument_dead field must be settable at construction time via
+    the AllocationContext constructor or via with_terminal()."""
+    ctx = _ctx(instrument_dead=True)
+    assert ctx.instrument_dead is True
+
+
+def test_signature_includes_instrument_dead():
+    """Two contexts differing ONLY in instrument_dead must produce DIFFERENT
+    signature() tuples. This prevents memo collisions where a cached Q-value
+    from one context would be reused incorrectly in another."""
+    ctx_alive = _ctx(instrument_dead=False)
+    ctx_dead = _ctx(instrument_dead=True)
+
+    sig_alive = ctx_alive.signature()
+    sig_dead = ctx_dead.signature()
+
+    assert sig_alive != sig_dead, \
+        "signature() must differ when only instrument_dead differs"
+
+
+def test_instrument_dead_is_last_element_of_signature():
+    """The signature tuple must include instrument_dead as its final element,
+    after quiet_hours_end."""
+    ctx = _ctx(instrument_dead=True)
+    sig = ctx.signature()
+
+    # signature() is a tuple with 16 elements; instrument_dead must be the last
+    assert isinstance(sig, tuple), f"signature() is {type(sig).__name__}, not tuple"
+    assert len(sig) == 16, f"signature() has {len(sig)} elements, expected 16"
+    assert sig[-1] == True, f"Last element of signature should be True (instrument_dead), got {sig[-1]}"
+
+
+def test_instrument_dead_denies_attempt():
+    """When ctx.instrument_dead is True, permitted(Action.ATTEMPT, ctx) must
+    return Verdict.DENY, regardless of all other context fields."""
+    ctx = _ctx(
+        instrument_dead=True,
+        attempts_used=1,  # well below MAX_ATTEMPTS
+        contacts_sent=1,  # well below max_contacts_per_cycle
+        opted_out=False,  # not opted out
+        mandate_state=MandateState.ACTIVE,  # active mandate
+    )
+
+    assert permitted(Action.ATTEMPT, ctx) == Verdict.DENY
+
+
+def test_instrument_dead_allows_reauth():
+    """When ctx.instrument_dead is True, permitted(Action.REAUTH, ctx) must
+    return Verdict.ALLOW. REAUTH is exactly the recovery path for a dead
+    instrument."""
+    ctx = _ctx(instrument_dead=True)
+    assert permitted(Action.REAUTH, ctx) == Verdict.ALLOW
+
+
+def test_instrument_dead_allows_offer():
+    """When ctx.instrument_dead is True, permitted(Action.OFFER, ctx) must
+    return Verdict.ALLOW. OFFER remains available."""
+    ctx = _ctx(instrument_dead=True)
+    assert permitted(Action.OFFER, ctx) == Verdict.ALLOW
+
+
+def test_instrument_dead_allows_stop():
+    """When ctx.instrument_dead is True, permitted(Action.STOP, ctx) must
+    return Verdict.ALLOW. STOP is the universal escape hatch."""
+    ctx = _ctx(instrument_dead=True)
+    assert permitted(Action.STOP, ctx) == Verdict.ALLOW
+
+
+def test_instrument_dead_rule_is_checked_before_attempt_cap():
+    """If a mandate has attempts_used == MAX_ATTEMPTS AND instrument_dead==True,
+    it is the instrument_dead rule that denies ATTEMPT, not the attempt cap.
+    Both rules apply, but order should not matter for the outcome (DENY either way)."""
+    from src.policy.constraints import MAX_ATTEMPTS
+
+    ctx = _ctx(instrument_dead=True, attempts_used=MAX_ATTEMPTS)
+    assert permitted(Action.ATTEMPT, ctx) == Verdict.DENY
+
+
+# === with_terminal() method (R2, 2026-09-04) ================================
+
+def test_with_terminal_dead_sets_instrument_dead():
+    """with_terminal(Outcome.DEAD) must return a new context with
+    instrument_dead=True."""
+    from src.core.types import Outcome
+
+    ctx = _ctx(instrument_dead=False)
+    ctx_dead = ctx.with_terminal(Outcome.DEAD)
+
+    assert ctx_dead.instrument_dead is True
+    # Original must be unchanged
+    assert ctx.instrument_dead is False
+
+
+def test_with_terminal_dead_preserves_other_fields():
+    """with_terminal(Outcome.DEAD) must preserve all other fields unchanged."""
+    from src.core.types import Outcome
+
+    ctx = _ctx(
+        instrument_dead=False,
+        opted_out=False,
+        attempts_used=2,
+        contacts_sent=1,
+        plan_day=5,
+        mandate_id="M-123",
+    )
+    ctx_dead = ctx.with_terminal(Outcome.DEAD)
+
+    # instrument_dead should be set to True
+    assert ctx_dead.instrument_dead is True
+    # Everything else should be identical
+    assert ctx_dead.opted_out == False
+    assert ctx_dead.attempts_used == 2
+    assert ctx_dead.contacts_sent == 1
+    assert ctx_dead.plan_day == 5
+    assert ctx_dead.mandate_id == "M-123"
+
+
+def test_with_terminal_opted_out_sets_opted_out():
+    """with_terminal(Outcome.OPTED_OUT) must return a new context with
+    opted_out=True."""
+    from src.core.types import Outcome
+
+    ctx = _ctx(opted_out=False)
+    ctx_opted = ctx.with_terminal(Outcome.OPTED_OUT)
+
+    assert ctx_opted.opted_out is True
+    # Original must be unchanged
+    assert ctx.opted_out is False
+
+
+def test_with_terminal_opted_out_preserves_instrument_dead():
+    """with_terminal(Outcome.OPTED_OUT) must NOT modify instrument_dead,
+    only opted_out."""
+    from src.core.types import Outcome
+
+    ctx = _ctx(opted_out=False, instrument_dead=False)
+    ctx_opted = ctx.with_terminal(Outcome.OPTED_OUT)
+
+    assert ctx_opted.opted_out is True
+    # instrument_dead should remain False
+    assert ctx_opted.instrument_dead is False
+
+
+def test_with_terminal_opted_out_preserves_other_fields():
+    """with_terminal(Outcome.OPTED_OUT) must preserve all other fields
+    unchanged except opted_out."""
+    from src.core.types import Outcome
+
+    ctx = _ctx(
+        opted_out=False,
+        instrument_dead=True,
+        attempts_used=1,
+        contacts_sent=2,
+        plan_day=3,
+        mandate_id="M-456",
+    )
+    ctx_opted = ctx.with_terminal(Outcome.OPTED_OUT)
+
+    # opted_out should be set to True
+    assert ctx_opted.opted_out is True
+    # Everything else should be identical
+    assert ctx_opted.instrument_dead is True
+    assert ctx_opted.attempts_used == 1
+    assert ctx_opted.contacts_sent == 2
+    assert ctx_opted.plan_day == 3
+    assert ctx_opted.mandate_id == "M-456"
+
+
+def test_with_terminal_rejects_recovered():
+    """with_terminal(Outcome.RECOVERED) must raise ValueError because
+    RECOVERED is not terminal-for-this-purpose (the cycle succeeded, nothing
+    left to re-solve for)."""
+    from src.core.types import Outcome
+
+    ctx = _ctx()
+
+    with pytest.raises(ValueError):
+        ctx.with_terminal(Outcome.RECOVERED)
+
+
+def test_with_terminal_rejects_still_pending():
+    """with_terminal(Outcome.STILL_PENDING) must raise ValueError because
+    STILL_PENDING is not terminal at all."""
+    from src.core.types import Outcome
+
+    ctx = _ctx()
+
+    with pytest.raises(ValueError):
+        ctx.with_terminal(Outcome.STILL_PENDING)
+
+
+def test_with_terminal_original_context_is_immutable():
+    """Calling with_terminal() on a context must not modify the original
+    context, even though with_terminal() returns a new one."""
+    from src.core.types import Outcome
+
+    ctx = _ctx(opted_out=False, instrument_dead=False)
+    ctx_copy = _ctx(opted_out=False, instrument_dead=False)
+
+    # Call with_terminal on a copy
+    _ = ctx.with_terminal(Outcome.OPTED_OUT)
+
+    # Original must be unchanged
+    assert ctx.opted_out == ctx_copy.opted_out == False
+    assert ctx.instrument_dead == ctx_copy.instrument_dead == False

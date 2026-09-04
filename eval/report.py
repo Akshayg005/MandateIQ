@@ -80,6 +80,14 @@ _MEAN_FIELDS = (
     "missed_recovery_count", "missed_recovery_paise", "false_offramp_count",
     "false_offramp_paise", "false_reauth_count", "false_reauth_paise",
     "billable_paise", "coverage_n",
+    # R2b, 2026-09-04: absent on any pre-R2 artifact -- _merge_seeds() reads
+    # every _MEAN_FIELDS entry via c[f], same as every other field in this
+    # tuple, so pointing this report at a stale pre-R2 regimes.json raises
+    # KeyError here rather than silently rendering a zero. Requires a
+    # freshly re-run artifact, same requirement every other field change
+    # in this project's history has had.
+    "compliance_reauth_count", "false_reauth_inference_count",
+    "false_reauth_count_effective", "false_reauth_inference_count_effective",
 )
 _FLOAT_FIELDS = ("coverage_marginal", "mean_set_size", "singleton_rate",
                  "singleton_wont_pay_rate")
@@ -513,6 +521,12 @@ def _headline(data: dict[str, Any]) -> list[str]:
     offers = sum(c["n_offer"] for c in eng)
     reauth = sum(c["n_reauth"] for c in eng)
     false_reauth = sum(c["false_reauth_count"] for c in eng)
+    # R2b, 2026-09-04: the pre-registered false_reauth above conflates a
+    # legally-mandatory route with a genuine belief error -- these two
+    # split it. Absent (older artifact) -> both read 0 rather than KeyError,
+    # so a pre-R2 artifact still renders (with the honest, degenerate 0/0).
+    compliance_reauth = sum(c.get("compliance_reauth_count", 0) for c in eng)
+    false_reauth_inference = sum(c.get("false_reauth_inference_count", 0) for c in eng)
     stops = sum(c["n_stop"] for c in eng)
     after_term = sum(c["n_attempt_after_terminal"] for c in eng)
     viol = sum(len(c["violations"]) for c in cells)
@@ -528,6 +542,7 @@ def _headline(data: dict[str, Any]) -> list[str]:
     conf = [c for c in eng if c["gate_kind"] == "conformal"]
     cov = [c["coverage_marginal"] for c in conf if c["coverage_marginal"] is not None]
     setsz = [c["mean_set_size"] for c in conf if c["mean_set_size"] is not None]
+    sing_wont = [c["singleton_wont_pay_rate"] for c in conf if c.get("singleton_wont_pay_rate") is not None]
     worst_class = min(
         (v, k) for c in conf for k, v in (c.get("coverage_per_class") or {}).items()
     ) if conf else (None, None)
@@ -600,18 +615,29 @@ def _headline(data: dict[str, Any]) -> list[str]:
         f"payment failed. B5 recorded this exact confound; B13's first draft "
         f"reproduced it by omitting the column.",
         "",
-        f"2. **The off-ramp cannot fire in this harness. `OFFER` = {offers} in "
-        f"all {len(eng)} engine cells -- and that is arithmetic, not "
+        f"2. **The off-ramp cannot fire in this harness. `OFFER` = {offers} "
+        f"in all {len(eng)} engine cells -- and that is arithmetic, not "
         f"measurement.** The proxy decline alphabet has exactly two symbols "
         f"(`INSUFFICIENT_FUNDS`, `CARD_EXPIRED`) and `cause_map` assigns "
-        f"`WONT_PAY` a prior of 0.10 under **both**, so the WONT_PAY "
-        f"likelihood ratio is constant and no observation this simulator can "
-        f"produce moves belief mass toward `WONT_PAY`. Its probability is "
-        f"pinned at 0.10 after slot 1 and is non-increasing thereafter, so the "
-        f"singleton `{{WONT_PAY}}` condition is unreachable for any alpha, any "
-        f"seed, any regime. An earlier draft read this as \"a payment decline "
-        f"is a weak signal of intent\" -- true about the world, false about "
-        f"this number. **The off-ramp lane is untested, not tested and "
+        f"`WONT_PAY` a prior of 0.10 under **both**, so no observation this "
+        f"simulator can produce from ORDINARY Bayesian updating moves belief "
+        f"mass toward `WONT_PAY`, and the singleton `{{WONT_PAY}}` condition "
+        f"is unreachable from any LIVE, still-retryable decision, for any "
+        f"alpha, any seed, any regime -- confirmed on this run: "
+        f"{sum(sing_wont):.3f} (every live cell measures exactly 0). A "
+        f"same-day investigation (R2, finding 5) briefly made this claim "
+        f"look false: fixing the `OPTED_OUT` re-solve bug meant the gate was "
+        f"queried, for the first time, on a RETROSPECTIVE belief already "
+        f"collapsed to near-certain `WONT_PAY` by `belief.observe_terminal()` "
+        f"-- {sum(c.get('coverage_n_retrospective', 0) for c in conf):,} such "
+        f"queries this run, EXCLUDED from every coverage/singleton statistic "
+        f"here (see finding 3) because a hand-constructed, already-decided "
+        f"belief is not exchangeable with the live population the gate is "
+        f"calibrated on and answering that question would be close to "
+        f"tautological. `OFFER` still could not have fired there regardless "
+        f"-- clause 6(c) denies every action but `STOP` once a mandate has "
+        f"opted out -- but the MEASUREMENT is what needed fixing, not just "
+        f"the action. **The off-ramp lane is untested, not tested and "
         f"negative**, and `retry_storm`'s pre-registered hypothesis about it "
         f"is vacuous rather than falsified: the outcome was fixed before the "
         f"regime ran. `false off-ramp = 0` is likewise not a safety result.",
@@ -620,8 +646,11 @@ def _headline(data: dict[str, Any]) -> list[str]:
     if cov:
         out += [
             f"3. **The off-ramp gate under-covers.** Over the "
-            f"{sum(c['coverage_n'] for c in conf):,} decision points the gate "
-            f"was actually queried at, marginal coverage is "
+            f"{sum(c['coverage_n'] for c in conf):,} LIVE decision points the "
+            f"gate was actually queried at (excluding "
+            f"{sum(c.get('coverage_n_retrospective', 0) for c in conf):,} "
+            f"retrospective post-terminal queries -- see finding 2), marginal "
+            f"coverage is "
             f"{min(cov):.3f}-{max(cov):.3f} against a 0.95 target, with "
             f"per-class coverage as low as {worst_class[0]:.3f} "
             f"(`{worst_class[1]}`) -- a Mondrian violation on a class that "
@@ -647,22 +676,57 @@ def _headline(data: dict[str, Any]) -> list[str]:
         "*when*. This confirms B12's shadow-mode finding "
         "(`SAME_ACTION_DIFFERENT_DAY = 0`) across all five regimes.",
         "",
-        f"5. **The allocator wants to retry instruments the issuer just "
-        f"confirmed dead.** Re-solving after a terminal outcome returned "
-        f"`ATTEMPT` {after_term} times across all engine cells -- on mandates "
-        f"that had just come back `DEAD` or `OPTED_OUT`. `belief.update()` "
-        f"compounds naive-Bayes with no floor, and a single `CARD_EXPIRED` "
-        f"cannot overtake the slot-1 `INSUFFICIENT_FUNDS` prior, so "
-        f"`CANT_PAY_NOW` keeps dominating. The CANT_PAY_EVER -> REAUTH row of "
-        f"the project's own cause/action table does not fire on observed "
-        f"evidence. This case previously fell through every counter and was "
-        f"discarded unrecorded.",
+        f"5. **FIXED, R2 (2026-09-04): the allocator used to want to retry "
+        f"instruments the issuer had just confirmed dead.** Re-solving "
+        f"after a terminal outcome returned `ATTEMPT` {after_term} times "
+        f"across all engine cells on this run -- structurally zero, not "
+        f"merely measured low: a hard `permitted()` rule (`instrument_dead`) "
+        f"denies `ATTEMPT` outright once the instrument is known dead, "
+        f"regardless of belief. `belief.observe_terminal()` also replaces "
+        f"belief with a MEASURED posterior on the observed outcome -- "
+        f"P(CANT_PAY_EVER | DEAD) = 0.8991, P(WONT_PAY | OPTED_OUT) = 0.9040, "
+        f"both measured directly against `eval/frozen/sim_config.yaml`'s own "
+        f"generative process, NOT the degenerate 100%-certain collapse an "
+        f"earlier same-day version of this fix assumed and stats-reviewer "
+        f"then proved false and irreversible (`cause_map`'s priors contain "
+        f"no zeros, so a belief collapsed to exactly 1.0 can never be moved "
+        f"by any later evidence). The corrected, measured version changes no "
+        f"action anywhere in this sweep -- REAUTH's economics dominate STOP "
+        f"at 90% confidence exactly as they did at 100% for every realistic "
+        f"amount in this corpus -- but is no longer an overconfident, "
+        f"irreversible claim about a fact the frozen simulator's own numbers "
+        f"say is only ~90% certain. Before this fix existed at all: "
+        f"`belief.update()`'s ordinary naive-Bayes compounding, with no "
+        f"floor, meant a single `CARD_EXPIRED` observation often could not "
+        f"overtake a slot-1 `INSUFFICIENT_FUNDS` prior, so `CANT_PAY_NOW` "
+        f"kept dominating and the CANT_PAY_EVER -> REAUTH row of the "
+        f"project's own cause/action table never fired on observed "
+        f"evidence -- measured at 4,032 such events on the pre-fix "
+        f"artifact. The `OPTED_OUT` case was worse: the proxy decline-class "
+        f"function returns `None` for it, so the OLD code's re-solve was "
+        f"skipped ENTIRELY and no decision was ever recorded for what "
+        f"happens after a customer opts out. A related audit-trail bug found "
+        f"in the same review -- `_binding_constraint()` did not know about "
+        f"`instrument_dead`, so a REAUTH forced by this rule alone recorded "
+        f"`binding_constraint = None`, misrepresenting a hard-forced decision "
+        f"as a free economic choice -- is also fixed. See DECISIONS.md and "
+        f"POSTMORTEM Incidents 11-12 for the full account, including a "
+        f"conformal-measurement contamination the fix briefly introduced and "
+        f"then closed (finding 2 above).",
         "",
-        f"6. Actions across all engine cells: {reauth} REAUTH (of which "
-        f"**{false_reauth} were issued on mandates whose true cause is not "
-        f"`CANT_PAY_EVER`** -- `issuer_outage`'s own pre-registered "
-        f"falsification criterion, now measured), {stops} STOP, {offers} "
-        f"OFFER. Constraint violations: **{viol}**.",
+        f"6. Actions across all engine cells: {reauth} REAUTH ("
+        f"**{compliance_reauth}** issued via the above-AFA-cliff compliance "
+        f"route -- clause 8(a)/8(b), legally mandatory regardless of belief "
+        f"-- and **{false_reauth_inference}** that are genuine "
+        f"belief-inference errors against a mandate whose true cause is not "
+        f"`CANT_PAY_EVER`), {stops} STOP, {offers} OFFER. The pre-registered "
+        f"`issuer_outage` falsification criterion, `{false_reauth}` REAUTHs "
+        f"on a mandate whose true cause is not `CANT_PAY_EVER`, keeps its "
+        f"Day-1 meaning unchanged (DECISIONS.md, R0) -- the split above is "
+        f"ADDED alongside it, R2b, because that one number conflates a "
+        f"legal requirement with a belief error: only "
+        f"`{false_reauth_inference}` of the `{false_reauth}` were ever a "
+        f"real inference mistake. Constraint violations: **{viol}**.",
     ]
     return out
 
@@ -748,6 +812,12 @@ def _summary_payload(data: dict) -> dict:
         "false_reauth_total": sum(c["false_reauth_count"] for c in eng),
         "reauth_total": sum(c["n_reauth"] for c in eng),
         "attempt_after_terminal_total": sum(c["n_attempt_after_terminal"] for c in eng),
+        # R2b, 2026-09-04: false_reauth_total (pre-registered, unchanged)
+        # conflates a legally-mandatory compliance-route REAUTH with a
+        # genuine belief-inference error -- these two, added alongside it,
+        # split it. .get(..., 0) so a pre-R2 artifact still renders.
+        "compliance_reauth_total": sum(c.get("compliance_reauth_count", 0) for c in eng),
+        "false_reauth_inference_total": sum(c.get("false_reauth_inference_count", 0) for c in eng),
     }
     out.update(bars(cell("engine")) or {})
     out["baseline"] = bars(cell("ladder"))
@@ -815,7 +885,12 @@ def _readme_table(data: dict) -> list[str]:
         f"The off-ramp lane is untested, so the false-off-ramp column is not "
         f"evidence of safety. Separately, {s['false_reauth_total']} of "
         f"{s['reauth_total']} REAUTHs went to mandates whose true cause is not "
-        f"`CANT_PAY_EVER`.",
+        f"`CANT_PAY_EVER` — but {s['compliance_reauth_total']} of those are "
+        f"the above-AFA-cliff compliance route (clause 8(a)/8(b), legally "
+        f"mandatory regardless of belief), so only "
+        f"{s['false_reauth_inference_total']} were ever a genuine "
+        f"belief-inference error — see `reports/regimes.md` finding 6 for "
+        f"the full split (R2b).",
         "",
         f"**Where we lose:** "
         f"{', '.join('`' + r + '`' for r in s['regimes_where_we_lose'])} — the "

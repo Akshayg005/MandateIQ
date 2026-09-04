@@ -75,9 +75,27 @@ def _build_and_featurize(episodes: list[Episode]) -> tuple[pd.DataFrame, pd.Data
     return pp_df, feat_df
 
 
+# One representative amount per amount_band (reference, 2, 3, 4) and one
+# category per non-reference level plus the reference itself -- see
+# src/model/competing_risks.py's _AMOUNT_BAND_CUT_*/_CATEGORY_LEVELS.
+# Real variation, not four repeats of the same value: fit(...,
+# feature_columns=WIDENED_FEATURE_COLUMNS) needs every one of those six
+# columns to actually vary across rows, or the corresponding MNLogit
+# coefficient is unidentified (a constant-zero or constant-one column)
+# and statsmodels raises LinAlgError: Singular matrix -- found by running
+# this exact test, not anticipated up front.
+_AMOUNT_BAND_SAMPLES: tuple[int, ...] = (100_000, 500_000, 800_000, 1_200_000)
+_CATEGORY_SAMPLES: tuple[str, ...] = (
+    "subscription", "insurance_premium", "mutual_fund", "credit_card_bill",
+)
+
+
 def _simple_estimable_frame() -> tuple[pd.DataFrame, pd.DataFrame]:
     """Build a small frame with ~20 rows per (slot, in_salary_window) cell.
-    Guarantees all four outcome types present, slots 2/3/4, both salary windows.
+    Guarantees all four outcome types present, slots 2/3/4, both salary
+    windows, and all four amount bands / all four categories (see
+    _AMOUNT_BAND_SAMPLES/_CATEGORY_SAMPLES above -- needed for
+    fit(feature_columns=WIDENED_FEATURE_COLUMNS) to be estimable at all).
     Returns (pp_df, feat_df) ready for fit()."""
     episodes = []
     idx = 0
@@ -90,6 +108,25 @@ def _simple_estimable_frame() -> tuple[pd.DataFrame, pd.DataFrame]:
         for in_window in [False, True]:
             for outcome_cycle in range(25):
                 mandate_id = f"M_est_{idx:04d}"
+                # CAUTION, found by stats-reviewer (not anticipated up
+                # front): `idx % 4` here -- the first version of this fix --
+                # is a PERFECT bijection with `outcome_cycle % 4` (the
+                # outcome assignment below), because 25 (this loop's own
+                # trip count) is congruent to 1 mod 4, so band and outcome
+                # advance in lockstep within every (slot, in_window) cell.
+                # The widened fit then "discovers" a large, entirely
+                # fabricated amount effect (measured: +0.19 to +0.92,
+                # against +/-0.05 on the real corpus) -- in a codebase whose
+                # whole R1 finding is "amount carries no signal", and it
+                # converges only by numerical accident: range(24)/range(26)/
+                # range(28) all fail to converge or overflow. `idx // 5` (a
+                # stride NOT a divisor/multiple of 4) breaks the lockstep --
+                # verified directly: every (amount_band, outcome) pair and
+                # every (amount_band, category) pair co-occurs across this
+                # fixture, none is a bijection. Do not "simplify" this back
+                # to idx % 4.
+                amount_paise = _AMOUNT_BAND_SAMPLES[(idx // 5) % 4]
+                category = _CATEGORY_SAMPLES[(idx // 4) % 4]
                 idx += 1
 
                 # Vary the day to control in_salary_window
@@ -115,7 +152,15 @@ def _simple_estimable_frame() -> tuple[pd.DataFrame, pd.DataFrame]:
                     out = outcome if s == slot else Outcome.STILL_PENDING
                     attempts.append(_attempt(mandate_id, s, day, out))
 
-                mandate = _mandate(mandate_id, cycle_id=1)
+                # ceiling_paise must be >= amount_paise (clause 4(c),
+                # eval/corpus.py's assert_legal()) -- found by
+                # stats-reviewer: _mandate()'s own default (100_000) is
+                # below 3 of the 4 _AMOUNT_BAND_SAMPLES values, which would
+                # otherwise construct a clause-4(c)-illegal mandate.
+                mandate = _mandate(
+                    mandate_id, cycle_id=1, amount_paise=amount_paise,
+                    ceiling_paise=amount_paise * 2, category=category,
+                )
                 # build() only reads ep.censor_reason on the terminal row when
                 # that row's outcome is STILL_PENDING (person_period.py:148,
                 # row_censored) -- it must be a real CensorReason member, not
@@ -772,3 +817,559 @@ def test_hazard_model_is_frozen_dataclass():
     # dataclasses.FrozenInstanceError subclasses AttributeError.
     with pytest.raises(AttributeError):
         model.result = None
+
+
+# === New widened-design-matrix tests ==========================================
+# Test suite for amount bands, category dummies, and the new `columns`
+# parameter to _design_matrix() and feature_columns parameter to fit().
+# These tests validate the exact contract specified in the feature spec:
+# backward compatibility, selective column computation, proper boundary
+# handling, and the pd.get_dummies avoidance guarantee across new columns.
+
+
+def test_amount_band_constants_exist():
+    """The amount-band boundary constants must be defined at module level."""
+    from src.model.competing_risks import (
+        _AMOUNT_BAND_CUT_1,
+        _AMOUNT_BAND_CUT_2,
+        _AMOUNT_BAND_CUT_3,
+    )
+
+    assert _AMOUNT_BAND_CUT_1 == 387_500
+    assert _AMOUNT_BAND_CUT_2 == 725_000
+    assert _AMOUNT_BAND_CUT_3 == 1_062_500
+
+
+def test_category_levels_constant_exists():
+    """The category levels tuple must be defined at module level."""
+    from src.model.competing_risks import _CATEGORY_LEVELS
+
+    assert _CATEGORY_LEVELS == ("insurance_premium", "mutual_fund", "credit_card_bill")
+
+
+def test_widened_feature_columns_constant_exists():
+    """WIDENED_FEATURE_COLUMNS must be defined and include the legacy 4 plus new dummies."""
+    from src.model.competing_risks import WIDENED_FEATURE_COLUMNS, FEATURE_COLUMNS
+
+    # WIDENED should be 10 columns: 4 legacy + 3 amount + 3 category
+    assert len(WIDENED_FEATURE_COLUMNS) == 10
+    # First four should be the legacy FEATURE_COLUMNS
+    assert WIDENED_FEATURE_COLUMNS[:4] == FEATURE_COLUMNS
+    # Should contain all three amount bands
+    assert "amount_band_2" in WIDENED_FEATURE_COLUMNS
+    assert "amount_band_3" in WIDENED_FEATURE_COLUMNS
+    assert "amount_band_4" in WIDENED_FEATURE_COLUMNS
+    # Should contain all three category dummies
+    assert "category_insurance_premium" in WIDENED_FEATURE_COLUMNS
+    assert "category_mutual_fund" in WIDENED_FEATURE_COLUMNS
+    assert "category_credit_card_bill" in WIDENED_FEATURE_COLUMNS
+
+
+def test_design_matrix_accepts_columns_parameter():
+    """_design_matrix() must accept a keyword-only `columns` parameter."""
+    from src.model.competing_risks import _design_matrix, FEATURE_COLUMNS
+
+    pp_df, feat_df = _simple_estimable_frame()
+    from src.model.competing_risks import assemble
+
+    assembled = assemble(pp_df, feat_df)
+    X = assembled.head(5)
+
+    # Should succeed with explicit columns parameter
+    result = _design_matrix(X, columns=FEATURE_COLUMNS)
+    assert isinstance(result, pd.DataFrame)
+    assert list(result.columns) == list(FEATURE_COLUMNS)
+
+
+def test_design_matrix_legacy_columns_work_without_amount_paise_or_category():
+    """_design_matrix(..., columns=FEATURE_COLUMNS) must work on a frame
+    with NO amount_paise or category columns at all. This is the regression
+    test for hazard_from_fit() in eval/allocator_sweep.py -- it builds a
+    minimal row with only slot/in_salary_window/days_since_last_attempt and
+    must not break when the model was fit with widened columns."""
+    from src.model.competing_risks import _design_matrix, FEATURE_COLUMNS
+
+    # Build a minimal synthetic frame exactly like hazard_from_fit() does
+    X_minimal = pd.DataFrame([{
+        "slot": 2,
+        "in_salary_window": True,
+        "days_since_last_attempt": 0.0,
+    }])
+
+    # This must succeed and return exactly 4 columns in order
+    result = _design_matrix(X_minimal, columns=FEATURE_COLUMNS)
+    assert list(result.columns) == list(FEATURE_COLUMNS)
+    assert len(result) == 1
+    assert np.isfinite(result.values).all()
+
+
+def test_design_matrix_default_columns_unchanged():
+    """Calling _design_matrix(df) with no `columns` argument must still use
+    its default behavior: computing every column the module currently
+    knows how to build (_ALL_DESIGN_COLUMNS), on a df -- like a real
+    assembled corpus frame -- that carries every source column those need.
+    _ALL_DESIGN_COLUMNS itself grew from 6 to 12 with R1's amount/category
+    widening (2026-09-04); this test pins "no-arg call returns the full
+    set" rather than a stale literal count."""
+    from src.model.competing_risks import _design_matrix, _ALL_DESIGN_COLUMNS
+
+    pp_df, feat_df = _simple_estimable_frame()
+    from src.model.competing_risks import assemble
+
+    assembled = assemble(pp_df, feat_df)
+    X = assembled.head(5)
+
+    # Call without columns parameter
+    result = _design_matrix(X)
+    assert len(result.columns) == len(_ALL_DESIGN_COLUMNS)
+    assert set(result.columns) == set(_ALL_DESIGN_COLUMNS)
+
+
+def test_design_matrix_amount_band_boundary_values():
+    """Test exact boundary values for amount bands."""
+    from src.model.competing_risks import _design_matrix, WIDENED_FEATURE_COLUMNS
+
+    # Test each boundary
+    test_amounts = [
+        (387_499, "reference_band"),      # Below cut_1, all band dummies = 0
+        (387_500, "band_2"),              # Exactly cut_1, band_2 = 1
+        (724_999, "band_2"),              # Below cut_2, still band_2
+        (725_000, "band_3"),              # Exactly cut_2, band_3 = 1
+        (1_062_499, "band_3"),            # Below cut_3, still band_3
+        (1_062_500, "band_4"),            # Exactly cut_3, band_4 = 1
+        (5_000_000, "band_4"),            # Large amount, still band_4
+    ]
+
+    for amount, expected_band in test_amounts:
+        X = pd.DataFrame({
+            "slot": [2],
+            "in_salary_window": [False],
+            "days_since_last_attempt": [0.0],
+            "amount_paise": [amount],
+            "category": ["subscription"],
+        })
+        result = _design_matrix(X, columns=WIDENED_FEATURE_COLUMNS)
+
+        # Verify the expected band is set correctly
+        if expected_band == "reference_band":
+            assert result["amount_band_2"].iloc[0] == 0.0
+            assert result["amount_band_3"].iloc[0] == 0.0
+            assert result["amount_band_4"].iloc[0] == 0.0
+        elif expected_band == "band_2":
+            assert result["amount_band_2"].iloc[0] == 1.0
+            assert result["amount_band_3"].iloc[0] == 0.0
+            assert result["amount_band_4"].iloc[0] == 0.0
+        elif expected_band == "band_3":
+            assert result["amount_band_2"].iloc[0] == 0.0
+            assert result["amount_band_3"].iloc[0] == 1.0
+            assert result["amount_band_4"].iloc[0] == 0.0
+        elif expected_band == "band_4":
+            assert result["amount_band_2"].iloc[0] == 0.0
+            assert result["amount_band_3"].iloc[0] == 0.0
+            assert result["amount_band_4"].iloc[0] == 1.0
+
+
+def test_design_matrix_category_dummies_reference_level():
+    """category='subscription' (the reference level) must produce all 0s for the three category dummies."""
+    from src.model.competing_risks import _design_matrix, WIDENED_FEATURE_COLUMNS
+
+    X = pd.DataFrame({
+        "slot": [2],
+        "in_salary_window": [False],
+        "days_since_last_attempt": [0.0],
+        "amount_paise": [100_000],
+        "category": ["subscription"],
+    })
+    result = _design_matrix(X, columns=WIDENED_FEATURE_COLUMNS)
+
+    assert result["category_insurance_premium"].iloc[0] == 0.0
+    assert result["category_mutual_fund"].iloc[0] == 0.0
+    assert result["category_credit_card_bill"].iloc[0] == 0.0
+
+
+def test_design_matrix_category_dummies_insurance_premium():
+    """category='insurance_premium' must produce the correct dummy coding."""
+    from src.model.competing_risks import _design_matrix, WIDENED_FEATURE_COLUMNS
+
+    X = pd.DataFrame({
+        "slot": [2],
+        "in_salary_window": [False],
+        "days_since_last_attempt": [0.0],
+        "amount_paise": [100_000],
+        "category": ["insurance_premium"],
+    })
+    result = _design_matrix(X, columns=WIDENED_FEATURE_COLUMNS)
+
+    assert result["category_insurance_premium"].iloc[0] == 1.0
+    assert result["category_mutual_fund"].iloc[0] == 0.0
+    assert result["category_credit_card_bill"].iloc[0] == 0.0
+
+
+def test_design_matrix_category_dummies_mutual_fund():
+    """category='mutual_fund' must produce the correct dummy coding."""
+    from src.model.competing_risks import _design_matrix, WIDENED_FEATURE_COLUMNS
+
+    X = pd.DataFrame({
+        "slot": [2],
+        "in_salary_window": [False],
+        "days_since_last_attempt": [0.0],
+        "amount_paise": [100_000],
+        "category": ["mutual_fund"],
+    })
+    result = _design_matrix(X, columns=WIDENED_FEATURE_COLUMNS)
+
+    assert result["category_insurance_premium"].iloc[0] == 0.0
+    assert result["category_mutual_fund"].iloc[0] == 1.0
+    assert result["category_credit_card_bill"].iloc[0] == 0.0
+
+
+def test_design_matrix_category_dummies_credit_card_bill():
+    """category='credit_card_bill' must produce the correct dummy coding."""
+    from src.model.competing_risks import _design_matrix, WIDENED_FEATURE_COLUMNS
+
+    X = pd.DataFrame({
+        "slot": [2],
+        "in_salary_window": [False],
+        "days_since_last_attempt": [0.0],
+        "amount_paise": [100_000],
+        "category": ["credit_card_bill"],
+    })
+    result = _design_matrix(X, columns=WIDENED_FEATURE_COLUMNS)
+
+    assert result["category_insurance_premium"].iloc[0] == 0.0
+    assert result["category_mutual_fund"].iloc[0] == 0.0
+    assert result["category_credit_card_bill"].iloc[0] == 1.0
+
+
+def test_design_matrix_raises_on_unrecognized_category():
+    """An unrecognized category value must raise, not silently score as the
+    reference level. CORRECTED by stats-reviewer, 2026-09-04: an earlier
+    version of this test asserted the OPPOSITE (silent tolerance) as the
+    intended contract; review found that a typo'd category -- or None/NaN,
+    which `.astype(str)` turns into the literal string "None"/"nan" -- would
+    then produce a wrong-but-plausible prediction with no error, the exact
+    silent-wrong-answer failure mode this file's explicit-column discipline
+    exists to prevent everywhere else. Loud failure is the corrected,
+    intended behavior; this test's name and assertion changed to match."""
+    from src.model.competing_risks import _design_matrix, WIDENED_FEATURE_COLUMNS
+
+    X = pd.DataFrame({
+        "slot": [2],
+        "in_salary_window": [False],
+        "days_since_last_attempt": [0.0],
+        "amount_paise": [100_000],
+        "category": ["unknown_category"],
+    })
+    with pytest.raises(ValueError, match="unknown_category"):
+        _design_matrix(X, columns=WIDENED_FEATURE_COLUMNS)
+
+
+def test_design_matrix_raises_on_null_category():
+    """None/NaN in the category column must raise for the same reason as an
+    unrecognized string -- pandas coerces either to the literal string
+    "None"/"nan" under .astype(str), which matches no known level and would
+    otherwise silently score as the reference."""
+    from src.model.competing_risks import _design_matrix, WIDENED_FEATURE_COLUMNS
+
+    X = pd.DataFrame({
+        "slot": [2, 3],
+        "in_salary_window": [False, True],
+        "days_since_last_attempt": [0.0, 1.0],
+        "amount_paise": [100_000, 200_000],
+        "category": ["subscription", None],
+    })
+    with pytest.raises(ValueError):
+        _design_matrix(X, columns=WIDENED_FEATURE_COLUMNS)
+
+
+def test_design_matrix_raises_on_missing_amount_paise_when_requested():
+    """Requesting an amount_band column on a frame missing amount_paise must raise ValueError."""
+    from src.model.competing_risks import _design_matrix
+
+    X = pd.DataFrame({
+        "slot": [2],
+        "in_salary_window": [False],
+        "days_since_last_attempt": [0.0],
+        "category": ["subscription"],
+        # Deliberately missing amount_paise
+    })
+
+    with pytest.raises(ValueError, match="amount_paise"):
+        _design_matrix(X, columns=("const", "slot_3", "amount_band_2"))
+
+
+def test_design_matrix_raises_on_missing_category_when_requested():
+    """Requesting a category_* column on a frame missing category must raise ValueError."""
+    from src.model.competing_risks import _design_matrix
+
+    X = pd.DataFrame({
+        "slot": [2],
+        "in_salary_window": [False],
+        "days_since_last_attempt": [0.0],
+        "amount_paise": [100_000],
+        # Deliberately missing category
+    })
+
+    with pytest.raises(ValueError, match="category"):
+        _design_matrix(X, columns=("const", "slot_3", "category_insurance_premium"))
+
+
+def test_design_matrix_column_order_matches_parameter_order():
+    """The returned DataFrame's column order must exactly match the columns parameter."""
+    from src.model.competing_risks import _design_matrix
+
+    X = pd.DataFrame({
+        "slot": [2],
+        "in_salary_window": [False],
+        "days_since_last_attempt": [0.0],
+        "amount_paise": [100_000],
+        "category": ["subscription"],
+    })
+
+    # Request columns in a deliberately scrambled order
+    requested = ("category_mutual_fund", "const", "amount_band_4", "in_salary_window")
+    result = _design_matrix(X, columns=requested)
+
+    # Column order must match the requested order exactly
+    assert list(result.columns) == list(requested)
+
+
+def test_design_matrix_single_category_level_returns_all_dummies():
+    """_design_matrix() must return all three category dummy columns even when
+    the data contains only one category level. This is the pd.get_dummies guard."""
+    from src.model.competing_risks import _design_matrix, WIDENED_FEATURE_COLUMNS
+
+    # Build a frame where ONLY category='subscription' appears
+    X = pd.DataFrame({
+        "slot": [2, 2, 2],
+        "in_salary_window": [False, True, False],
+        "days_since_last_attempt": [0.0, 0.0, 0.0],
+        "amount_paise": [100_000, 100_000, 100_000],
+        "category": ["subscription", "subscription", "subscription"],
+    })
+
+    result = _design_matrix(X, columns=WIDENED_FEATURE_COLUMNS)
+
+    # All three category columns must be present
+    assert "category_insurance_premium" in result.columns
+    assert "category_mutual_fund" in result.columns
+    assert "category_credit_card_bill" in result.columns
+    # All values must be 0.0
+    assert (result["category_insurance_premium"] == 0.0).all()
+    assert (result["category_mutual_fund"] == 0.0).all()
+    assert (result["category_credit_card_bill"] == 0.0).all()
+
+
+def test_design_matrix_single_amount_band_returns_all_bands():
+    """_design_matrix() must return all three amount_band columns even when
+    all rows fall into a single band. This is the pd.get_dummies guard."""
+    from src.model.competing_risks import _design_matrix, WIDENED_FEATURE_COLUMNS
+
+    # Build a frame where all amounts are in the reference band
+    X = pd.DataFrame({
+        "slot": [2, 2, 2],
+        "in_salary_window": [False, True, False],
+        "days_since_last_attempt": [0.0, 0.0, 0.0],
+        "amount_paise": [100_000, 150_000, 200_000],  # All < 387_500
+        "category": ["subscription", "subscription", "subscription"],
+    })
+
+    result = _design_matrix(X, columns=WIDENED_FEATURE_COLUMNS)
+
+    # All three amount_band columns must be present
+    assert "amount_band_2" in result.columns
+    assert "amount_band_3" in result.columns
+    assert "amount_band_4" in result.columns
+    # All values must be 0.0
+    assert (result["amount_band_2"] == 0.0).all()
+    assert (result["amount_band_3"] == 0.0).all()
+    assert (result["amount_band_4"] == 0.0).all()
+
+
+def test_fit_accepts_feature_columns_parameter():
+    """fit() must accept a keyword-only feature_columns parameter."""
+    from src.model.competing_risks import fit, FEATURE_COLUMNS
+
+    pp_df, feat_df = _simple_estimable_frame()
+    from src.model.competing_risks import assemble
+
+    assembled = assemble(pp_df, feat_df)
+
+    # Should succeed with feature_columns parameter
+    model = fit(assembled, feature_columns=FEATURE_COLUMNS)
+    assert model.feature_columns == FEATURE_COLUMNS
+
+
+def test_fit_default_feature_columns_unchanged():
+    """fit(df) with no feature_columns parameter must use FEATURE_COLUMNS by default."""
+    from src.model.competing_risks import fit, FEATURE_COLUMNS
+
+    pp_df, feat_df = _simple_estimable_frame()
+    from src.model.competing_risks import assemble
+
+    assembled = assemble(pp_df, feat_df)
+
+    model = fit(assembled)
+    assert model.feature_columns == FEATURE_COLUMNS
+
+
+def test_fit_raises_on_both_intercept_only_and_feature_columns():
+    """fit() must raise ValueError if both intercept_only=True and feature_columns are passed."""
+    from src.model.competing_risks import fit, WIDENED_FEATURE_COLUMNS
+
+    pp_df, feat_df = _simple_estimable_frame()
+    from src.model.competing_risks import assemble
+
+    assembled = assemble(pp_df, feat_df)
+
+    with pytest.raises(ValueError):
+        fit(assembled, intercept_only=True, feature_columns=WIDENED_FEATURE_COLUMNS)
+
+
+def test_fit_with_widened_feature_columns_succeeds():
+    """fit(..., feature_columns=WIDENED_FEATURE_COLUMNS) must succeed on a
+    frame with amount_paise/category, and the fit must have actually
+    CONVERGED -- not merely returned without raising. statsmodels reports a
+    ConvergenceWarning (not an exception) on a near-singular design, so a
+    test asserting only "did not raise" would still pass against a garbage
+    fit; found by stats-reviewer, who showed a nearby stride choice in this
+    same fixture produces exactly that (silently-passing, non-converged)
+    failure mode. This assertion is what makes a FUTURE fixture regression
+    fail loudly instead of silently."""
+    from src.model.competing_risks import fit, WIDENED_FEATURE_COLUMNS
+
+    pp_df, feat_df = _simple_estimable_frame()
+    from src.model.competing_risks import assemble
+
+    assembled = assemble(pp_df, feat_df)
+    # The simple_estimable_frame already includes amount_paise and category
+
+    model = fit(assembled, feature_columns=WIDENED_FEATURE_COLUMNS)
+    assert model.feature_columns == WIDENED_FEATURE_COLUMNS
+    assert model.result.mle_retvals["converged"] is True
+
+
+def test_simple_estimable_frame_amount_band_is_not_a_bijection_with_outcome():
+    """Regression test for the exact bug stats-reviewer found: an earlier
+    version of _simple_estimable_frame() derived amount_paise from `idx % 4`,
+    which -- because this fixture's own inner loop runs range(25) and
+    25 = 4*6+1 -- made the amount band a PERFECT bijection with
+    outcome_cycle % 4 (the outcome) within every (slot, in_window) cell:
+    every row in amount_band N had the identical outcome, and vice versa.
+    That is quasi-complete separation, and the widened MNLogit fit
+    "discovered" a large fabricated amount effect (+0.19 to +0.92) purely
+    from the fixture's own construction -- the opposite of this corpus's
+    real, near-zero amount effect. Assert directly, from the built frame,
+    that no amount band (or category level) determines a single outcome
+    class -- the property whose absence caused the original bug, checked
+    on the actual output rather than re-deriving the index arithmetic by
+    hand a second time."""
+    from src.model.competing_risks import assemble
+
+    pp_df, feat_df = _simple_estimable_frame()
+    assembled = assemble(pp_df, feat_df)
+    estimable = assembled[assembled["estimable"]]
+
+    for amount_paise, group in estimable.groupby("amount_paise"):
+        n_outcomes = group["event_code"].nunique()
+        assert n_outcomes > 1, (
+            f"amount_paise={amount_paise} co-occurs with only one "
+            f"event_code -- this is the exact perfect-separation bug "
+            f"stats-reviewer found; every amount value must see multiple "
+            f"outcomes in this fixture"
+        )
+    for category, group in estimable.groupby("category", observed=True):
+        n_outcomes = group["event_code"].nunique()
+        assert n_outcomes > 1, (
+            f"category={category!r} co-occurs with only one event_code -- "
+            f"same bug class as the amount check above"
+        )
+
+
+def test_hazards_with_widened_model_returns_correct_shape():
+    """hazards() called on a model fit with WIDENED_FEATURE_COLUMNS must return (n, 4)."""
+    from src.model.competing_risks import fit, hazards, WIDENED_FEATURE_COLUMNS
+
+    pp_df, feat_df = _simple_estimable_frame()
+    from src.model.competing_risks import assemble
+
+    assembled = assemble(pp_df, feat_df)
+    model = fit(assembled, feature_columns=WIDENED_FEATURE_COLUMNS)
+
+    X = assembled.head(10)
+    result = hazards(model, X)
+
+    assert result.shape == (10, 4)
+
+
+def test_hazards_with_widened_model_rows_sum_to_one():
+    """hazards() on a widened-fit model must return rows that sum to 1.0."""
+    from src.model.competing_risks import fit, hazards, WIDENED_FEATURE_COLUMNS
+
+    pp_df, feat_df = _simple_estimable_frame()
+    from src.model.competing_risks import assemble
+
+    assembled = assemble(pp_df, feat_df)
+    model = fit(assembled, feature_columns=WIDENED_FEATURE_COLUMNS)
+
+    X = assembled.head(20)
+    result = hazards(model, X)
+
+    row_sums = result.sum(axis=1)
+    assert np.allclose(row_sums, 1.0)
+
+
+def test_hazards_with_widened_model_single_level_category_and_amount():
+    """hazards() on a widened-fit model, predicting on data with only one
+    category level and one amount band, must still return valid (n, 4) output
+    with all probabilities in [0, 1] summing to 1 per row. This is the critical
+    pd.get_dummies guard for widened models."""
+    from src.model.competing_risks import fit, hazards, WIDENED_FEATURE_COLUMNS
+
+    pp_df, feat_df = _simple_estimable_frame()
+    from src.model.competing_risks import assemble
+
+    assembled = assemble(pp_df, feat_df)
+    model = fit(assembled, feature_columns=WIDENED_FEATURE_COLUMNS)
+
+    # Filter to only subscription category, reference amount band
+    X_filtered = assembled[
+        (assembled["category"] == "subscription") &
+        (assembled["amount_paise"] < 387_500)
+    ].head(10)
+
+    result = hazards(model, X_filtered)
+
+    assert result.shape == (len(X_filtered), 4)
+    assert np.allclose(result.sum(axis=1), 1.0)
+    assert (result >= 0.0).all()
+    assert (result <= 1.0).all()
+
+
+def test_hazards_narrow_model_on_minimal_synthetic_row_regression():
+    """A model fit with FEATURE_COLUMNS (the default/narrow model) must be
+    callable on a minimal synthetic row with only slot/in_salary_window/
+    days_since_last_attempt and NO amount_paise/category columns.
+    This is the eval/allocator_sweep.py::hazard_from_fit() real-world scenario
+    and MUST NOT BREAK when future features are added."""
+    from src.model.competing_risks import fit, hazards
+
+    pp_df, feat_df = _simple_estimable_frame()
+    from src.model.competing_risks import assemble
+
+    assembled = assemble(pp_df, feat_df)
+    model = fit(assembled)  # Default fit (FEATURE_COLUMNS)
+
+    # Minimal synthetic row exactly like hazard_from_fit() builds
+    X_minimal = pd.DataFrame([{
+        "slot": 2,
+        "in_salary_window": True,
+        "days_since_last_attempt": 0.0,
+    }])
+
+    # This must not raise and must return (1, 4) valid probabilities
+    result = hazards(model, X_minimal)
+    assert result.shape == (1, 4)
+    assert np.isfinite(result).all()
+    assert np.isclose(result.sum(axis=1)[0], 1.0)
+    assert (result >= 0.0).all() and (result <= 1.0).all()

@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+from scipy import stats as scipy_stats
 from sklearn.model_selection import GroupKFold
 
 from eval.corpus import TRAIN_SEEDS, generate
@@ -273,14 +274,26 @@ def main() -> None:
     cv_sd = float(cv_diffs.std(ddof=1))
     cv_se = cv_sd / np.sqrt(len(cv_diffs))
     cv_t = cv_mean / cv_se if cv_se > 0 else float("nan")
+    cv_df = len(cv_diffs) - 1
+    # CORRECTED, 2026-09-04 (stats-reviewer, reviewing eval/design_matrix_
+    # comparison.py's mirror of this exact function): the critical value
+    # for a t-stat on cv_df=4 degrees of freedom is scipy.stats.t.ppf, not
+    # the normal-approximation 2.0 -- at df=4 the real 95% two-sided value
+    # is 2.776. Harmless HERE because this file's own measured t=-6.32
+    # clears both thresholds and the published "BEATS" verdict is correct
+    # either way; fixed for correctness and so the two files' identical
+    # logic does not silently drift apart. See DECISIONS.md.
+    cv_crit = float(scipy_stats.t.ppf(0.975, cv_df))
     cv_wins = int((cv_diffs < 0).sum())
     print(f"per-fold (full - null): {np.round(cv_diffs, 5).tolist()}")
     print(f"mean = {cv_mean:+.5f}   SD = {cv_sd:.5f}   SE = {cv_se:.5f}   "
-          f"t = {cv_t:+.2f}   folds = {len(cv_diffs)}   "
+          f"t = {cv_t:+.2f}   df = {cv_df}   95% critical t = {cv_crit:.3f}   "
+          f"folds = {len(cv_diffs)}   "
           f"folds negative (full beats null) = {cv_wins}/{len(cv_diffs)}")
-    verdict = "BEATS" if (cv_mean < 0 and abs(cv_t) > 2) else \
-              "DOES NOT BEAT" if (cv_mean > 0 and abs(cv_t) > 2) else "INCONCLUSIVE ON"
-    print(f"verdict: full model {verdict} the null at ~95% (|t|>2), lower log_loss is better")
+    verdict = "BEATS" if (cv_mean < 0 and abs(cv_t) > cv_crit) else \
+              "DOES NOT BEAT" if (cv_mean > 0 and abs(cv_t) > cv_crit) else "INCONCLUSIVE ON"
+    print(f"verdict: full model {verdict} the null at 95% (|t| > {cv_crit:.3f}, "
+          f"df={cv_df}), lower log_loss is better")
 
     print()
     print(f"=== split-stability check ONLY (repeated re-splits of the SAME corpus -- "

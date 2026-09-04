@@ -715,3 +715,149 @@ skips had been hiding no failures, only hiding themselves.
 left over from the TDD red state. `src/model/conformal.py` has existed since
 B6; deleting it would have turned both invariant tests green. They now read
 the file unguarded.
+
+
+## Incident 11 — fixing the OPTED_OUT belief bug made a previously-unreachable conformal singleton reachable, and a published invariant test caught it
+
+**When:** Post-B16 remediation, block R2, 2026-09-04
+
+**Symptom:** After implementing R2's fix (belief.observe_terminal() collapses
+belief on an observed DEAD/OPTED_OUT outcome; eval/run.py's post-terminal
+re-solve now actually runs for OPTED_OUT, which it previously skipped
+entirely), the full model/eval/policy test suite showed one new failure:
+`tests/eval/test_export_mandates.py::test_the_wont_pay_singleton_is_the_unreachable_one`.
+Its assertion `("WONT_PAY",) not in singletons` failed —
+`[('CANT_PAY_NOW',), ('CANT_PAY_NOW',), ('WONT_PAY',), ...]` — the
+`{WONT_PAY}` conformal singleton, which this test's own docstring called
+"genuinely unreachable," had appeared.
+
+**Root cause:** Two independent things, confirmed rather than assumed:
+
+1. `src/policy/allocator.py`'s `_build_plan()` computes `gate.pred_set(b0)`
+   UNCONDITIONALLY for every `solve()` call, purely for the Plan's own audit
+   record (the drill-down's "conformal set" field) — regardless of whether
+   OFFER was ever an eligible candidate action for that call.
+2. R2's fix makes the OPTED_OUT re-solve actually happen (previously it was
+   skipped outright — the exact bug R2a exists to fix), and that re-solve's
+   belief is now `observe_terminal(b, Cause.WONT_PAY, ...)` — a DEGENERATE
+   (0, 0, 1.0) posterior. Fed through a real, well-calibrated conformal
+   predictor, a 100%-confident belief naturally produces a singleton — that
+   is the gate working correctly, not a defect in it.
+
+The combination means: a Plan object now exists (for the first time) whose
+`conformal_set` is genuinely `{WONT_PAY}` — but it is a RETROSPECTIVE record
+on a mandate that has ALREADY opted out, at a decision point where
+`permitted(Action.OFFER, ctx)` is unconditionally DENY (clause 6(c): opt-out
+denies every action but STOP). Verified directly, not assumed: I ran an
+identical 60-mandate diagnostic against the pre-fix code (via `git stash`,
+confirmed clean revert and clean restore afterward) and against the fixed
+code. Pre-fix: 0 WONT_PAY singletons, `n_stop=0`, `n_attempt_after_terminal=6`
+(the bug, reproduced). Post-fix: 11 WONT_PAY singletons across 60 mandates,
+`n_stop=11`, `n_attempt_after_terminal=0` — and in both runs, `OFFER` was
+chosen exactly 0 times. The singleton is new and real; the actionable claim
+("OFFER is never chosen") is untouched.
+
+**Why it wasn't caught earlier:** The original test conflated two different
+claims under one assertion: "OFFER is never the chosen action" (an
+operational fact about `permitted()` and the Q-value comparison) and "the
+{WONT_PAY} singleton never appears in any recorded conformal_set" (an
+audit-trail fact about what `gate.pred_set()` was ever asked). R2's fix
+changes the second without touching the first, and nothing before this
+session had ever exercised a re-solve on a fully-degenerate, post-opt-out
+belief — the OPTED_OUT re-solve literally never ran until this fix landed,
+so the gate had never been queried on this exact kind of belief before.
+
+**Fix:** `tests/eval/test_export_mandates.py`'s test renamed to
+`test_the_wont_pay_singleton_is_unreachable_via_live_inference` and rewritten
+to check the precise claim: no LIVE decision (one whose belief provenance
+lacks the `;observed=terminal` marker `observe_terminal()` stamps) ever
+produces the `{WONT_PAY}` singleton, and — unconditionally, regardless of
+what any conformal_set records — `OFFER` is never the chosen action. Also
+logged in DECISIONS.md alongside the rest of R2's review-pass findings.
+README.md and the dashboard's static copy (`Acquirer.tsx`, `Drilldown.tsx`),
+which both currently claim the singleton "never appears" rather than "is
+never chosen," are queued for a wording correction once the full 8-seed
+sweep is re-run and the real published `singleton_wont_pay_rate` number is
+in hand (R8-style republish) — not edited speculatively ahead of that
+number.
+
+**Guard added:** The rewritten test itself is the guard: it distinguishes
+"singleton on a live decision" (still asserted unreachable, would fail loudly
+if inference alone ever reached it — the R5-relevant, actionable case) from
+"singleton on a retrospective, definitionally-collapsed belief" (now
+correctly permitted). A future change that made the singleton reachable via
+ordinary belief inference — the change R5 is actually meant to make — will
+still be caught by this same test, at the assertion that matters.
+
+
+## Incident 12 — a bug fix's own fix asserted false certainty, and review caught it before the gate closed
+
+**When:** Post-B16 remediation, block R2, 2026-09-04, same day as Incident 11
+
+**Symptom:** R2's fix for the DEAD/OPTED_OUT terminal-outcome bug (Incident
+11's context) was sent to `payments-domain` for adversarial review before
+the gate was ticked. The review's central claim: `belief.observe_terminal()`
+collapsed belief to an exact `(1.0, 0.0, 0.0)` posterior on the reasoning
+"an observed DEAD outcome means CANT_PAY_EVER -- that is what the cause
+label MEANS, not a hypothesis about it" -- and this project's own frozen
+`eval/frozen/sim_config.yaml` contradicts it.
+
+**Root cause:** Verified directly, not taken on the reviewer's word: a
+200-seed direct simulation (driving `Simulator("nominal", seed=N)` to each
+mandate's first DEAD/OPTED_OUT outcome, scored against the privileged
+`m.initial_cause` ground truth) measured **P(CANT_PAY_EVER | DEAD) = 0.899**
+and **P(WONT_PAY | OPTED_OUT) = 0.904** -- both cross-validated on a disjoint
+300-seed range (0.893 / 0.909). Roughly 10% of each terminal outcome has a
+different true cause, since `CANT_PAY_NOW`/`WONT_PAY` carry a low but
+non-zero `base_dead` rate (0.02, against `CANT_PAY_EVER`'s 0.55), and
+similarly for `base_optout`. The degenerate collapse was additionally
+IRREVERSIBLE: `cause_map._PRIORS` contains no zeros, so `update()` on an
+exact `(0, 1, 0)` belief returns it unchanged forever -- an absorbing state
+nothing else in this codebase's belief model can reach, dormant only
+because no belief in this eval harness survives past a mandate's own
+terminal outcome.
+
+The same review pass found two further, independent bugs while examining
+this code: `src/policy/allocator.py`'s `_binding_constraint()` never
+checked the new `instrument_dead` field, so a REAUTH forced by that rule
+alone recorded `binding_constraint = None` -- the audit trail stating a
+hard-forced decision was a free economic choice. And fixing OPTED_OUT's
+re-solve meant the conformal gate was queried for the first time on a
+belief `observe_terminal()` had already collapsed, contaminating the
+coverage/singleton-rate diagnostic the off-ramp's whole safety claim
+depends on (this is the mechanism behind Incident 11's nonzero singleton
+rate, which that incident's own "confirmed inert" language addressed only
+for the ACTION, not the MEASUREMENT).
+
+**Why it wasn't caught earlier:** The docstring's own justification
+("that is what the cause label MEANS, not a hypothesis about it") was
+written and believed without checking it against the one artifact in this
+repo that could confirm or refute it -- the frozen simulator's own
+generative process. It reads as principled reasoning about what a Cause
+label definitionally means, but it is actually an empirical claim about
+this specific DGP, and empirical claims here get checked, not asserted.
+
+**Fix:** `observe_terminal()`'s signature changed from `(b: Belief, cause:
+Cause, *, source_version)` to `(cause_probs: Mapping[Cause, float], *,
+source_version)` -- no prior-belief parameter, matching `init()`'s own
+shape -- and `eval/run.py` now supplies the measured distributions via a
+new, fully-cited `_TERMINAL_OBSERVED_CAUSE_PROBS` constant instead of the
+module assuming a degenerate one. `_binding_constraint()` now checks
+`instrument_dead` first. `_RecordingGate` tags each query live/retrospective
+and coverage statistics are computed over live queries only. Re-ran the
+full 8-seed sweep after all three fixes: every action count is
+byte-identical to the flawed version (REAUTH's economics dominate at 90%
+confidence exactly as they did at 100%), `singleton_wont_pay_rate` is back
+to exactly 0.000 in every engine cell, and `n_attempt_after_terminal`
+remains 0 throughout. Full account in DECISIONS.md, 2026-09-04, "R2 review
+pass."
+
+**Guard added:** `tests/policy/test_allocator.py::
+test_instrument_dead_denies_attempt_and_names_itself_as_the_binding_
+constraint` (the binding-constraint regression). The belief-collapse
+question has no single mechanical guard -- the guard here is procedural:
+this project's own review-before-gate-closure discipline, which is what
+actually caught it. `_TERMINAL_OBSERVED_CAUSE_PROBS`'s derivation is left
+fully cited in `eval/run.py` so a future re-measurement (e.g. if
+`sim_config.yaml`'s hazard rates ever change) has a documented method to
+repeat, not just a number to trust.

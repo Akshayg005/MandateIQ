@@ -717,3 +717,178 @@ def test_as_dict_returns_cause_dict():
         assert cause in d, f"as_dict() missing {cause}"
         assert d[cause] == pytest.approx(b[cause], abs=1e-9), \
             f"as_dict()[{cause}] differs from __getitem__"
+
+
+# === observe_terminal() tests ================================================
+#
+# CORRECTED, same session, before R2's gate was ticked: observe_terminal()'s
+# first version took (b, cause, *, source_version) and always returned a
+# DEGENERATE (1.0/0/0) posterior. stats-reviewer/payments-domain found that
+# claim false against eval/frozen/sim_config.yaml's own generative process
+# (P(CANT_PAY_EVER|DEAD) measures ~0.90, not 1.0) and additionally
+# irreversible (cause_map._PRIORS has no zeros, so update() on an exact
+# (0,1,0) belief can never move away from it). The signature changed to
+# observe_terminal(cause_probs: Mapping[Cause, float], *, source_version) --
+# no prior belief parameter at all (matching init()'s own shape, since the
+# whole point is that the prior no longer matters), and the caller supplies
+# a MEASURED distribution rather than the module assuming a degenerate one.
+# These tests were rewritten to match, not just patched to compile.
+
+_CPN, _CPE, _WP = Cause.CANT_PAY_NOW, Cause.CANT_PAY_EVER, Cause.WONT_PAY
+
+
+def _measured_dead_probs() -> dict[Cause, float]:
+    """A representative non-degenerate measured distribution, shaped like
+    eval/run.py's real _TERMINAL_OBSERVED_CAUSE_PROBS[Outcome.DEAD] but
+    defined locally so this test file does not depend on eval/ internals."""
+    return {_CPE: 0.90, _WP: 0.06, _CPN: 0.04}
+
+
+def test_observe_terminal_produces_the_measured_distribution_exactly():
+    """observe_terminal(cause_probs, source_version=v) must return a Belief
+    whose probabilities are EXACTLY cause_probs -- not a degenerate 1.0/0.0
+    collapse. This is the corrected contract: the caller's measured
+    distribution passes through unchanged, in CAUSE_ORDER."""
+    from src.policy.belief import CAUSE_ORDER, observe_terminal
+
+    probs = _measured_dead_probs()
+    observed = observe_terminal(probs, source_version="test=v1")
+
+    for cause in CAUSE_ORDER:
+        assert observed[cause] == pytest.approx(probs[cause], abs=1e-9), (
+            f"observe_terminal()[{cause}] = {observed[cause]}, "
+            f"expected {probs[cause]} (the measured input, unchanged)"
+        )
+
+
+def test_observe_terminal_rejects_a_degenerate_distribution_only_if_invalid():
+    """A caller MAY still pass an exactly degenerate distribution (1.0 on one
+    cause) -- that is a valid distribution, just no longer the ONLY one this
+    function can produce. observe_terminal() itself does not forbid it; it
+    only validates the shape (sums to 1, non-negative, every Cause named)."""
+    from src.policy.belief import CAUSE_ORDER, observe_terminal
+
+    degenerate = {_CPE: 1.0, _WP: 0.0, _CPN: 0.0}
+    observed = observe_terminal(degenerate, source_version="test=v1")
+    assert observed[_CPE] == pytest.approx(1.0, abs=1e-9)
+    assert observed[_WP] == pytest.approx(0.0, abs=1e-9)
+    assert observed[_CPN] == pytest.approx(0.0, abs=1e-9)
+
+
+def test_observe_terminal_rejects_missing_cause():
+    """cause_probs must name every Cause exactly once -- same validation as
+    init()'s own prior argument."""
+    from src.policy.belief import BeliefError, observe_terminal
+
+    incomplete = {_CPE: 0.9, _WP: 0.1}  # CANT_PAY_NOW missing
+    with pytest.raises(BeliefError):
+        observe_terminal(incomplete, source_version="test=v1")
+
+
+def test_observe_terminal_rejects_negative_probability():
+    from src.policy.belief import BeliefError, observe_terminal
+
+    bad = {_CPE: 1.1, _WP: -0.1, _CPN: 0.0}
+    with pytest.raises(BeliefError):
+        observe_terminal(bad, source_version="test=v1")
+
+
+def test_observe_terminal_rejects_probabilities_not_summing_to_one():
+    from src.policy.belief import BeliefError, observe_terminal
+
+    bad = {_CPE: 0.5, _WP: 0.3, _CPN: 0.1}  # sums to 0.9
+    with pytest.raises(BeliefError):
+        observe_terminal(bad, source_version="test=v1")
+
+
+def test_observe_terminal_requires_source_version():
+    """observe_terminal() must require the source_version keyword argument.
+    Calling without it must raise TypeError because source_version has no
+    default -- this enforces traceability of the observation source."""
+    from src.policy.belief import observe_terminal
+
+    with pytest.raises(TypeError):
+        observe_terminal(_measured_dead_probs())
+
+
+def test_observe_terminal_rejects_empty_source_version():
+    """observe_terminal() must reject an empty string for source_version,
+    raising BeliefError. The observation must be traceable to a source."""
+    from src.policy.belief import BeliefError, observe_terminal
+
+    with pytest.raises(BeliefError):
+        observe_terminal(_measured_dead_probs(), source_version="")
+
+
+def test_observe_terminal_provenance_records_terminal_observation():
+    """The provenance string must contain the exact substring ';observed=terminal'
+    to mark that this belief was created by observing a terminal fact, not by
+    Bayesian updating from a decline signal."""
+    from src.policy.belief import observe_terminal
+
+    observed = observe_terminal(_measured_dead_probs(), source_version="test=v1")
+
+    assert ";observed=terminal" in observed.provenance, \
+        f"provenance '{observed.provenance}' missing ';observed=terminal'"
+
+
+def test_observe_terminal_provenance_records_source_version():
+    """The provenance string must also contain ';source=<source_version>' to
+    record which observation source produced this terminal fact."""
+    from src.policy.belief import observe_terminal
+
+    source = "my-observation-v42"
+    observed = observe_terminal(_measured_dead_probs(), source_version=source)
+
+    assert f"source={source}" in observed.provenance, \
+        f"provenance '{observed.provenance}' missing 'source={source}'"
+
+
+def test_observe_terminal_provenance_still_contains_versions():
+    """observe_terminal() adds the observation marker and source to provenance,
+    but must NOT replace the existing cause_map and reference_prior version
+    fields. The provenance is additive."""
+    from src.policy.belief import REFERENCE_PRIOR_VERSION, observe_terminal
+    from src.classify.cause_map import PRIOR_VERSION
+
+    observed = observe_terminal(_measured_dead_probs(), source_version="test=v1")
+
+    provenance = observed.provenance
+    assert isinstance(provenance, str), \
+        f"provenance is {type(provenance).__name__}, not str"
+
+    assert f"cause_map={PRIOR_VERSION}" in provenance, \
+        f"provenance '{provenance}' missing 'cause_map={PRIOR_VERSION}'"
+    assert f"reference_prior={REFERENCE_PRIOR_VERSION}" in provenance, \
+        f"provenance '{provenance}' missing 'reference_prior={REFERENCE_PRIOR_VERSION}'"
+    assert "source=test=v1" in provenance, \
+        f"provenance '{provenance}' missing 'source=test=v1'"
+    assert ";observed=terminal" in provenance, \
+        f"provenance '{provenance}' missing ';observed=terminal'"
+
+
+def test_observe_terminal_is_order_independent_of_cause():
+    """Two different measured distributions must produce different, but each
+    individually deterministic, beliefs."""
+    from src.policy.belief import observe_terminal
+
+    probs_now = {_CPN: 0.90, _CPE: 0.06, _WP: 0.04}
+    probs_ever = {_CPE: 0.90, _WP: 0.06, _CPN: 0.04}
+
+    obs_now = observe_terminal(probs_now, source_version="test=v1")
+    obs_ever = observe_terminal(probs_ever, source_version="test=v1")
+
+    assert obs_now[_CPN] == pytest.approx(0.90, abs=1e-9)
+    assert obs_ever[_CPE] == pytest.approx(0.90, abs=1e-9)
+    assert obs_now != obs_ever, "Different measured distributions should produce different beliefs"
+
+
+def test_observe_terminal_is_hashable():
+    """The output of observe_terminal() must be hashable, just like any Belief,
+    since B8's backward-induction memoisation uses quantised(b) as part of the key."""
+    from src.policy.belief import observe_terminal
+
+    observed = observe_terminal(_measured_dead_probs(), source_version="test=v1")
+
+    h = hash(observed)
+    assert isinstance(h, int), f"hash(observed) returned {type(h).__name__}, not int"

@@ -815,3 +815,247 @@ un.ps1 verify passes 5/5 including the postgres check that had
              off-ramp finding. ssr-check.tsx's guard was rewritten to assert
              the opposite of what it used to, rather than deleted -- a guard
              encoding a superseded decision looks like a reason. -->
+
+---
+
+# Post-B16 remediation gates
+
+Written **before** any of this work started (R0, 2026-09-04), for the same
+reason the Day-1 freeze exists: a pass condition invented after seeing the
+result is not a pass condition. These close findings the B13 seed sweep and
+the B14 dashboard surfaced and disclosed rather than fixed.
+
+Each gate names a number or an artifact that can be checked. "The code
+exists" is not a gate here either.
+
+- [x] **R1a** design matrix carries amount and category: `_design_matrix()`
+      builds an amount-band term and a category term, selectable via a new
+      `WIDENED_FEATURE_COLUMNS` alongside the unchanged default
+      `FEATURE_COLUMNS` — the model is not required to adopt a widened
+      design as its production default, only to fit it and report what
+      happens; held-out multiclass log-loss for the widened design vs the
+      narrow one is reported via a properly-powered inferential test
+      (pooled out-of-fold per-row differences clustered by mandate_id — the
+      20-seed stability sweep alone is NOT independent-sample evidence, see
+      `eval/model_fit_report.py`'s own docstring), **with the result stated
+      whichever way it goes** — a widened design that does not beat the
+      narrow one is a finding, not a failure, and must not be re-framed as
+      one
+      <!-- 2026-09-04, CLOSED. src/model/competing_risks.py:
+           WIDENED_FEATURE_COLUMNS (amount_band_2/3/4,
+           category_insurance_premium/mutual_fund/credit_card_bill) fit via
+           fit(feature_columns=...); FEATURE_COLUMNS stays the unchanged
+           default. eval/design_matrix_comparison.py -> reports/
+           model_defensibility.md, Phase A: PRIMARY test (pooled
+           out-of-fold log-loss, clustered by mandate_id, 12316 rows/7154
+           mandates) mean(widened-narrow)=+0.00103, clustered SE=0.00036,
+           t=+2.88, df=7153, p=0.0040 -- WIDENED IS MEASURABLY WORSE at 95%
+           confidence, not merely no better. 0/18 new coefficients (6
+           columns x 3 outcomes) have a 95% CI excluding zero. Matches the
+           DGP directly: eval/frozen/simulator.py's _draw_outcome never
+           reads category in any arm and reads amount_paise only inside
+           coupled's household-balance side mechanic, never in the base
+           hazard logits fit() trains against (nominal). Two real bugs
+           found and fixed during this work, both disclosed in
+           DECISIONS.md and reports/model_defensibility.md rather than
+           quietly corrected: (1) the FIRST version of this comparison used
+           a normal-approximation |t|>2 threshold on a 5-fold-mean t-stat
+           with only 4 degrees of freedom (correct 95% critical value
+           2.776, not 2.0) and published a "does not beat" verdict that
+           was not actually significant (p=0.076) -- replaced with the
+           pooled/clustered test as primary; (2) the amount-band cut
+           points were documented as quartiles of "the only range fit()
+           trains on", which is false -- elevated categories'
+           higher AFA limit (clause 8(b)) lets 4.42% of the training
+           sample exceed that stated range, confounding amount_band_4 with
+           category. Neither bug changes the null finding; both are
+           disclosed in the report and the module docstring. stats-reviewer
+           reviewed the full change (design, tests, script) and confirmed:
+           no leakage (amount/category are static per-mandate, present at
+           slot 1), censoring discipline intact, CV split genuinely
+           mandate-disjoint for both models, no data-snooping in the cut
+           points (fixed arithmetic on the config's own documented range,
+           chosen before any fit ran). Also found and fixed: a test-fixture
+           bug (idx % 4 was a perfect bijection with the outcome within
+           every cell, given the fixture's own 25-row inner loop --
+           fabricated a large false amount effect purely from fixture
+           construction; fixed to idx // 5, verified no bijection remains)
+           and a silent-wrong-answer gap in production code (an
+           unrecognized/null category scored as the reference level with
+           no error; now raises). Does not touch eval/frozen/. -->
+
+- [ ] **R1b** `reports/model_defensibility.md` exists and reports per-cause
+      coefficients with confidence intervals for issuer, instrument type and
+      mandate age, fit on a simulator that actually generates them; a guard
+      asserts `eval/run.py` never imports that simulator
+- [x] **R2a** `n_attempt_after_terminal == 0` across all 256 engine cells,
+      **proven by a test that constructs the sequence and fails against the
+      pre-R2 code** — a counter that reads zero because the path was deleted
+      is not evidence
+      <!-- 2026-09-04, CLOSED, after a review-driven redesign mid-block.
+           n_attempt_after_terminal == 0 confirmed across all 256 engine
+           cells on the fresh 8-seed sweep. tests/eval/test_run_regimes.py:
+           three scripted-sequence regression tests (_ScriptedSimulator,
+           forcing an exact STILL_PENDING->DEAD / OPTED_OUT / RECOVERED
+           sequence) verified to FAIL against the pre-fix code before the
+           fix landed -- not merely written to pass.
+
+           THE FIX, AS SHIPPED: src/policy/stopping_rules.py's
+           AllocationContext gained `instrument_dead: bool = False`;
+           permitted() denies ATTEMPT when set (same shape as the existing
+           REVOKED rule); with_terminal(outcome) sets it for DEAD or the
+           EXISTING opted_out for OPTED_OUT. eval/run.py's terminal branch
+           now calls this for both outcomes (previously OPTED_OUT's
+           re-solve was skipped ENTIRELY -- _proxy_decline_class() returns
+           None for it -- so no decision was ever recorded).
+
+           A FIRST VERSION OF THIS FIX WAS WRONG, found by stats-reviewer
+           and payments-domain BEFORE this gate was ticked, not after:
+           belief.observe_terminal() originally collapsed belief to an
+           exact DEGENERATE (1.0/0/0) posterior, on the reasoning "DEAD
+           means CANT_PAY_EVER -- that is what the cause label MEANS, not
+           a hypothesis about it." Checked against eval/frozen/
+           sim_config.yaml's own generative process (200-seed direct
+           simulation, cross-validated on a disjoint 300-seed range) and
+           found FALSE: P(CANT_PAY_EVER|DEAD) = 0.899, P(WONT_PAY|
+           OPTED_OUT) = 0.904 -- roughly 10% of each terminal outcome has
+           a DIFFERENT true cause. A degenerate 1.0 was additionally
+           IRREVERSIBLE: cause_map._PRIORS has no zeros, so update() on an
+           exact (0,1,0) belief returns it unchanged forever (0 * anything
+           = 0) -- an absorbing state dormant only because no belief
+           survives past a mandate's own terminal outcome in this eval
+           harness, a real hazard for R4's future multi-cycle persistence.
+           FIXED: observe_terminal()'s signature changed to
+           observe_terminal(cause_probs: Mapping[Cause, float], *,
+           source_version) -- no prior-belief parameter at all (matching
+           init()'s own shape) -- and eval/run.py now passes the MEASURED
+           distributions above via a new, fully-derived-and-cited
+           _TERMINAL_OBSERVED_CAUSE_PROBS constant. Re-ran the full sweep
+           after the fix: EVERY action count (n_reauth, n_stop,
+           false_reauth_count and all R2b splits) is BYTE-IDENTICAL to the
+           degenerate-collapse version -- REAUTH's economics dominate STOP
+           at 90% confidence exactly as they did at 100%, for every
+           realistic amount in this corpus -- so the correction cost
+           nothing in policy quality while removing a false certainty
+           claim and an irreversible state.
+
+           TWO MORE BUGS FOUND BY THE SAME REVIEW PASS, both fixed:
+           (1) src/policy/allocator.py's _binding_constraint() did not
+           check ctx.instrument_dead at all -- a REAUTH forced ONLY by
+           this rule wrote binding_constraint=None to the Plan, which
+           src/execute/shadow.py renders as "(none -- decided on belief
+           and expected value)": the ledger stating a hard-forced decision
+           was a free economic choice. Fixed (checked first, matching
+           AFA_CLIFF's precedence); regression test added
+           (test_instrument_dead_denies_attempt_and_names_itself_as_the_
+           binding_constraint). (2) Fixing OPTED_OUT's re-solve meant the
+           conformal gate was queried, for the first time, on a
+           RETROSPECTIVE belief already collapsed by observe_terminal() --
+           not exchangeable with calib_conf's live-inference calibration
+           pool, so mixing it into coverage/singleton-rate MEASUREMENT
+           would contaminate exactly the diagnostic the off-ramp's safety
+           claim depends on (payments-domain: "the entire nonzero
+           singleton rate is arithmetically one query per opted-out
+           mandate... the gate has still never produced a {WONT_PAY}
+           singleton from a belief it actually reasoned about"). Fixed:
+           _RecordingGate now tags each query live/retrospective (via the
+           `;observed=terminal` provenance marker) and
+           _score_recorded_queries() computes coverage_marginal/
+           singleton_rate/singleton_wont_pay_rate/mean_set_size/
+           coverage_per_class over LIVE queries only -- confirmed on the
+           fresh sweep: singleton_wont_pay_rate is back to exactly 0.000
+           in every one of 256 engine cells, with 20,592 retrospective
+           queries correctly excluded and disclosed via the new
+           coverage_n_retrospective field (matches payments-domain's own
+           independently-cited 1,162,576 total query count exactly: 1,141,984
+           live + 20,592 retrospective). The Plan object's own
+           conformal_set audit field is UNCHANGED -- a specific mandate's
+           drill-down CAN still show a retrospective {WONT_PAY} singleton
+           (46/200 in the headline cell) next to binding_constraint=
+           OPTED_OUT; dashboard/src/Drilldown.tsx's comment corrected to
+           explain this rather than claim it never happens.
+
+           DISCLOSED, not fixed (out of R2's scope): observe_terminal()/
+           with_terminal() have zero callers outside eval/ and tests/ --
+           src/execute/shadow.py builds one AllocationContext per mandate
+           with opted_out hard-coded False and calls solve() exactly once,
+           no multi-attempt cycle exists in src/ to wire this into. This
+           fix is proven true of the evaluation harness; R4 (the cycle
+           orchestrator, not yet built) is where it must reach the money
+           path. README's "What this can't do" item 5 rewritten to
+           disclose this rather than the now-fixed 4,032 count.
+
+           Reviewed by stats-reviewer, compliance-auditor (all 6 checked
+           clauses VERIFIED, singleton-on-departed-customer concern
+           confirmed inert), and payments-domain (found all of the above;
+           confirmed the permitted()/instrument_dead/signature() core of
+           the fix is correct and was "the actual fix"). Does not touch
+           eval/frozen/. -->
+- [x] **R2b** four re-auth numbers published side by side (pre-registered
+      `false_reauth_count`, compliance-path count, inference-path false count,
+      and the same against `effective_cause`); `false_reauth_count` keeps its
+      Day-1 meaning byte-for-byte
+      <!-- 2026-09-04, CLOSED. eval/run.py's CellResult: compliance_reauth_
+           count (REAUTH via requires_afa() -- clause 8(a)/8(b), legally
+           mandatory), false_reauth_inference_count (false_reauth_count
+           restricted to the inference route only), and both scored again
+           against sim.effective_cause() (false_reauth_count_effective /
+           false_reauth_inference_count_effective) for the misspecified
+           arm's cause-switching. false_reauth_count/false_reauth_paise
+           themselves UNCHANGED -- confirmed via test
+           (test_reauth_via_compliance_path_is_not_counted_as_inference_
+           false: cell.false_reauth_count == 1, "still true against the
+           pre-registered, unredefined criterion"). Fresh 8-seed sweep:
+           17,554 REAUTH total; 8,832 false_reauth_count (pre-registered,
+           unchanged meaning); 6,784 compliance_reauth_count; **3,022**
+           false_reauth_inference_count -- the genuinely-interesting
+           number, about a third of the pre-registered count. Effective-
+           cause-scored versions slightly lower (8,542 / 2,732), as
+           expected. payments-domain confirmed the route attribution is
+           correct (requires_afa() at counting time cannot disagree with
+           _best_action's own branch: ctx is object-identical between
+           decision and count, and amount_paise/category are never
+           mutated by with_attempt/with_contact/with_terminal) but flagged
+           that after the observe_terminal() redesign, false_reauth_
+           inference_count on a post-DEAD re-solve is no longer a pure
+           "belief was wrong" signal -- b.dominant()==CANT_PAY_EVER is now
+           TRUE on every DEAD-terminated mandate by construction (P=0.899,
+           still dominant), so some fraction of this count reflects the
+           simulator's own ~10% off-diagonal draw rather than a model
+           error. Disclosed in DECISIONS.md rather than re-defined again:
+           the number is real and reproducible, its INTERPRETATION as
+           "belief was wrong" is approximate, not exact. Also flagged,
+           disclosed not fixed here (R5's territory): false_offramp_count
+           is structurally 0 (n_offer=0 everywhere), so root CLAUDE.md's
+           "report both error costs" pairing is currently one real number
+           and one zero by construction, not two measurements. Reviewed by
+           compliance-auditor (clause 8(a)/8(b) reasoning: VERIFIED, purely
+           a scoring change, no effect on which action the allocator
+           chose) and payments-domain. Does not touch eval/frozen/. -->
+- [ ] **R3** `reports/regimes.md` names the LTV break-even ratio as a ratio to
+      mean mandate amount, and every point on the sensitivity curve is
+      reproducible by one command
+- [ ] **R4** one command plans a cycle and a second executes what is due; a
+      test drives read → solve → commit → execute end to end against a live
+      schema with the clock advanced 24h between the two phases
+- [ ] **R5** `n_offer > 0` in at least one regime, with **both** the recovery
+      cost and the false-off-ramp rate reported at every point of a
+      channel-quality sweep, and the synthetic channel's own ROC published
+      beside them. The conformal singleton stays the only firing rule
+- [ ] **R6** `/plan/{mandate_id}`, `/ledger/{mandate_id}` and
+      `/decision/{decision_sha256}` return real rows from a live schema,
+      covered by tests
+- [ ] **R7** a reviewer on Linux or macOS can install, test, run the eval and
+      read the report using commands printed in the README, without
+      translating anything
+
+## What these gates deliberately do NOT say
+
+- Nothing here promises the widened design matrix improves the model. R1a is
+  a gate on **measuring and reporting**, not on winning.
+- Nothing here promises the false re-auth count falls. R2b is a gate on
+  **attributing** it correctly. If the inference path turns out to be as bad
+  as the conflated number implied, that is the answer and it gets published.
+- R5 does not promise the off-ramp is *correct*, only that it is **reachable
+  and measured**. Untested-and-central is a weaker position than
+  tested-and-imperfect; this gate buys the second one, not a good result.

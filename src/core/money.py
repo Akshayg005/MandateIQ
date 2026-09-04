@@ -59,3 +59,36 @@ def split_floor(p: Paise, n: int) -> list[Paise]:
         raise ValueError(f"split_floor() received negative paise: {p!r}")
     base, remainder = divmod(int(p), n)
     return [Paise(base + 1)] * remainder + [Paise(base)] * (n - remainder)
+
+
+def interpolate_crossing(x0: int, y0: int, x1: int, y1: int) -> Fraction:
+    """R3, 2026-09-04 (reports/gates.md, "Post-B16 remediation gates"): the
+    exact x-value where a straight line through (x0, y0) and (x1, y1)
+    crosses y=0 -- e.g. x = an LTV value in paise, y = (engine's
+    recovered_paise - the ladder's) at that LTV, from two adjacent points
+    of an LTV sensitivity sweep. This is the break-even point between two
+    SWEPT-AND-MEASURED cells, not a claim about what happens between them
+    -- report it as an interpolation, never as a third measurement.
+
+    Requires y0 and y1 to have a genuine sign change (or one to be exactly
+    zero) -- raises ValueError otherwise, since a crossing is only
+    well-defined where the sign actually flips; a caller sweeping several
+    points must find the bracketing pair first; this function does not
+    search for one.
+
+    Returns an exact Fraction (never a float) so a caller can go on to
+    divide it by, e.g., a mean mandate amount without compounding rounding
+    error -- money.py's whole reason to exist.
+    """
+    if y0 == 0:
+        return Fraction(x0)
+    if y1 == 0:
+        return Fraction(x1)
+    if (y0 < 0) == (y1 < 0):
+        raise ValueError(
+            f"interpolate_crossing() requires a sign change between "
+            f"y0={y0} and y1={y1} -- no crossing between these two points"
+        )
+    # Linear interpolation: x = x0 + (0 - y0) * (x1 - x0) / (y1 - y0),
+    # kept as one exact Fraction rather than an intermediate float division.
+    return Fraction(x0) + Fraction(-y0, 1) * Fraction(x1 - x0, y1 - y0)

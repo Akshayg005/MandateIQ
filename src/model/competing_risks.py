@@ -55,18 +55,64 @@ matrix -- rederive it, since a cause-marginal model's zero-coefficient
 claims need the within-stratum caveat above, not the frozen simulator's
 per-cause `_draw_outcome` logic read directly.
 
-`_design_matrix()` still computes all six possible columns (unchanged) so
-`HazardModel.feature_columns` can select a different subset if a future
-caller needs one -- only the DEFAULT `FEATURE_COLUMNS` used by
-`fit(intercept_only=False)` changed.
+`_design_matrix()` still computes all twelve possible columns (unchanged in
+spirit; widened 2026-09-04, R1) so `HazardModel.feature_columns` can select a
+different subset if a future caller needs one -- only the DEFAULT
+`FEATURE_COLUMNS` used by `fit(intercept_only=False)` changed... except it
+didn't: see the next paragraph.
 
-Still excluded, per the original design and B4's decisions:
-`committed_day_of_month` (collinear with `days_since_last_attempt` --
-identical on all slot-2 rows, condition number 144 against the six-column
-design), `prior_failures_this_cycle` (exactly `slot - 1`, collinear with
-the slot dummies), `profile` (constant per call, collinear with the
-intercept), `amount_paise`/`category`/`above_afa_cliff` (no true hazard
-signal under `nominal` -- `_draw_outcome` never reads them on this arm).
+Still excluded from the DEFAULT `FEATURE_COLUMNS`, per the original design
+and B4's decisions: `committed_day_of_month` (collinear with
+`days_since_last_attempt` -- identical on all slot-2 rows, condition number
+144 against the six-column design), `prior_failures_this_cycle` (exactly
+`slot - 1`, collinear with the slot dummies), `profile` (constant per call,
+collinear with the intercept).
+
+`amount_paise`/`category` -- WIDENED (R1, 2026-09-04), not excluded, but
+NOT the default either. `_design_matrix()` now also builds `amount_band_2`,
+`amount_band_3`, `amount_band_4` (quartile cuts of
+`eval/frozen/sim_config.yaml`'s own `below_afa_range` -- NOT "the only
+range fit() trains on": that claim was checked and found FALSE by
+stats-reviewer, 2026-09-04. `eval/corpus.py generate()` drops a mandate
+above ITS OWN category's AFA limit, and the elevated categories carry a
+higher one (clause 8(b), Rs 1,00,000) than the standard one these cuts are
+quartiles of (clause 8(a), Rs 15,000) -- 316/7154 mandates (4.42%) in the
+actual training sample exceed these cuts' Rs 500-14,000 range, up to a
+measured Rs 89,785. `amount_band_4` is therefore a wide catch-all,
+CONFOUNDED with category by the AFA filter itself: 25.8% of `subscription`
+mandates land in it versus 36.6-37.3% of every elevated category. See
+`reports/model_defensibility.md`'s Phase A section for the full disclosure
+-- this does not change the null finding below, but these six columns are
+not yet fit for an amount-independent-of-category defensibility claim) and
+`category_insurance_premium`, `category_mutual_fund`,
+`category_credit_card_bill` (the non-reference `category_mix` levels from
+that same file). `WIDENED_FEATURE_COLUMNS` is `FEATURE_COLUMNS` plus those
+six. This existed to answer a real defensibility question -- a reviewer
+asking "why doesn't the hazard model use the mandate's own amount or
+category at all" deserves a fitted, measured answer, not a design note --
+and the measured answer is in `reports/model_defensibility.md`: under the
+`nominal` arm (what `fit()`'s default trains on), `_draw_outcome`
+(`eval/frozen/simulator.py`) never branches on `category` at all, and
+branches on `amount_paise` only inside `coupled`'s household-balance
+comparison, not in the base hazard logits. MEASURED
+(`eval/design_matrix_comparison.py`, run 2026-09-04, PRIMARY test -- pooled
+out-of-fold per-row log-loss differences clustered by mandate_id, the
+properly-powered statistic; a naive 5-fold-MEAN t-test the first version of
+that script used was underpowered at df=4 and did NOT clear 95%, corrected
+after stats-reviewer caught it): all 18 of the new coefficients (6 columns
+x 3 non-reference outcomes) have a 95% CI including zero, and
+`WIDENED_FEATURE_COLUMNS` has WORSE held-out log-loss than
+`FEATURE_COLUMNS` -- mean(widened - narrow) = +0.00103, clustered
+SE = 0.00036, t = +2.88, df = 7153, p = 0.0040. That is the correct,
+honest result of actually checking, not a symptom of a bad covariate
+choice, and it is why `FEATURE_COLUMNS` (the default) stays narrow: adding
+six provably-null parameters made the held-out fit MEASURABLY WORSE, not
+merely no better -- a stronger, evidence-based version of the identical
+"empirical neutrality plus parsimony" reason this file already excludes
+`days_since_last_attempt` and `slot3_x_in_salary_window` above.
+`eval/sim2.py` (non-frozen, R1 Phase B) is where amount- and
+category-like covariates get a corpus that actually
+varies outcomes by them.
 
 Evaluation functions (`log_loss`, `brier_per_cause`, `calibration_table`)
 assume the caller has already selected `df[df.estimable]` -- they raise
@@ -83,11 +129,50 @@ import statsmodels.api as sm
 
 FEATURE_COLUMNS: tuple[str, ...] = ("const", "slot_3", "slot_4", "in_salary_window")
 INTERCEPT_ONLY_COLUMNS: tuple[str, ...] = ("const",)
-# _design_matrix() always computes all six of these; FEATURE_COLUMNS selects
-# the four `fit()` actually uses by default -- see module docstring.
+
+# Amount-band cut points, in paise -- the quartiles of
+# eval/frozen/sim_config.yaml's `below_afa_range: [50_000, 1_400_000]`
+# (Rs 500-14,000): 50_000 + k*(1_400_000-50_000)/4 for k=1,2,3 -- derived
+# from that range alone, not tuned against any fit result.
+#
+# NOT "the only range fit() sees": a claim to that effect here was checked
+# and found FALSE by stats-reviewer (2026-09-04). generate() drops a
+# mandate above ITS OWN category's AFA limit, and the elevated categories
+# (insurance_premium/mutual_fund/credit_card_bill, clause 8(b)) allow up to
+# Rs 1,00,000 -- far above this range. Measured: 316/7154 mandates (4.42%)
+# in the actual estimation sample exceed 1_400_000, up to 8_978_529
+# (Rs 89,785). amount_band_4 (>= _AMOUNT_BAND_CUT_3) is consequently a wide
+# catch-all, CONFOUNDED with category by the AFA filter itself -- see
+# reports/model_defensibility.md's Phase A section for the measured
+# category x band breakdown. Left uncorrected pending a band redesign
+# (disclosed, not silently fixed): Phase A's null finding is unaffected
+# either way (both covariates are non-causal under `nominal` regardless of
+# where a boundary falls), but Phase B must not inherit this scheme
+# unexamined.
+_AMOUNT_BAND_CUT_1 = 387_500
+_AMOUNT_BAND_CUT_2 = 725_000
+_AMOUNT_BAND_CUT_3 = 1_062_500
+
+# category_mix keys from eval/frozen/sim_config.yaml, verbatim, minus
+# "subscription" (70% of the mix, and this tuple's reference/omitted level --
+# same convention as slot 2 being the reference for slot_3/slot_4 below).
+_CATEGORY_LEVELS: tuple[str, ...] = ("insurance_premium", "mutual_fund", "credit_card_bill")
+
+# _design_matrix() always computes whichever of these its `columns` argument
+# actually asks for; FEATURE_COLUMNS selects the four `fit()` uses by
+# DEFAULT -- see module docstring. WIDENED_FEATURE_COLUMNS is the R1
+# (2026-09-04) alternative that adds amount and category; pass it to
+# fit()'s `feature_columns` parameter explicitly. The default is unchanged.
 _ALL_DESIGN_COLUMNS: tuple[str, ...] = (
     "const", "slot_3", "slot_4", "in_salary_window",
     "days_since_last_attempt", "slot3_x_in_salary_window",
+    "amount_band_2", "amount_band_3", "amount_band_4",
+    "category_insurance_premium", "category_mutual_fund", "category_credit_card_bill",
+)
+
+WIDENED_FEATURE_COLUMNS: tuple[str, ...] = FEATURE_COLUMNS + (
+    "amount_band_2", "amount_band_3", "amount_band_4",
+    "category_insurance_premium", "category_mutual_fund", "category_credit_card_bill",
 )
 
 
@@ -99,22 +184,94 @@ class HazardModel:
     feature_columns: tuple[str, ...] = FEATURE_COLUMNS
 
 
-def _design_matrix(df: pd.DataFrame) -> pd.DataFrame:
-    required = {"slot", "in_salary_window", "days_since_last_attempt"}
-    missing = required - set(df.columns)
-    if missing:
-        raise ValueError(
-            f"design matrix input is missing required column(s): {sorted(missing)}"
-        )
+def _design_matrix(df: pd.DataFrame, *, columns: tuple[str, ...] = _ALL_DESIGN_COLUMNS) -> pd.DataFrame:
+    """Build exactly `columns` (default: every column this module knows how
+    to construct) from `df`, each one explicitly -- never via
+    `pd.get_dummies`, for the reason the module docstring gives (a batch
+    missing a category silently drops that dummy and misaligns the fitted
+    coefficient vector at predict time).
+
+    Computes -- and requires the source column(s) for -- each column GROUP
+    only if `columns` actually asks for a member of that group, rather than
+    checking one blanket `required` set up front. This is what lets a
+    caller using the unchanged default `FEATURE_COLUMNS`
+    (`eval/allocator_sweep.py`'s `hazard_from_fit()`, whose row carries only
+    `slot`/`in_salary_window`/`days_since_last_attempt` BY DESIGN -- see
+    that function's own docstring on why amount_paise never entered its
+    design matrix) keep working completely unmodified: it never asks for an
+    amount- or category-derived column, so it is never asked to supply
+    `amount_paise` or `category`. A caller that DOES request
+    `WIDENED_FEATURE_COLUMNS` must supply both, or gets a `ValueError`
+    naming exactly which one is missing -- not a blanket list of every
+    column this function could ever need.
+
+    Every column within one group is still computed together regardless of
+    which VALUES are actually present in `df` -- e.g. requesting any one
+    category dummy computes all three from the same three equality checks,
+    and requesting any one amount band computes all three -- so widening
+    this function does not reopen the get_dummies bug it was written to
+    avoid.
+    """
+    needed = set(columns)
     out = pd.DataFrame(index=df.index)
-    out["const"] = 1.0
-    slot = df["slot"].astype("int64")
-    out["slot_3"] = (slot == 3).astype(float)
-    out["slot_4"] = (slot == 4).astype(float)
-    out["in_salary_window"] = df["in_salary_window"].astype(float)
-    out["days_since_last_attempt"] = df["days_since_last_attempt"].astype(float)
-    out["slot3_x_in_salary_window"] = out["slot_3"] * out["in_salary_window"]
-    return out[list(_ALL_DESIGN_COLUMNS)]
+
+    if "const" in needed:
+        out["const"] = 1.0
+
+    if {"slot_3", "slot_4", "slot3_x_in_salary_window"} & needed:
+        if "slot" not in df.columns:
+            raise ValueError("design matrix input is missing required column(s): ['slot']")
+        slot = df["slot"].astype("int64")
+        out["slot_3"] = (slot == 3).astype(float)
+        out["slot_4"] = (slot == 4).astype(float)
+
+    if {"in_salary_window", "slot3_x_in_salary_window"} & needed:
+        if "in_salary_window" not in df.columns:
+            raise ValueError("design matrix input is missing required column(s): ['in_salary_window']")
+        out["in_salary_window"] = df["in_salary_window"].astype(float)
+
+    if "days_since_last_attempt" in needed:
+        if "days_since_last_attempt" not in df.columns:
+            raise ValueError("design matrix input is missing required column(s): ['days_since_last_attempt']")
+        out["days_since_last_attempt"] = df["days_since_last_attempt"].astype(float)
+
+    if "slot3_x_in_salary_window" in needed:
+        out["slot3_x_in_salary_window"] = out["slot_3"] * out["in_salary_window"]
+
+    if {"amount_band_2", "amount_band_3", "amount_band_4"} & needed:
+        if "amount_paise" not in df.columns:
+            raise ValueError("design matrix input is missing required column(s): ['amount_paise']")
+        amount = df["amount_paise"].astype("int64")
+        out["amount_band_2"] = amount.between(_AMOUNT_BAND_CUT_1, _AMOUNT_BAND_CUT_2 - 1).astype(float)
+        out["amount_band_3"] = amount.between(_AMOUNT_BAND_CUT_2, _AMOUNT_BAND_CUT_3 - 1).astype(float)
+        out["amount_band_4"] = (amount >= _AMOUNT_BAND_CUT_3).astype(float)
+
+    category_cols = {f"category_{level}" for level in _CATEGORY_LEVELS}
+    if category_cols & needed:
+        if "category" not in df.columns:
+            raise ValueError("design matrix input is missing required column(s): ['category']")
+        category = df["category"].astype(str)
+        # An unrecognised value (a typo'd category, or None/NaN --
+        # .astype(str) turns either into the literal string "None"/"nan")
+        # would otherwise silently score as the reference level with no
+        # error: found by stats-reviewer (2026-09-04) as a real, if
+        # currently latent, gap -- every category in the frozen corpus IS
+        # one of these four, but Phase B's eval/sim2.py will not carry that
+        # guarantee automatically. Loud, not silent, per this file's own
+        # discipline for everything else it checks.
+        _KNOWN_CATEGORIES = frozenset(_CATEGORY_LEVELS) | {"subscription"}
+        unknown = sorted(set(category.unique()) - _KNOWN_CATEGORIES)
+        if unknown:
+            raise ValueError(
+                f"design matrix input has categor{'y' if len(unknown) == 1 else 'ies'} "
+                f"outside the known vocabulary {sorted(_KNOWN_CATEGORIES)}: {unknown} "
+                f"-- a null/typo'd category would otherwise silently score as the "
+                f"reference level"
+            )
+        for level in _CATEGORY_LEVELS:
+            out[f"category_{level}"] = (category == level).astype(float)
+
+    return out[list(columns)]
 
 
 def assemble(pp_df: pd.DataFrame, feat_df: pd.DataFrame) -> pd.DataFrame:
@@ -145,11 +302,30 @@ def assemble(pp_df: pd.DataFrame, feat_df: pd.DataFrame) -> pd.DataFrame:
     return feat_df.merge(target, on="row_id", how="inner")
 
 
-def fit(df: pd.DataFrame, *, intercept_only: bool = False) -> HazardModel:
+def fit(
+    df: pd.DataFrame,
+    *,
+    intercept_only: bool = False,
+    feature_columns: tuple[str, ...] | None = None,
+) -> HazardModel:
     """Fit a multinomial logit over `df[df.estimable]` -- `event_code` as
     the 4-category target, `STILL_PENDING` (0) as the MNLogit reference
     category. `df` is `assemble()`'s full output (slot-1 rows included);
-    this function filters internally, per the module docstring."""
+    this function filters internally, per the module docstring.
+
+    `feature_columns`, if given, is used verbatim (e.g.
+    `WIDENED_FEATURE_COLUMNS` -- R1, 2026-09-04) instead of the
+    `intercept_only`-selected default; `df` must then carry every raw
+    source column those design columns need (`_design_matrix()` names the
+    specific one missing, if any). Passing both `feature_columns` and
+    `intercept_only=True` is a contradictory call -- both select design
+    columns -- and raises rather than silently picking one."""
+    if intercept_only and feature_columns is not None:
+        raise ValueError(
+            "fit() got both intercept_only=True and an explicit feature_columns -- "
+            "these both select design columns; pass at most one"
+        )
+
     required = {"event_code", "estimable"}
     missing = required - set(df.columns)
     if missing:
@@ -170,8 +346,13 @@ def fit(df: pd.DataFrame, *, intercept_only: bool = False) -> HazardModel:
             f"{sorted(estimable_df['event_code'].unique())}"
         )
 
-    cols = INTERCEPT_ONLY_COLUMNS if intercept_only else FEATURE_COLUMNS
-    design = _design_matrix(estimable_df)[list(cols)]
+    if feature_columns is not None:
+        cols = feature_columns
+    elif intercept_only:
+        cols = INTERCEPT_ONLY_COLUMNS
+    else:
+        cols = FEATURE_COLUMNS
+    design = _design_matrix(estimable_df, columns=cols)
     target = estimable_df["event_code"].astype(int)
 
     result = sm.MNLogit(target, design).fit(disp=0)
@@ -183,7 +364,7 @@ def hazards(model: HazardModel, X: pd.DataFrame) -> np.ndarray:
     return predicted probabilities, shape (len(X), 4), columns in Outcome
     int order [STILL_PENDING, RECOVERED, DEAD, OPTED_OUT], each row
     summing to 1."""
-    design = _design_matrix(X)[list(model.feature_columns)]
+    design = _design_matrix(X, columns=model.feature_columns)
     probs = np.asarray(model.result.predict(design))
     if probs.ndim != 2 or probs.shape != (len(X), 4):
         raise ValueError(

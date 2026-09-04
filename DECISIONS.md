@@ -4787,3 +4787,326 @@ number where there is one, and **put the unflattering part in the
 definition**. `offer` says the column is 0 everywhere. `false off-ramp` says
 0 is not evidence of safety because nothing was ever offered. A tooltip that
 quietly omits the caveat is worse than no tooltip.
+
+### 2026-09-04 · R0 · Four scope decisions for the post-B16 remediation plan, taken before any code
+
+The human handed over seven fixes with an explicit priority order (1 highest)
+after reviewing the B13/B14 numbers. Four of the seven had more than one
+honest way to execute and were decided up front, by the human, choosing
+between options a planning pass laid out — the same discipline B4's
+UNSOURCED/omit-and-declare choice and B7's disclosed-not-damped belief
+overconfidence already used. Recorded here before R1 touches a single file.
+
+**R1 — widen now on what the frozen corpus can support; open a second,
+non-frozen simulator for the rest, rather than re-freezing.** `amount_paise`
+and `category` already survive into `featurize()`'s output today — no
+`features.py` change is even needed, only `competing_risks.py`'s design
+matrix. `issuer_id`, `instrument_type` and real multi-cycle history do not
+exist anywhere in `eval/frozen/simulator.py` (`cycle_id` is hard-coded to 1 —
+`simulator.py:186`) and cannot be added without editing a file B2's freeze
+commit put out of reach of any Claude session. The alternative — re-freezing
+— was rejected: it would invalidate every published number in `reports/` to
+answer a defensibility question that a side study can answer without doing
+that. The second simulator (`eval/sim2.py`, not under `eval/frozen/`) feeds
+only `reports/model_defensibility.md`, never the three-bar headline; a guard
+now asserts `eval/run.py` never imports it. This is the same shape of
+decision as B13's "a regime is a config overlay, never an edit to the
+simulator" — the frozen artifact stays frozen, and the new question gets a
+new, honestly-labelled surface instead.
+
+**R2 — report the compliance/inference re-auth split beside the
+pre-registered count, never in place of it.** Measured before deciding:
+of 13,354 REAUTHs across the 256 engine cells, 6,784 are on above-AFA-cliff
+mandates (clause 8(a)/8(b) — legally mandatory, "never belief-discounted",
+`allocator.py:312-320`) and 7,380 are scored "false" against `initial_cause`
+by the pre-registered criterion. The excess of false over above-AFA is only
+790 — the compliance path and the inference-error path were never separated
+in the metric. Redefining `false_reauth_count` after seeing this would be
+exactly the hazard pre-registration exists to prevent (B2's own reason for
+existing), so it keeps its Day-1 meaning byte-for-byte. The split
+(`compliance_reauth_count`, `false_reauth_inference_count`, and both scored
+against `effective_cause` too) is **added**, not substituted.
+
+**R5 — open both the decline-alphabet channel and the intent channel,
+instead of picking one.** Today no `DeclineClass` has a `WONT_PAY` prior
+above 0.45, and `MANDATE_REVOKED` ties `WONT_PAY` with `CANT_PAY_EVER` at
+0.45/0.45 (`cause_map.py:67-69`) — a tie is absorbing under Bayes, so belief
+can never reach the `{WONT_PAY}` singleton `ConformalCauseGate` requires
+(`gate.py`; `allocator.py:356`). A new WONT_PAY-dominant DeclineClass alone
+stays entirely inside the payments story but leaves `src/llm/intent.py`
+unused — a real, tested component whose only consumer today is the golden
+set. Wiring `intent_score()` into belief as a second declared-float
+likelihood (never an LLM call inside `src/policy/`) is the honest
+real-world channel for exit intent; doing only that would need a fabricated
+support-ticket signal in eval, which is a bigger fabrication than a decline
+string. Both channels ship, each with its own quality sweep and ROC — this
+is a sensitivity study on a synthetic channel, not a claim that the channel
+is real.
+
+**R4 — a `mandate` registry table plus a two-phase runner, not a single
+pass.** `commit()` enforces `scheduled_for >= committed_at + INTERVAL
+'24 hours'` (`schema.sql:88`), which is RBI clause 6(a) given a body — the
+same constraint `CLAUDE.md` names as what makes reactive retry structurally
+impossible. One `run_cycle()` that both plans and executes would either
+violate that check or silently no-op the execute half on every real
+invocation, and either way would misstate what the workflow does. Two
+entry points (`plan_cycle()`, `run_due()`) make the 24h lead a visible
+seam in the code, not an implementation detail a reader has to infer. A
+mandate registry table is new (nothing in `schema.sql` today lists
+mandates independent of a plan/ledger row) and additive — `schema.sql` is
+not `eval/frozen/`.
+
+### 2026-09-04 · R1a review pass · What stats-reviewer found, and what changed
+
+`src/model/competing_risks.py`'s design-matrix widening (amount bands,
+category dummies -- `WIDENED_FEATURE_COLUMNS`), its 56-test suite, and
+`eval/design_matrix_comparison.py`'s empirical comparison were sent to
+`stats-reviewer` before R1a was ticked. Five findings, most severe first;
+all confirmed against running code, not docstrings, and all fixed here.
+
+1. **A published significance claim was not earned by the test cited for
+   it.** `eval/design_matrix_comparison.py`'s first version used
+   `abs(t) > 2` as its significance threshold on a 5-fold CV fold-mean
+   t-stat -- but with `N_CV_FOLDS = 5`, that statistic has df = 4, whose
+   real 95% two-sided critical value is 2.776, not 2.0. The published
+   run measured t=+2.37 there -- p=0.076, NOT significant -- while the
+   report asserted "WIDENED DOES NOT BEAT narrow at ~95% confidence."
+   The underlying conclusion was right; the evidence for it was the wrong
+   test. Fixed by adding a PROPERLY-POWERED primary test: pooling the
+   per-row (not per-fold-mean) out-of-fold log-loss differences GroupKFold
+   already computes -- every one of the 12,316 estimable rows is scored
+   exactly once, out-of-fold -- and computing a cluster-robust (CR1)
+   standard error clustered by `mandate_id`, since one mandate contributes
+   2-3 correlated person-period rows. Result: mean=+0.00103, clustered
+   SE=0.00036, t=+2.88, df=7153, p=0.0040 -- genuinely significant at 95%.
+   The old fold-mean test is kept as a labeled "SECONDARY/diagnostic,
+   underpowered" cross-check, never the number a verdict is drawn from.
+   The identical `abs(t) > 2` pattern in `eval/model_fit_report.py` (this
+   file's own model) was also fixed for consistency -- harmless there only
+   because that file's own measured t=-9.30 clears both the correct and
+   the wrong threshold by a wide margin, so no published verdict there was
+   ever actually wrong.
+
+2. **A factual claim in the code's own justification was checked and found
+   false.** The amount-band cut points (`_AMOUNT_BAND_CUT_1/2/3`) were
+   documented as "quartiles of the range `fit()` trains on" -- stated as
+   fact, not verified. `eval/corpus.py`'s `generate()` drops a mandate
+   above ITS OWN category's AFA limit, and the elevated categories
+   (`insurance_premium`/`mutual_fund`/`credit_card_bill`, clause 8(b))
+   allow up to ten times the standard limit (clause 8(a)) the cut points
+   were actually derived from. Measured: 316 of 7154 mandates (4.42%) in
+   the real training sample exceed the cuts' stated Rs 500-14,000 range,
+   up to Rs 89,785. Consequence: `amount_band_4` is a wide catch-all,
+   CONFOUNDED with category by the AFA filter itself -- 25.8% of
+   `subscription` mandates land in it versus 36.6-37.3% of every elevated
+   category. This does not change Phase A's null finding (both covariates
+   are non-causal under `nominal` regardless of where a boundary falls),
+   but the false claim is corrected in both the module docstring and
+   `reports/model_defensibility.md`, and the confound is disclosed rather
+   than silently carried into Phase B's covariate design.
+
+3. **A test fixture manufactured the opposite of the finding it was meant
+   to support.** `tests/model/test_competing_risks.py`'s shared
+   `_simple_estimable_frame()` (used by ~15 pre-existing tests, not just
+   the new ones) was given real amount/category variation via
+   `idx % 4` -- but that fixture's own inner loop runs `range(25)`, and
+   since 25 is congruent to 1 mod 4, `idx % 4` is a PERFECT bijection with
+   the outcome-determining `outcome_cycle % 4` within every (slot,
+   in_salary_window) cell: every row in one amount band shared the
+   identical outcome. The widened fit "discovered" a large, entirely
+   fabricated amount effect (+0.19 to +0.92, against the real corpus's
+   +/-0.05) -- in a codebase whose whole R1 finding is "amount carries no
+   signal" -- and converged only by numerical accident (`range(24)`/
+   `range(26)`/`range(28)` all fail to converge or overflow, found by
+   directly testing them). Fixed to `idx // 5` -- verified, by direct
+   crosstab, that no amount band or category level co-occurs with a single
+   outcome anywhere in the fixture, and that amount and category do not
+   collide with each other either. A new test
+   (`test_simple_estimable_frame_amount_band_is_not_a_bijection_with_outcome`)
+   and a convergence assertion
+   (`model.result.mle_retvals["converged"] is True`) on the widened-fit
+   test now make a future stride regression fail loudly -- a
+   `ConvergenceWarning` is not an exception, so the original bug's tests
+   were all still GREEN against a garbage fit; shape/range assertions
+   alone do not catch this.
+
+4. **The same fixture violated the project's own clause 4(c) invariant.**
+   `_mandate()`'s default `ceiling_paise=100_000` stayed fixed while the
+   new `amount_paise` values ran up to 1,200,000 -- `eval/corpus.py`'s
+   `assert_legal()` would reject every such row (`ceiling_paise >=
+   amount_paise`). Nothing currently reads `ceiling_paise` in this fixture,
+   so no test was actually wrong, but the fixture was constructing mandates
+   the codebase's own legality check says cannot exist. Fixed:
+   `ceiling_paise=amount_paise * 2`.
+
+5. **A latent silent-wrong-answer gap in production code**, distinct from
+   the get_dummies bug this file's whole design already guards against: an
+   unrecognized category string -- or `None`/`NaN`, which pandas'
+   `.astype(str)` turns into the literal string `"None"`/`"nan"` -- matched
+   no known level and silently scored as the reference level, with no
+   error. Currently unreachable (every category in the frozen corpus is one
+   of four known values), but `eval/sim2.py` (Phase B) will not carry that
+   guarantee automatically, and a null/typo'd category producing a
+   wrong-but-plausible prediction with no error is exactly the failure
+   class this file is written to make loud everywhere else. Fixed:
+   `_design_matrix()` now validates the category column against the known
+   vocabulary and raises, naming the offending value(s), whenever a
+   category-derived column is actually requested. This REVERSED
+   `test_design_matrix_unrecognized_category_treated_as_reference` -- a
+   test this session itself had written moments earlier, asserting the
+   opposite, now-superseded contract -- renamed to
+   `test_design_matrix_raises_on_unrecognized_category` and rewritten to
+   assert the corrected behavior; a wrong test discovered same-session is
+   still a wrong test.
+
+All five confirmed independently reproducible: the reviewer's clustered-SE
+numbers (mean, SE, t, p) match this session's own re-run to the reported
+precision; the bijection crosstab and the ceiling violation count were
+each re-derived directly from the fixture's index arithmetic before
+fixing, not taken on the reviewer's word. `reports/gates.md`'s R1a text
+also mis-described the outcome -- it said `FEATURE_COLUMNS` itself would
+change, when the actual (correct, evidence-based) design keeps that
+default narrow and adds `WIDENED_FEATURE_COLUMNS` alongside it -- reworded
+to match what was actually built and gated, not what was drafted before
+any fit existed.
+
+**What this confirms about the review discipline itself.** Every one of
+these five was caught only because a full, adversarial review ran BEFORE
+the gate was ticked, on code this same session had just written and
+believed correct. None would have been caught by re-reading the diff.
+The invariant this entry is really about: "review before the gate closes"
+is load-bearing, not ceremony.
+
+### 2026-09-04 · R2 review pass · A degenerate belief collapse was checked against the frozen simulator's own numbers and found false, before the gate closed
+
+R2's fix (observe_terminal collapsing belief on an observed DEAD/OPTED_OUT
+outcome) was sent to `compliance-auditor` and `payments-domain` before R2a
+was ticked. compliance-auditor returned all six checked clauses VERIFIED.
+payments-domain found three real problems in the FIRST version of the fix,
+all confirmed independently before acting on them, and all fixed here.
+
+**1. The central design claim was checked against `eval/frozen/
+sim_config.yaml`'s own generative process and found false.** The first
+version of `belief.observe_terminal()` collapsed belief to an exact
+DEGENERATE `(1.0, 0.0, 0.0)` posterior on the observed cause, reasoning
+that "an observed DEAD outcome means CANT_PAY_EVER -- that is what the
+cause label MEANS, not a hypothesis about it." payments-domain pointed out
+that `sim_config.yaml`'s own hazard rates do not support a 100% reading:
+`CANT_PAY_EVER` carries `base_dead: 0.55` against `CANT_PAY_NOW`/`WONT_PAY`'s
+`base_dead: 0.02` each -- low, not zero. Verified directly, not taken on
+their word: a 200-seed direct simulation (`Simulator("nominal", seed=N)`
+driven to each mandate's first DEAD/OPTED_OUT outcome, scored against
+`m.initial_cause` -- the same privileged, score-only ground truth
+`false_reauth_count` already reads) measures **P(CANT_PAY_EVER | DEAD) =
+0.8991** (n=7,654) and **P(WONT_PAY | OPTED_OUT) = 0.9040** (n=9,532), both
+cross-validated on a disjoint 300-seed range (0.8932 / 0.9085 -- consistent
+within sampling noise). Roughly 10% of each terminal outcome has a
+DIFFERENT true cause, drawn by chance from a cause whose own dead/opt-out
+rate is low rather than zero.
+
+The degenerate collapse was additionally **irreversible in a way nothing
+else in this system is**: `src/classify/cause_map.py`'s `_PRIORS` table
+contains no zeros for any (DeclineClass, Cause) pair, so `update()` on an
+exact `(0, 1, 0)` belief returns that identical belief regardless of any
+later evidence (`0 * anything = 0`). Dormant today only because no
+mandate's belief in this eval harness survives past its own terminal
+outcome -- a real hazard the moment R4's multi-cycle orchestrator gives
+belief a reason to persist across cycles.
+
+**Fixed, not merely damped to an arbitrary "safer" number**:
+`observe_terminal()`'s signature changed from `(b: Belief, cause: Cause, *,
+source_version)` to `(cause_probs: Mapping[Cause, float], *,
+source_version)` -- no prior-belief parameter at all, matching `init()`'s
+own shape, since the whole point is that the prior stops mattering once a
+terminal fact is observed. The caller (`eval/run.py`'s new
+`_TERMINAL_OBSERVED_CAUSE_PROBS`) supplies the MEASURED distribution
+derived above, fully cited in both files' docstrings/comments, rather than
+the module assuming a degenerate one. Re-ran the full 8-seed sweep after
+the fix: every action count (`n_reauth`, `n_stop`, `false_reauth_count`
+and every R2b split) is **byte-identical** to the flawed degenerate-collapse
+version -- REAUTH's inference-path economics
+(`reauth_success_prob * amount_paise - reauth_cost_paise`, evaluated at
+`b[CANT_PAY_EVER]`) dominate STOP's 0.0 floor at 90% confidence exactly as
+they did at 100%, for every realistic mandate amount in this corpus. The
+correction cost nothing in policy quality; it only removed a false
+certainty claim and an irreversible state.
+
+**2. A real audit-trail bug, unrelated to the belief question, found by the
+same review.** `src/policy/allocator.py`'s `_binding_constraint()` checked
+`requires_afa`, the attempt cap, `opted_out`, and `REVOKED` -- but never
+`ctx.instrument_dead`. A REAUTH forced ONLY by the new `instrument_dead`
+rule (none of the other four checks applying) wrote
+`binding_constraint = None` to the Plan, which `src/execute/shadow.py`
+renders as `"(none -- decided on belief and expected value)"` -- the
+ledger stating a hard-forced decision was a free economic choice, across
+thousands of REAUTHs in the fresh sweep. Fixed: `instrument_dead` checked
+first (matching `AFA_CLIFF`'s own precedence as a hard, ledger-observed
+fact), returning `"INSTRUMENT_DEAD"`. Regression test added
+(`test_instrument_dead_denies_attempt_and_names_itself_as_the_binding_
+constraint`, `tests/policy/test_allocator.py`), mirroring the existing
+`test_revoked_denies_attempt_but_allows_reauth` pattern.
+
+**3. A conformal-coverage measurement contamination, found and fixed in the
+same pass.** Fixing OPTED_OUT's re-solve means the gate is now queried, for
+the first time, on a belief `observe_terminal()` has already collapsed --
+not exchangeable with `calib_conf`'s calibration pool (drawn entirely from
+live, slot-1 inference), so folding it into the coverage/singleton-rate
+statistics would silently answer "how often does a hand-constructed
+already-decided belief land in its own predicted set" while looking like
+"is the live gate well-calibrated." payments-domain's own diagnosis:
+"the entire nonzero singleton rate is arithmetically one query per
+opted-out mandate... the gate has still never produced a `{WONT_PAY}`
+singleton from a belief it actually reasoned about." Fixed:
+`_RecordingGate` now tags each recorded query live/retrospective (via the
+`;observed=terminal` provenance marker `observe_terminal()` stamps), and
+`_score_recorded_queries()` computes every coverage/singleton statistic
+over LIVE queries only. Confirmed on the fresh sweep: `singleton_wont_pay_
+rate` is back to exactly `0.000` in every one of 256 engine cells, with
+20,592 retrospective queries correctly excluded and disclosed via a new
+`coverage_n_retrospective` field (1,141,984 live + 20,592 retrospective =
+1,162,576 total -- matches payments-domain's own independently-cited total
+query count exactly, an unplanned but welcome cross-check). The `Plan`
+object's own `conformal_set` audit field is deliberately UNCHANGED by this
+-- a specific mandate's drill-down CAN still show a retrospective
+`{WONT_PAY}` singleton (measured: 46 of 200 mandates in the headline cell)
+next to `binding_constraint = OPTED_OUT`; this is the correct, honest
+audit record of a decision already made, not a live off-ramp opportunity.
+`dashboard/src/Drilldown.tsx`'s code comment, which previously claimed the
+singleton "never appears," is corrected to explain this rather than assert
+something now false; `Acquirer.tsx`'s "singleton rate is zero everywhere"
+claim needed no change, since the aggregate statistic it renders is exactly
+what the fix restored to zero.
+
+**What this means for R2b's `false_reauth_inference_count`, disclosed
+rather than re-defined again.** payments-domain flagged that after the
+observe_terminal() redesign, `b.dominant() == CANT_PAY_EVER` is TRUE on
+every DEAD-terminated mandate by construction (measured P=0.899, still the
+dominant cause), so a fraction of the 3,022 inference-route false REAUTHs
+reflects the simulator's own ~10% off-diagonal draw landing on a mandate
+whose `initial_cause` differs, rather than a pre-existing belief error the
+model could have avoided. The number is real, reproducible, and correctly
+excludes the compliance route (clause 8(a)/8(b)); its INTERPRETATION as "the
+model's belief was wrong" is approximate given the measured ~90% (not 100%)
+confidence, not exact. Not re-defined a third time in one session --
+disclosed here, same discipline as `false_reauth_count` itself.
+
+**Scope boundary, disclosed not fixed under R2**: `observe_terminal()` and
+`AllocationContext.with_terminal()` have zero callers outside `eval/` and
+the test suite. `src/execute/shadow.py` builds one `AllocationContext` per
+mandate with `opted_out` hard-coded `False`, calls `solve()` exactly once,
+and has no multi-attempt cycle at all -- there is currently nothing in
+`src/` for this fix to be wired into. R2's gate (`n_attempt_after_terminal
+== 0` across all 256 engine cells) is proven true of the evaluation
+harness that produces the published headline; it is not yet a claim about
+the money path. That is R4's job (the cycle orchestrator, not yet built),
+not a gap in R2. README's "What this can't do" item 5 rewritten to
+disclose this rather than the now-fixed 4,032-event count it previously
+named.
+
+**What this confirms, again.** Every one of these three findings was
+caught only because a full, adversarial review ran on code this same
+session had just written and initially believed correct, exactly the
+pattern R1a's own review pass already established this session. None would
+have been caught by re-reading the diff, and the second (binding_constraint)
+in particular would have shipped a false ledger record on the actual money
+path's audit trail had it not been caught here.

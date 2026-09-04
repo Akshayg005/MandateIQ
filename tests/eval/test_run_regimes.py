@@ -16,7 +16,7 @@ from eval import regimes as R
 from eval import report as report_mod
 from eval import run as run_mod
 from eval.frozen.simulator import Simulator, load_config
-from src.core.types import Cause, Outcome, Profile
+from src.core.types import Action, Cause, Outcome, Profile
 from src.policy.belief import Belief
 from src.policy.gate import ConformalCauseGate, ConformalGate, FullSetGate
 
@@ -410,3 +410,301 @@ def test_null_beats_everything_on_the_preserved_bar(two_seed_payload):
         peer = [x for x in two_seed_payload["cells"]
                 if x["policy"] == "null" and x["seed"] == c["seed"]][0]
         assert c["mandates_preserved"] <= peer["mandates_preserved"]
+
+
+# --- Regression test for R2 terminal-outcome fix ----------------------------
+#
+# R2 (2026-09-04, reports/gates.md "Post-B16 remediation gates", R2a): After
+# a DEAD or OPTED_OUT outcome, the engine must collapse belief to a
+# DEGENERATE posterior (observe_terminal), transition the context
+# (with_terminal), and re-solve with the updated belief/context. The key
+# regressions:
+# 1. After a couple of INSUFFICIENT_FUNDS-shaped belief updates (~99%
+#    CANT_PAY_NOW), a DEAD outcome should trigger REAUTH, not ATTEMPT.
+# 2. An OPTED_OUT outcome should always trigger STOP, not None/skipped.
+#
+# CORRECTED, same session, before this fix landed: the first version of
+# these three tests drove a REAL, uncontrolled Simulator on an arbitrary
+# seed/mandate and asserted near-tautological conditions
+# (`n_attempt_after_terminal == 0` with no guarantee DEAD was ever reached;
+# `total_decisions > 0`, true of nearly any terminating run; `assert True`
+# for RECOVERED). All three PASSED even before any fix existed -- proof
+# they were not exercising the bug at all, exactly the failure mode R2a's
+# gate text warns against ("proven by a test that constructs the exact
+# sequence and fails against today's code"). _ScriptedSimulator below (kept
+# from that version -- its shape was already right) is now actually USED to
+# force the precise DEAD/OPTED_OUT/RECOVERED sequences.
+
+
+class _ScriptedSimulator:
+    """Minimal Simulator stand-in that returns a SCRIPTED sequence of
+    outcomes regardless of slot/on_day. _run_engine_mandate calls
+    `.attempt(mandate_id, slot=..., on_day=...)` always, and -- since R2b --
+    `.effective_cause(mandate_id)` too, but only when a REAUTH is actually
+    recorded; this is the whole interface it needs. Used to drive
+    _run_engine_mandate through an exact sequence (e.g. STILL_PENDING, then
+    DEAD) deterministically, rather than hoping a real Simulator seed
+    happens to produce one."""
+
+    def __init__(self, outcomes: list[Outcome], *, effective_cause: Cause = Cause.CANT_PAY_NOW):
+        self.outcomes = list(outcomes)
+        self.call_count = 0
+        self._effective_cause = effective_cause
+
+    def effective_cause(self, mandate_id: str) -> Cause:
+        return self._effective_cause
+
+    def attempt(self, mandate_id: str, slot: int, on_day: int):
+        if self.call_count >= len(self.outcomes):
+            raise AssertionError(
+                f"_ScriptedSimulator exhausted: called {self.call_count + 1} "
+                f"times, only {len(self.outcomes)} scripted outcome(s) given "
+                f"-- the engine attempted more slots than this test scripted, "
+                f"which means the terminal outcome did not actually stop the "
+                f"ATTEMPT sequence"
+            )
+        outcome = self.outcomes[self.call_count]
+        self.call_count += 1
+
+        class _Result:
+            pass
+
+        r = _Result()
+        r.outcome = outcome
+        r.slot = slot
+        r.on_day = on_day
+        return r
+
+
+def _engine_test_mandate(*, amount_paise: int = 500_000, category: str = "subscription"):
+    """A SimMandate below the AFA-free limit (so REAUTH's compliance path
+    never fires -- only the belief-driven inference path can, which is
+    exactly what these tests are checking) and outside any household
+    coupling (household_id=None)."""
+    from eval.frozen.simulator import SimMandate
+
+    return SimMandate(
+        mandate_id="M_r2_test", cycle_id=1, amount_paise=amount_paise,
+        ceiling_paise=amount_paise * 2, category=category,
+        household_id=None, initial_cause=Cause.CANT_PAY_NOW,
+    )
+
+
+@pytest.fixture(scope="module")
+def _real_nominal_hazard():
+    """A real fitted hazard, shared across this file's R2 regression tests
+    -- fitting is the expensive part; reusing a module-scoped fixture pays
+    for it once rather than once per test."""
+    from eval.allocator_sweep import fit_nominal_hazard_model, hazard_from_fit
+    return hazard_from_fit(fit_nominal_hazard_model())
+
+
+def test_dead_outcome_yields_reauth_not_attempt(_real_nominal_hazard):
+    """R2a's central regression, with the exact sequence actually forced:
+    one STILL_PENDING attempt (belief shifts toward CANT_PAY_NOW via the
+    ordinary proxy update -- 'after a couple of INSUFFICIENT_FUNDS-shaped
+    updates' from the bug's own description), then DEAD.
+
+    Before the fix: DEAD's ordinary belief update (CARD_EXPIRED, prior only
+    0.75 toward CANT_PAY_EVER) could not overcome the prior STILL_PENDING
+    shift, b.dominant() stayed CANT_PAY_NOW, REAUTH's inference path was
+    never entered, permitted() had no rule against ATTEMPT on a dead
+    instrument, and the re-solve returned ATTEMPT again --
+    n_attempt_after_terminal incremented on a mandate whose instrument the
+    issuer had just confirmed dead.
+
+    After the fix: observe_terminal(b, CANT_PAY_EVER) makes belief
+    DEGENERATE regardless of what came before, with_terminal(DEAD) makes
+    permitted() deny ATTEMPT outright, and REAUTH's inference-path value
+    (reauth_success_prob * amount_paise - reauth_cost_paise, comfortably
+    positive at this amount) beats STOP's 0.0 floor. FullSetGate is used
+    deliberately so OFFER can never fire (never a singleton), isolating the
+    REAUTH-vs-ATTEMPT-vs-STOP question this test is actually about."""
+    from src.policy.belief import CAUSE_ORDER, REFERENCE_PRIOR, init
+    from src.policy.costs import load as load_costs
+    from src.policy.gate import FullSetGate
+
+    m = _engine_test_mandate()
+    # effective_cause=CANT_PAY_EVER: the mandate genuinely became dead, so
+    # this REAUTH is a TRUE positive under R2b's effective-cause scoring
+    # too, not just a mechanically-forced one.
+    sim = _ScriptedSimulator([Outcome.STILL_PENDING, Outcome.DEAD],
+                             effective_cause=Cause.CANT_PAY_EVER)
+    b = init(dict(zip(CAUSE_ORDER, REFERENCE_PRIOR)))
+    costs = load_costs()
+    cell = run_mod.CellResult(regime="test", arm="test", profile="strict",
+                              policy="test", seed=0, gate_kind="full_set")
+    trace = []
+
+    run_mod._run_engine_mandate(
+        m, sim, profile=Profile.strict, hazard=_real_nominal_hazard,
+        costs=costs, gate=FullSetGate(), b=b, cell=cell, trace=trace,
+    )
+
+    assert sim.call_count == 2, (
+        f"expected exactly 2 attempts (STILL_PENDING, DEAD); the engine "
+        f"made {sim.call_count} -- it did not stop attempting after DEAD"
+    )
+    assert cell.n_attempt_after_terminal == 0, (
+        "R2a REGRESSION: the post-terminal re-solve returned ATTEMPT on a "
+        "mandate whose instrument was just confirmed DEAD"
+    )
+    assert cell.n_reauth == 1, (
+        f"expected the post-DEAD re-solve to choose REAUTH; cell counters: "
+        f"reauth={cell.n_reauth} stop={cell.n_stop} offer={cell.n_offer} "
+        f"attempt_after_terminal={cell.n_attempt_after_terminal}"
+    )
+    final_trace = trace[-1]
+    assert final_trace.outcome is None, (
+        "the final (post-terminal) decision spends no slot, so its trace "
+        "entry must carry no outcome"
+    )
+    assert final_trace.plan.chosen_action == Action.REAUTH
+
+    # R2b: this REAUTH is via the INFERENCE route (amount_paise=500_000 is
+    # below the AFA-free limit, so requires_afa() is False), the mandate's
+    # initial_cause is CANT_PAY_NOW (a genuinely wrong belief-independent
+    # starting point _engine_test_mandate() sets) so it counts as false
+    # against initial_cause, but effective_cause is CANT_PAY_EVER (the
+    # scripted DEAD really happened) so it must NOT count as false there --
+    # exactly the initial-vs-effective distinction R2b exists to draw.
+    assert cell.compliance_reauth_count == 0
+    assert cell.false_reauth_count == 1
+    assert cell.false_reauth_inference_count == 1
+    assert cell.false_reauth_count_effective == 0
+    assert cell.false_reauth_inference_count_effective == 0
+
+
+def test_reauth_via_compliance_path_is_not_counted_as_inference_false(_real_nominal_hazard):
+    """R2b's central distinction: an above-AFA-cliff mandate's REAUTH is
+    legally mandatory (clause 8(a)/8(b)) regardless of cause -- it must
+    increment compliance_reauth_count and must NEVER count toward
+    false_reauth_inference_count, even when initial_cause makes the
+    pre-registered false_reauth_count increment too. This is exactly the
+    conflation measured on the published artifact: 6,784 of 13,354 REAUTHs
+    were compliance-route, and the excess of "false" over above-AFA was
+    only 790 -- an order of magnitude smaller than false_reauth_count alone
+    implied."""
+    from src.policy.belief import CAUSE_ORDER, REFERENCE_PRIOR, init
+    from src.policy.costs import load as load_costs
+    from src.policy.gate import FullSetGate
+
+    # Above the Rs 15,000 AFA-free limit (1_500_000 paise), subscription
+    # category (not clause-8(b)-elevated) -- requires_afa() is True here.
+    #
+    # Padded with 4 STILL_PENDING entries even though REAUTH fires at the
+    # FIRST decision point with zero real attempts made: an un-resolved
+    # decision with slots_left > 0 also triggers _run_engine_mandate's own
+    # error-cost counterfactual (_counterfactual_recovers), which drives a
+    # DEEPCOPY of `sim` through up to 3 further scripted attempts asking
+    # "would this have recovered if we kept grinding?" -- found by running
+    # this test and seeing the stub exhausted one call earlier than
+    # expected, not anticipated from reading _run_engine_mandate alone.
+    m = _engine_test_mandate(amount_paise=2_000_000, category="subscription")
+    sim = _ScriptedSimulator(
+        [Outcome.STILL_PENDING] * 4, effective_cause=Cause.CANT_PAY_NOW,
+    )
+    b = init(dict(zip(CAUSE_ORDER, REFERENCE_PRIOR)))
+    costs = load_costs()
+    cell = run_mod.CellResult(regime="test", arm="test", profile="strict",
+                              policy="test", seed=0, gate_kind="full_set")
+
+    run_mod._run_engine_mandate(
+        m, sim, profile=Profile.strict, hazard=_real_nominal_hazard,
+        costs=costs, gate=FullSetGate(), b=b, cell=cell, trace=None,
+    )
+
+    assert sim.call_count == 0, (
+        "an above-AFA-cliff mandate must route to REAUTH at the FIRST "
+        "decision point, before any attempt is ever made -- the scripted "
+        "STILL_PENDING outcome above must go unconsumed"
+    )
+    assert cell.n_reauth == 1, (
+        f"an above-AFA-cliff mandate must route straight to REAUTH -- "
+        f"cell counters: reauth={cell.n_reauth} attempt={cell.n_attempt}"
+    )
+    assert cell.compliance_reauth_count == 1
+    assert cell.false_reauth_count == 1, "still true against the pre-registered, unredefined criterion"
+    assert cell.false_reauth_inference_count == 0, (
+        "a compliance-route REAUTH must NEVER count as an inference-path "
+        "false positive -- it was never a belief decision to begin with"
+    )
+
+
+def test_opted_out_outcome_yields_stop(_real_nominal_hazard):
+    """R2a's second regression: OPTED_OUT on the very first attempt.
+
+    Before the fix: _proxy_decline_class(OPTED_OUT) is None, so the OLD
+    code's `if dc is not None:` gate skipped the re-solve ENTIRELY --
+    stopped_action stayed None and fell through every counting branch at
+    the bottom of _run_engine_mandate, uncounted. Verified directly against
+    the pre-fix code: `n_attempt=1` (the one real attempt that was made,
+    whose outcome happened to be OPTED_OUT -- unrelated to the bug),
+    `n_stop=0, n_offer=0, n_reauth=0, n_attempt_after_terminal=0` -- no
+    decision was ever recorded for what happens after the opt-out.
+
+    After the fix: observe_terminal(b, WONT_PAY) plus
+    with_terminal(OPTED_OUT) (which sets the EXISTING opted_out field) make
+    permitted() deny everything except STOP (clause 6(c), pre-existing
+    rule) -- the final re-solve can only return STOP."""
+    from src.policy.belief import CAUSE_ORDER, REFERENCE_PRIOR, init
+    from src.policy.costs import load as load_costs
+    from src.policy.gate import FullSetGate
+
+    m = _engine_test_mandate()
+    sim = _ScriptedSimulator([Outcome.OPTED_OUT])
+    b = init(dict(zip(CAUSE_ORDER, REFERENCE_PRIOR)))
+    costs = load_costs()
+    cell = run_mod.CellResult(regime="test", arm="test", profile="strict",
+                              policy="test", seed=0, gate_kind="full_set")
+    trace = []
+
+    run_mod._run_engine_mandate(
+        m, sim, profile=Profile.strict, hazard=_real_nominal_hazard,
+        costs=costs, gate=FullSetGate(), b=b, cell=cell, trace=trace,
+    )
+
+    assert sim.call_count == 1
+    assert cell.n_stop == 1, (
+        f"R2a REGRESSION: the OPTED_OUT re-solve did not record STOP -- "
+        f"cell counters: stop={cell.n_stop} attempt={cell.n_attempt} "
+        f"offer={cell.n_offer} reauth={cell.n_reauth} "
+        f"attempt_after_terminal={cell.n_attempt_after_terminal}"
+    )
+    assert cell.n_attempt_after_terminal == 0
+    final_trace = trace[-1]
+    assert final_trace.outcome is None
+    assert final_trace.plan.chosen_action == Action.STOP
+
+
+def test_recovered_outcome_ends_the_loop_without_a_final_resolve(_real_nominal_hazard):
+    """RECOVERED is unlike DEAD/OPTED_OUT: the cycle succeeded, so there is
+    nothing left to decide. This must stay true after the fix -- confirmed
+    by trace length, not just "no exception": exactly one DecisionTrace
+    entry (the ATTEMPT that recovered), never a second, no-outcome entry
+    for a final re-solve that should not happen."""
+    from src.policy.belief import CAUSE_ORDER, REFERENCE_PRIOR, init
+    from src.policy.costs import load as load_costs
+    from src.policy.gate import FullSetGate
+
+    m = _engine_test_mandate()
+    sim = _ScriptedSimulator([Outcome.RECOVERED])
+    b = init(dict(zip(CAUSE_ORDER, REFERENCE_PRIOR)))
+    costs = load_costs()
+    cell = run_mod.CellResult(regime="test", arm="test", profile="strict",
+                              policy="test", seed=0, gate_kind="full_set")
+    trace = []
+
+    run_mod._run_engine_mandate(
+        m, sim, profile=Profile.strict, hazard=_real_nominal_hazard,
+        costs=costs, gate=FullSetGate(), b=b, cell=cell, trace=trace,
+    )
+
+    assert sim.call_count == 1
+    assert len(trace) == 1, (
+        f"RECOVERED must not trigger a post-terminal re-solve -- expected "
+        f"exactly 1 trace entry (the recovering ATTEMPT), got {len(trace)}"
+    )
+    assert trace[0].outcome == Outcome.RECOVERED.name
+    for field in ("n_offer", "n_reauth", "n_stop", "n_attempt_after_terminal"):
+        assert getattr(cell, field) == 0, f"{field} should be untouched by a RECOVERED outcome"

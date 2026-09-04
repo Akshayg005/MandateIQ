@@ -12,11 +12,21 @@
  *  - the binding constraint is null on 299 of 316 decisions -- most choices
  *    are genuine value comparisons, not forced ones.
  *  - the conformal set is often, but NOT always, all three causes. About a
- *    third of decisions are singletons. What never appears is the {WONT_PAY}
- *    singleton, which is the one that would open the off-ramp -- so OFFER = 0
- *    is arithmetic, not evidence. The set line renders the two causes that
- *    were EXCLUDED as struck-through, so an all-three set reads as "excluded
- *    nothing" rather than as a confident answer.
+ *    third of decisions are singletons. The {WONT_PAY} singleton -- the one
+ *    that would open the off-ramp -- CAN appear here (R2, 2026-09-04): on a
+ *    mandate whose `binding_constraint` reads OPTED_OUT, the belief was
+ *    already collapsed to near-certain WONT_PAY by the time this decision
+ *    ran, because the customer had already left. OFFER = 0 anyway: clause
+ *    6(c) denies every action but STOP once opted_out is true, singleton or
+ *    not -- so a WONT_PAY singleton next to an OPTED_OUT binding constraint
+ *    is the retrospective record of a decision already made, never an
+ *    off-ramp opportunity this run missed. The aggregate coverage/singleton
+ *    RATE shown elsewhere (Acquirer view) excludes these retrospective
+ *    queries entirely, which is why it can correctly read zero even though
+ *    an individual mandate's drill-down can show this singleton. The set
+ *    line renders the two causes that were EXCLUDED as struck-through, so
+ *    an all-three set reads as "excluded nothing" rather than as a
+ *    confident answer.
  */
 import type { Cause, Decision, LedgerRow, MandateRecord } from "./data";
 import { BindingConstraint, ConformalSet, Slot } from "./glossary";

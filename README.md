@@ -95,7 +95,7 @@ less money this cycle to protect lifetime value. That is the thesis, and the
 
 **Against `one_shot` it does not.** One attempt on day 2 with no model, no belief and no gate preserves more mandates than the engine in 214 of 256 comparisons, and the engine spends MORE attempts in 226 of 256. The engine's only edge over it is money, and a thin one: 146 of 256. On two of the three bars, a policy with no model in it beats this one. That is in the README because it is true, and because a reader who discovers it themselves should not have to wonder what else was left out.
 
-**The off-ramp never fires** (`OFFER` = 0 across every cell) — and that is arithmetic, not measurement: the proxy decline alphabet cannot move belief toward `WONT_PAY` at all. The off-ramp lane is untested, so the false-off-ramp column is not evidence of safety. Separately, 7380 of 13354 REAUTHs went to mandates whose true cause is not `CANT_PAY_EVER`.
+**The off-ramp never fires** (`OFFER` = 0 across every cell) — and that is arithmetic, not measurement: the proxy decline alphabet cannot move belief toward `WONT_PAY` at all. The off-ramp lane is untested, so the false-off-ramp column is not evidence of safety. Separately, 8832 of 17554 REAUTHs went to mandates whose true cause is not `CANT_PAY_EVER` — but 6784 of those are the above-AFA-cliff compliance route (clause 8(a)/8(b), legally mandatory regardless of belief), so only 3022 were ever a genuine belief-inference error — see `reports/regimes.md` finding 6 for the full split (R2b).
 
 **Where we lose:** `baseline`, `delayed_salary`, `festival_season`, `issuer_outage`, `retry_storm`, `stacking_spike` — the engine recovers less money than the ladder in these regimes. The report's "Where we lose" section gives the reason for each.
 <!-- RESULTS:END -->
@@ -182,9 +182,14 @@ about what it does not have. Every claim below is reproducible from
 1. **The off-ramp never fires.** `OFFER` was chosen **0 times** in every
    published run. `cause_map` pins P(WONT_PAY) at 0.10 under both symbols
    the proxy alphabet can emit, so the `{WONT_PAY}` singleton the conformal
-   gate requires is unreachable for any alpha, seed or regime. The off-ramp
-   lane is **untested, not tested-and-negative** - and it is the reason the
-   system exists, so this is the most important line in this file.
+   gate requires is unreachable from any LIVE, ordinarily-inferred decision,
+   for any alpha, seed or regime (verified directly: fixing a different bug,
+   R2, briefly made the gate reachable on a *retrospective* post-opt-out
+   re-solve — see `reports/regimes.md` finding 2 — but that never made
+   `OFFER` itself reachable, and is excluded from this measurement). The
+   off-ramp lane is **untested, not tested-and-negative** - and it is the
+   reason the system exists, so this is the most important line in this
+   file.
 2. **The evaluation is synthetic.** It measures whether encoding real
    constraints beats ignoring them. It is not a lift number that transfers
    to production traffic.
@@ -193,12 +198,23 @@ about what it does not have. Every claim below is reproducible from
    256 paired comparisons and spends more attempts in 226 of 256. Its only
    edge is money, 146 of 256. More seeds made this finding stronger, not
    weaker.
-4. **7,380 of 13,354 re-auth requests went to the wrong mandates** - ones
-   whose true cause is not CANT_PAY_EVER. That is the issuer_outage
-   regime's own pre-registered falsification criterion, failing.
-5. **4,032 post-terminal re-solves returned ATTEMPT** on instruments the
-   issuer had just confirmed dead. The belief layer cannot conclude
-   CANT_PAY_EVER from an observed dead instrument.
+4. **8,832 of 17,554 re-auth requests went to a mandate whose true cause is
+   not CANT_PAY_EVER** - the issuer_outage regime's own pre-registered
+   falsification criterion, unchanged in meaning since Day 1. But 6,784 of
+   those are the above-AFA-cliff compliance route (clause 8(a)/8(b)): legally
+   mandatory regardless of what the model believes, not a model failure. Only
+   **3,022** were ever a genuine belief-inference error - roughly a third of
+   the headline number, and the split (R2b) exists because the two were
+   never separated before this session.
+5. **`belief.observe_terminal()` and `AllocationContext.with_terminal()` have
+   no caller outside `eval/` and the test suite.** The published
+   `n_attempt_after_terminal == 0` claim (fixed, R2 - a dead instrument no
+   longer gets re-attempted, and every re-solve after an observed terminal
+   outcome now updates belief and context correctly) is proven true of the
+   evaluation harness. Nothing in `src/execute/` yet drives a multi-attempt
+   cycle with belief evolution at all - `shadow.py` compares one decision
+   point, not a sequence - so this fix has not yet reached the money path.
+   Wiring it in is R4's job (the cycle orchestrator), not yet built.
 6. **There is no timing discrimination.** Every attempt lands on day 2, so
    the `strict` and `permissive` compliance profiles are provably the same
    function on this evaluation.

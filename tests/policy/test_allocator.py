@@ -370,6 +370,27 @@ def test_revoked_denies_attempt_but_allows_reauth():
     assert plan.binding_constraint == "MANDATE_REVOKED"
 
 
+def test_instrument_dead_denies_attempt_and_names_itself_as_the_binding_constraint():
+    """R2, 2026-09-04 (payments-domain review): _binding_constraint() was
+    missing ctx.instrument_dead entirely -- a real correctness bug, not a
+    style gap. A REAUTH forced by this rule alone (none of AFA_CLIFF/
+    ATTEMPT_CAP_EXHAUSTED/OPTED_OUT/MANDATE_REVOKED apply) previously wrote
+    `binding_constraint = None` to the Plan, which src/execute/shadow.py
+    renders as "(none -- decided on belief and expected value)" -- the
+    ledger stating a hard-forced decision was a free economic choice. This
+    is the regression test: same shape as test_revoked_denies_attempt_but_
+    allows_reauth above, but for instrument_dead instead of REVOKED."""
+    b = _belief(CANT_PAY_EVER=0.9, CANT_PAY_NOW=0.05, WONT_PAY=0.05)
+    ctx = _ctx(instrument_dead=True)
+    plan = solve(b, ctx, hazard=_flat_hazard(0.9, 0.05, 0.03, 0.02), costs=_COSTS)
+    assert plan.chosen_action != Action.ATTEMPT
+    assert plan.binding_constraint == "INSTRUMENT_DEAD", (
+        f"expected 'INSTRUMENT_DEAD', got {plan.binding_constraint!r} -- "
+        f"a decision hard-forced by instrument_dead must not be recorded "
+        f"as an unforced value comparison"
+    )
+
+
 # === decision_sha256 determinism =============================================
 
 def test_decision_sha256_is_deterministic():

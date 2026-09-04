@@ -85,7 +85,7 @@ from src.core.types import Action, Cause, MandateState, Outcome, Profile
 from src.model import conformal
 from src.policy import belief as belief_mod
 from src.policy.allocator import AllocationContext, AllocatorError, Plan, solve
-from src.policy.constraints import MAX_ATTEMPTS, afa_free_limit_paise
+from src.policy.constraints import MAX_ATTEMPTS, afa_free_limit_paise, requires_afa
 from src.policy.costs import PolicyCosts, load as load_costs
 from src.policy.gate import ConformalCauseGate, FullSetGate
 
@@ -105,6 +105,55 @@ _CALIB_SLOT1_OFFSET = 900_000
 CALIB_SEED = 424_242
 
 CAUSE_ORDER: tuple[Cause, ...] = tuple(belief_mod.CAUSE_ORDER)
+
+# R2, 2026-09-04 (reports/gates.md, "Post-B16 remediation gates"): the
+# Outcome -> MEASURED posterior mapping for an OBSERVED terminal outcome --
+# not a proxy decline class to Bayes-update on (see PROXY_SOURCE_VERSION
+# below, which stamps the OPPOSITE kind of evidence: a fabricated
+# DeclineClass this eval harness invented from a bare Outcome).
+#
+# CORRECTED same day (stats-reviewer / payments-domain review, before this
+# gate was ticked): the first version of this constant mapped each terminal
+# Outcome to a single Cause with an assumed 1.0 certainty -- "DEAD means
+# CANT_PAY_EVER because that is what the cause label means." That claim was
+# checked against eval/frozen/sim_config.yaml's own generative process
+# (nominal arm) rather than assumed, and found false: a direct 200-seed
+# simulation (`sim.attempt()` driven to the first DEAD/OPTED_OUT outcome
+# per mandate, ground truth read from `m.initial_cause` -- the same
+# privileged, score-only read `false_reauth_count` already uses) measures:
+#
+#   P(CANT_PAY_EVER | DEAD)    = 6882 / 7654 = 0.8991   (n=7654)
+#   P(WONT_PAY | OPTED_OUT)    = 8617 / 9532 = 0.9040   (n=9532)
+#
+# -- roughly 10% of each terminal outcome has a DIFFERENT true cause: a
+# CANT_PAY_NOW or WONT_PAY mandate can still draw a DEAD event, since
+# `sim_config.yaml`'s `base_dead`/`base_optout` rates are LOW but never
+# zero for the "wrong" causes (e.g. CANT_PAY_NOW/WONT_PAY both carry
+# `base_dead: 0.02` against CANT_PAY_EVER's `0.55`). A degenerate 1.0 was
+# additionally IRREVERSIBLE -- see belief.observe_terminal()'s docstring --
+# which these measured, non-zero-everywhere distributions are not.
+# RECOVERED is deliberately absent -- the cycle succeeded, there is no
+# cause left to decide, and _run_engine_mandate must not call
+# belief_mod.observe_terminal or ctx.with_terminal for it.
+_TERMINAL_OBSERVED_CAUSE_PROBS: dict[Outcome, dict[Cause, float]] = {
+    Outcome.DEAD: {
+        Cause.CANT_PAY_EVER: 0.8991, Cause.WONT_PAY: 0.0512, Cause.CANT_PAY_NOW: 0.0497,
+    },
+    Outcome.OPTED_OUT: {
+        Cause.WONT_PAY: 0.9040, Cause.CANT_PAY_NOW: 0.0684, Cause.CANT_PAY_EVER: 0.0276,
+    },
+}
+
+# Distinct from PROXY_SOURCE_VERSION: that one stamps a FABRICATED
+# DeclineClass. This one stamps a belief collapsed by
+# belief_mod.observe_terminal() from an ACTUALLY OBSERVED terminal Outcome
+# -- a real ledger fact in production (the mandate's own terminal
+# lifecycle/execution state), not a fabricated decline string. Kept
+# separate so a reader grepping the ledger for either string can tell which
+# kind of evidence produced a given belief (B11's "a belief that cannot be
+# traced ... is not auditable", the same requirement applied to a different
+# evidence kind).
+TERMINAL_OBSERVATION_SOURCE_VERSION = "eval-observed-terminal-v1"
 
 
 # --- results -----------------------------------------------------------------
@@ -153,12 +202,37 @@ class CellResult:
     false_offramp_count: int = 0
     false_offramp_paise: int = 0
     # issuer_outage's own pre-registered falsification criterion: REAUTH
-    # issued on a mandate whose true cause is NOT CANT_PAY_EVER.
+    # issued on a mandate whose true cause is NOT CANT_PAY_EVER. PRE-
+    # REGISTERED, NEVER REDEFINED (DECISIONS.md, 2026-09-04, R0) -- the
+    # four fields below are ADDED alongside it, R2b, to separate two things
+    # this one criterion conflates: REAUTH has a COMPLIANCE route (above
+    # the AFA cliff, clause 8(a)/8(b), legally mandatory regardless of
+    # cause) and an INFERENCE route (belief-driven); this criterion scores
+    # both the same way.
     false_reauth_count: int = 0
     false_reauth_paise: int = 0
-    # gate evidence, engine only
+    # REAUTH issued via the compliance route (requires_afa() was true) --
+    # says nothing about whether the belief was right.
+    compliance_reauth_count: int = 0
+    # false_reauth_count, restricted to the INFERENCE route only (excludes
+    # every compliance-route REAUTH, which is correct by law regardless of
+    # cause). The genuinely-interesting "did the belief mislead us" count.
+    false_reauth_inference_count: int = 0
+    # false_reauth_count / false_reauth_inference_count, but scored against
+    # sim.effective_cause() instead of m.initial_cause -- the misspecified
+    # arm's cause-switching means a mandate can become CANT_PAY_EVER after
+    # starting as something else, and initial_cause then scores a REAUTH
+    # that turned out to be correct as if it were wrong.
+    false_reauth_count_effective: int = 0
+    false_reauth_inference_count_effective: int = 0
+    # gate evidence, engine only. coverage_marginal/singleton_rate/
+    # singleton_wont_pay_rate/mean_set_size/coverage_per_class are computed
+    # over LIVE queries only (R2, 2026-09-04) -- coverage_n is that same
+    # live-query count, and coverage_n_retrospective (excluded from all of
+    # the above) is reported alongside for transparency, never folded in.
     coverage_marginal: float | None = None
     coverage_n: int = 0
+    coverage_n_retrospective: int = 0
     singleton_wont_pay_rate: float | None = None
     singleton_rate: float | None = None
     mean_set_size: float | None = None
@@ -209,12 +283,30 @@ class _RecordingGate:
     `arm` and `profile` entirely, so six distinct numbers were being printed
     as thirty-two. Recording what the gate was actually asked fixes both.
     (stats-reviewer, 2026-08-31.)
+
+    R2, 2026-09-04 (payments-domain review): each recorded query now also
+    carries whether its belief was a LIVE, ordinarily-inferred one or a
+    RETROSPECTIVE one from belief.observe_terminal() (tagged
+    `;observed=terminal` in `Belief.provenance`). Reason: `calib_conf` (the
+    conformal predictor's own calibration pool, see fit_gate()) is drawn
+    entirely from slot-1 LIVE beliefs -- an observe_terminal() belief is
+    never exchangeable with that pool (it is a hand-constructed, ~90%-on-
+    one-cause distribution that never occurs during ordinary inference), so
+    mixing it into a coverage/singleton-rate MEASUREMENT would silently
+    answer a different question ("how often does a synthetic belief we
+    built land in its own predicted set", which is close to tautological)
+    while looking like the same "is the live gate well-calibrated" number.
+    The Plan object's own `conformal_set` audit field is UNCHANGED by this
+    -- _build_plan() still queries the gate unconditionally for every
+    solve() call, live or retrospective; only the AGGREGATE coverage
+    statistics computed from this log (_score_recorded_queries) now
+    separate the two.
     """
 
     def __init__(self, inner, mandate_id: str | None = None) -> None:
         self._inner = inner
         self._mandate_id = mandate_id
-        self.queries: list[tuple[str, frozenset]] = []
+        self.queries: list[tuple[str, frozenset, bool]] = []
 
     def bind(self, key: str) -> "_RecordingGate":
         g = _RecordingGate(_bind(self._inner, key), key.split(":")[0])
@@ -223,7 +315,8 @@ class _RecordingGate:
 
     def pred_set(self, b: Belief) -> frozenset[Cause]:
         s = self._inner.pred_set(b)
-        self.queries.append((self._mandate_id or "", s))
+        is_retrospective = ";observed=terminal" in b.provenance
+        self.queries.append((self._mandate_id or "", s, is_retrospective))
         return s
 
 
@@ -348,8 +441,35 @@ def _run_engine_mandate(m, sim: Simulator, profile: Profile, hazard,
             # Terminal. The ATTEMPT sequence is over, but the DECISION
             # sequence is not: a dead instrument is exactly when REAUTH is
             # the right next action (CLAUDE.md's own cause->action table).
-            if dc is not None:
-                b = belief_mod.update(b, dc, source_version=PROXY_SOURCE_VERSION)
+            #
+            # R2, 2026-09-04: DEAD and OPTED_OUT are OBSERVED facts, not
+            # decline-string evidence to Bayes-update on -- belief_mod.
+            # observe_terminal() replaces belief with a MEASURED posterior
+            # (see _TERMINAL_OBSERVED_CAUSE_PROBS above -- ~90% confident,
+            # not the degenerate 1.0 an earlier same-day version assumed)
+            # regardless of what came before, and ctx.with_terminal() marks
+            # the context so permitted() denies ATTEMPT (DEAD) or everything
+            # but STOP (OPTED_OUT, via the existing opted_out field) at the
+            # re-solve below -- that denial is a HARD rule, unaffected by
+            # the exact belief value. Before this existed: an ordinary
+            # update(..., CARD_EXPIRED) often could not move b.dominant() to
+            # CANT_PAY_EVER after a couple of INSUFFICIENT_FUNDS-shaped
+            # updates, the context was never marked at all, and the
+            # re-solve could (and did) return ATTEMPT on an instrument the
+            # issuer had just confirmed dead (reports/gates.md, R2a,
+            # measured: 4,032 such events across 256 engine cells). For
+            # OPTED_OUT specifically, _proxy_decline_class() returns None,
+            # so the OLD `if dc is not None:` gate skipped this branch
+            # ENTIRELY -- no decision was ever recorded for what happens
+            # after an opt-out. `dc`/`_proxy_decline_class` play no further
+            # role for a terminal outcome; the branch below checks
+            # `result.outcome` directly instead.
+            observed_probs = _TERMINAL_OBSERVED_CAUSE_PROBS.get(result.outcome)
+            if observed_probs is not None:
+                b = belief_mod.observe_terminal(
+                    observed_probs, source_version=TERMINAL_OBSERVATION_SOURCE_VERSION,
+                )
+                ctx = ctx.with_terminal(result.outcome)
                 gf = _bind(gate, f"{m.mandate_id}:{m.cycle_id}:final")
                 try:
                     final = solve(b, ctx, hazard=hazard, costs=costs, gate=gf)
@@ -357,12 +477,16 @@ def _run_engine_mandate(m, sim: Simulator, profile: Profile, hazard,
                     if trace is not None:
                         # The post-terminal re-solve spends no slot, so it
                         # carries no outcome -- but it is the decision that
-                        # produces a REAUTH, and the drill-down would be
-                        # missing the engine's answer to "the instrument is
-                        # dead, now what?" without it.
+                        # produces a REAUTH (or STOP, for OPTED_OUT), and
+                        # the drill-down would be missing the engine's
+                        # answer to "the instrument is dead / the customer
+                        # left, now what?" without it.
                         trace.append(DecisionTrace(final))
                 except AllocatorError as exc:
                     cell.violations.append(f"{m.mandate_id}: final AllocatorError: {exc}")
+            # RECOVERED (observed_probs is None): the cycle succeeded,
+            # nothing left to decide -- no belief/context change, no
+            # re-solve. Unchanged from before this fix.
             break
 
         if dc is not None:
@@ -379,6 +503,25 @@ def _run_engine_mandate(m, sim: Simulator, profile: Profile, hazard,
         if m.initial_cause != Cause.CANT_PAY_EVER:
             cell.false_reauth_count += 1
             cell.false_reauth_paise += m.amount_paise
+
+        # R2b, 2026-09-04: split the pre-registered count above by WHICH of
+        # allocator.py's two REAUTH routes actually fired. amount_paise and
+        # category never change across a mandate's cycle (with_terminal()
+        # touches only instrument_dead/opted_out), so ctx's current values
+        # are the mandate's real ones regardless of which ctx snapshot this
+        # is. sim.effective_cause() is the SAME privileged, score-only read
+        # m.initial_cause already is (never used to decide) -- see
+        # eval/frozen/simulator.py's own docstring on that method.
+        via_compliance = requires_afa(ctx.amount_paise, ctx.category)
+        if via_compliance:
+            cell.compliance_reauth_count += 1
+        elif m.initial_cause != Cause.CANT_PAY_EVER:
+            cell.false_reauth_inference_count += 1
+        effective_cause = sim.effective_cause(m.mandate_id)
+        if effective_cause != Cause.CANT_PAY_EVER:
+            cell.false_reauth_count_effective += 1
+            if not via_compliance:
+                cell.false_reauth_inference_count_effective += 1
     elif stopped_action == Action.STOP:
         cell.n_stop += 1
     elif stopped_action == Action.ATTEMPT:
@@ -497,8 +640,16 @@ def _score_recorded_queries(recorder: "_RecordingGate", truth: dict[str, Cause],
     Per-class coverage is reported alongside the marginal because Mondrian
     conformal's entire purpose is class-conditional coverage, and a marginal
     number can sit at target while one class is badly under-covered.
+
+    R2, 2026-09-04 (payments-domain review): filters to LIVE queries only
+    (see _RecordingGate's docstring for why a retrospective, observe_
+    terminal()-built belief is not exchangeable with calib_conf and would
+    contaminate this measurement). cell.coverage_n_retrospective records
+    the excluded count so the exclusion itself is visible, never silent.
     """
-    qs = recorder.queries
+    all_qs = recorder.queries
+    qs = [(mid, s) for mid, s, retro in all_qs if not retro]
+    cell.coverage_n_retrospective = sum(1 for _, _, retro in all_qs if retro)
     cell.coverage_n = len(qs)
     if not qs:
         return

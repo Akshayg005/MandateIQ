@@ -137,17 +137,43 @@ def test_every_record_carries_the_five_gate_fields(records):
         )
 
 
-def test_the_wont_pay_singleton_is_the_unreachable_one(records):
+def test_the_wont_pay_singleton_is_unreachable_via_live_inference(records):
     """B13's handoff recorded that the conformal set is 'near-always all three
     causes'. At decision level that is not what happens: roughly a third of
-    decisions in this cell are singletons. What is genuinely unreachable is
-    the {WONT_PAY} singleton specifically -- cause_map pins P(WONT_PAY) at
-    0.10 under both symbols the proxy alphabet can emit -- and that, not a
-    degenerate gate, is why OFFER is zero.
+    decisions in this cell are singletons. What is genuinely unreachable
+    VIA THE ORDINARY BELIEF-UPDATE PATH -- an actual, still-retryable
+    mandate's LIVE decision -- is the {WONT_PAY} singleton: cause_map pins
+    P(WONT_PAY) at 0.10 under both symbols the proxy alphabet can emit, so
+    no amount of ordinary Bayesian updating from that alphabet can push
+    belief there.
 
-    This test pins the distinction so the dashboard cannot restate the
-    coarser claim. It fails the day the off-ramp becomes reachable, which is
-    exactly when the copy on that panel has to change.
+    CORRECTED, R2 (2026-09-04, reports/gates.md "Post-B16 remediation
+    gates"): a DIFFERENT mechanism now reaches the singleton, and this
+    test's original, broader claim ("the {WONT_PAY} singleton" full stop)
+    is false since that fix landed. belief.observe_terminal() collapses
+    belief to a DEGENERATE (0, 0, 1.0) posterior once OPTED_OUT is
+    OBSERVED -- a definitional fact, not proxy-alphabet inference -- and
+    the post-terminal re-solve's conformal_set is recorded on that
+    degenerate belief like any other. Distinguished here by the belief's
+    OWN provenance string (`;observed=terminal`, stamped ONLY by
+    observe_terminal(), never by the ordinary proxy-alphabet update() path)
+    rather than by `binding_constraint` -- binding_constraint's
+    ATTEMPT_CAP_EXHAUSTED label happens to be reachable only via this same
+    post-terminal path in THIS pipeline today (verified: _initial_context()
+    always starts attempts_used=1 < MAX_ATTEMPTS, and every solve() call
+    made INSIDE the main while loop has attempts_used < MAX_ATTEMPTS by
+    that loop's own condition, so r0>0 always holds there), but that is an
+    incidental fact about today's loop structure, not a intentional
+    contract -- the provenance marker is what observe_terminal() actually
+    guarantees.
+
+    This does not make the off-ramp actionable: `OFFER` requires
+    `permitted(Action.OFFER, ctx) == ALLOW`, and clause 6(c)'s pre-existing
+    rule denies EVERY action but STOP once `opted_out=True` -- so `OFFER`
+    stays uncalled regardless of what the conformal set says. That --
+    OFFER never CHOSEN -- is the assertion that actually carries the
+    dashboard's "off-ramp never fires" claim, and it is the one this test
+    still enforces unconditionally, below.
     """
     sets = [tuple(d["conformal_set"]) for r in records for d in r["decisions"]]
     singletons = [s for s in sets if len(s) == 1]
@@ -156,10 +182,21 @@ def test_the_wont_pay_singleton_is_the_unreachable_one(records):
         "the gate produces singletons; if this fails the 'near-always all "
         "three' description has become true and the panel copy must change"
     )
-    assert ("WONT_PAY",) not in singletons, (
-        "the {WONT_PAY} singleton fired -- the off-ramp is now reachable and "
-        "OFFER = 0 is no longer arithmetic"
+
+    live_decisions = [
+        d for r in records for d in r["decisions"]
+        if ";observed=terminal" not in d["belief_json"]
+    ]
+    assert live_decisions, "sanity check: every decision was post-terminal, which cannot be right"
+    live_singletons = [tuple(d["conformal_set"]) for d in live_decisions if len(d["conformal_set"]) == 1]
+    assert ("WONT_PAY",) not in live_singletons, (
+        "the {WONT_PAY} singleton fired on a LIVE (ordinarily-inferred) belief "
+        "-- the off-ramp may now be actionably reachable via inference, which "
+        "is R5's job, not a silent side effect of something else"
     )
+
+    # The claim that actually matters and must hold unconditionally,
+    # regardless of what the conformal set records: OFFER is never CHOSEN.
     assert not any(d["action"] == "OFFER" for r in records for d in r["decisions"])
 
 

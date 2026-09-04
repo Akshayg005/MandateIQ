@@ -29,15 +29,15 @@ Fewer attempts is better, so the third column is the favourable count, not a win
 
 1. **The headline three-bar comparison does not identify anything, and the reference policies are in the table to prove it.** The engine preserves more mandates than the ladder in 16 of 16 cells and recovers more money in 1. But `null` -- never attempt, no model -- preserves **every** mandate in all 16 cells, and `one_shot` -- one attempt on day 2, no model, no belief, no gate -- preserves more than the engine in 13 of 16 while spending fewer attempts. Every metric here is monotonically decreasing in attempt count by construction, so "preserves more" follows from "attempts less" and is not evidence of knowing WHY a payment failed. B5 recorded this exact confound; B13's first draft reproduced it by omitting the column.
 
-2. **The off-ramp cannot fire in this harness. `OFFER` = 0 in all 256 engine cells -- and that is arithmetic, not measurement.** The proxy decline alphabet has exactly two symbols (`INSUFFICIENT_FUNDS`, `CARD_EXPIRED`) and `cause_map` assigns `WONT_PAY` a prior of 0.10 under **both**, so the WONT_PAY likelihood ratio is constant and no observation this simulator can produce moves belief mass toward `WONT_PAY`. Its probability is pinned at 0.10 after slot 1 and is non-increasing thereafter, so the singleton `{WONT_PAY}` condition is unreachable for any alpha, any seed, any regime. An earlier draft read this as "a payment decline is a weak signal of intent" -- true about the world, false about this number. **The off-ramp lane is untested, not tested and negative**, and `retry_storm`'s pre-registered hypothesis about it is vacuous rather than falsified: the outcome was fixed before the regime ran. `false off-ramp = 0` is likewise not a safety result.
+2. **The off-ramp cannot fire in this harness. `OFFER` = 0 in all 256 engine cells -- and that is arithmetic, not measurement.** The proxy decline alphabet has exactly two symbols (`INSUFFICIENT_FUNDS`, `CARD_EXPIRED`) and `cause_map` assigns `WONT_PAY` a prior of 0.10 under **both**, so no observation this simulator can produce from ORDINARY Bayesian updating moves belief mass toward `WONT_PAY`, and the singleton `{WONT_PAY}` condition is unreachable from any LIVE, still-retryable decision, for any alpha, any seed, any regime -- confirmed on this run: 0.000 (every live cell measures exactly 0). A same-day investigation (R2, finding 5) briefly made this claim look false: fixing the `OPTED_OUT` re-solve bug meant the gate was queried, for the first time, on a RETROSPECTIVE belief already collapsed to near-certain `WONT_PAY` by `belief.observe_terminal()` -- 20,592 such queries this run, EXCLUDED from every coverage/singleton statistic here (see finding 3) because a hand-constructed, already-decided belief is not exchangeable with the live population the gate is calibrated on and answering that question would be close to tautological. `OFFER` still could not have fired there regardless -- clause 6(c) denies every action but `STOP` once a mandate has opted out -- but the MEASUREMENT is what needed fixing, not just the action. **The off-ramp lane is untested, not tested and negative**, and `retry_storm`'s pre-registered hypothesis about it is vacuous rather than falsified: the outcome was fixed before the regime ran. `false off-ramp = 0` is likewise not a safety result.
 
-3. **The off-ramp gate under-covers.** Over the 1,162,676 decision points the gate was actually queried at, marginal coverage is 0.863-0.955 against a 0.95 target, with per-class coverage as low as 0.741 (`CANT_PAY_EVER`) -- a Mondrian violation on a class that drives REAUTH. Mean set size is 2.36-2.64 of 3. Two earlier defects inflated this: the smoothing key was derived from the belief itself (making the WONT_PAY p-value a hash of a constant rather than a rank), and coverage was scored only over the 200 slot-1 beliefs rather than every query, which also made six numbers print as thirty-two. Both are fixed; the reported figure moved from an apparent 0.980 to a real under-coverage.
+3. **The off-ramp gate under-covers.** Over the 1,141,984 LIVE decision points the gate was actually queried at (excluding 20,592 retrospective post-terminal queries -- see finding 2), marginal coverage is 0.869-0.962 against a 0.95 target, with per-class coverage as low as 0.735 (`CANT_PAY_EVER`) -- a Mondrian violation on a class that drives REAUTH. Mean set size is 2.39-2.65 of 3. Two earlier defects inflated this: the smoothing key was derived from the belief itself (making the WONT_PAY p-value a hash of a constant rather than a rank), and coverage was scored only over the 200 slot-1 beliefs rather than every query, which also made six numbers print as thirty-two. Both are fixed; the reported figure moved from an apparent 0.980 to a real under-coverage.
 
 4. **No timing discrimination.** Every attempt the engine commits lands on day 2, the earliest legal day, in every regime and under both compliance profiles. The hazard model's only temporal feature is `in_salary_window` (days 1-5) plus the slot index, so backward induction has nothing with which to prefer day 4 to day 2. The 'timed to their replenishment rhythm' claim in the project's own framing is **not supported by this evidence**; the engine's advantage comes from *whether* and *how often* it attempts, not *when*. This confirms B12's shadow-mode finding (`SAME_ACTION_DIFFERENT_DAY = 0`) across all five regimes.
 
-5. **The allocator wants to retry instruments the issuer just confirmed dead.** Re-solving after a terminal outcome returned `ATTEMPT` 4032 times across all engine cells -- on mandates that had just come back `DEAD` or `OPTED_OUT`. `belief.update()` compounds naive-Bayes with no floor, and a single `CARD_EXPIRED` cannot overtake the slot-1 `INSUFFICIENT_FUNDS` prior, so `CANT_PAY_NOW` keeps dominating. The CANT_PAY_EVER -> REAUTH row of the project's own cause/action table does not fire on observed evidence. This case previously fell through every counter and was discarded unrecorded.
+5. **FIXED, R2 (2026-09-04): the allocator used to want to retry instruments the issuer had just confirmed dead.** Re-solving after a terminal outcome returned `ATTEMPT` 0 times across all engine cells on this run -- structurally zero, not merely measured low: a hard `permitted()` rule (`instrument_dead`) denies `ATTEMPT` outright once the instrument is known dead, regardless of belief. `belief.observe_terminal()` also replaces belief with a MEASURED posterior on the observed outcome -- P(CANT_PAY_EVER | DEAD) = 0.8991, P(WONT_PAY | OPTED_OUT) = 0.9040, both measured directly against `eval/frozen/sim_config.yaml`'s own generative process, NOT the degenerate 100%-certain collapse an earlier same-day version of this fix assumed and stats-reviewer then proved false and irreversible (`cause_map`'s priors contain no zeros, so a belief collapsed to exactly 1.0 can never be moved by any later evidence). The corrected, measured version changes no action anywhere in this sweep -- REAUTH's economics dominate STOP at 90% confidence exactly as they did at 100% for every realistic amount in this corpus -- but is no longer an overconfident, irreversible claim about a fact the frozen simulator's own numbers say is only ~90% certain. Before this fix existed at all: `belief.update()`'s ordinary naive-Bayes compounding, with no floor, meant a single `CARD_EXPIRED` observation often could not overtake a slot-1 `INSUFFICIENT_FUNDS` prior, so `CANT_PAY_NOW` kept dominating and the CANT_PAY_EVER -> REAUTH row of the project's own cause/action table never fired on observed evidence -- measured at 4,032 such events on the pre-fix artifact. The `OPTED_OUT` case was worse: the proxy decline-class function returns `None` for it, so the OLD code's re-solve was skipped ENTIRELY and no decision was ever recorded for what happens after a customer opts out. A related audit-trail bug found in the same review -- `_binding_constraint()` did not know about `instrument_dead`, so a REAUTH forced by this rule alone recorded `binding_constraint = None`, misrepresenting a hard-forced decision as a free economic choice -- is also fixed. See DECISIONS.md and POSTMORTEM Incidents 11-12 for the full account, including a conformal-measurement contamination the fix briefly introduced and then closed (finding 2 above).
 
-6. Actions across all engine cells: 13354 REAUTH (of which **7380 were issued on mandates whose true cause is not `CANT_PAY_EVER`** -- `issuer_outage`'s own pre-registered falsification criterion, now measured), 1790 STOP, 0 OFFER. Constraint violations: **0**.
+6. Actions across all engine cells: 17554 REAUTH (**6784** issued via the above-AFA-cliff compliance route -- clause 8(a)/8(b), legally mandatory regardless of belief -- and **3022** that are genuine belief-inference errors against a mandate whose true cause is not `CANT_PAY_EVER`), 13234 STOP, 0 OFFER. The pre-registered `issuer_outage` falsification criterion, `8832` REAUTHs on a mandate whose true cause is not `CANT_PAY_EVER`, keeps its Day-1 meaning unchanged (DECISIONS.md, R0) -- the split above is ADDED alongside it, R2b, because that one number conflates a legal requirement with a belief error: only `3022` of the `8832` were ever a real inference mistake. Constraint violations: **0**.
 
 ## Where we lose
 
@@ -118,67 +118,67 @@ A policy that wins every regime is evidence the regimes were tuned, not that the
 | regime | arm | policy | recovered | attempts | preserved | stopped-on that would have paid (n / value) | false off-ramp | false REAUTH |
 |---|---|---|---:|---:|---:|---:|---:|---:|
 | baseline | nominal | ladder | ₹12,09,844.52 | 332 | 110/200 | -- | -- | -- |
-| baseline | nominal | engine | ₹7,75,025.53 | 249 | 142/200 | 16 / ₹5,07,401.42 | 0 / ₹0.00 | 21 / ₹8,25,195.23 |
+| baseline | nominal | engine | ₹7,75,025.53 | 249 | 142/200 | 16 / ₹5,07,401.42 | 0 / ₹0.00 | 24 / ₹8,48,275.75 |
 | baseline | nominal | one_shot | ₹7,24,405.47 | 200 | 149/200 | -- | -- | -- |
 | baseline | nominal | null | ₹0.00 | 0 | 200/200 | -- | -- | -- |
 | baseline | misspecified | ladder | ₹12,76,298.86 | 279 | 106/200 | -- | -- | -- |
-| baseline | misspecified | engine | ₹8,30,244.30 | 208 | 140/200 | 18 / ₹5,74,784.50 | 0 / ₹0.00 | 21 / ₹8,25,195.23 |
+| baseline | misspecified | engine | ₹8,30,244.30 | 208 | 140/200 | 18 / ₹5,74,784.50 | 0 / ₹0.00 | 26 / ₹8,64,119.51 |
 | baseline | misspecified | one_shot | ₹11,19,393.76 | 200 | 140/200 | -- | -- | -- |
 | baseline | misspecified | null | ₹0.00 | 0 | 200/200 | -- | -- | -- |
 | baseline | coupled | ladder | ₹76,415.20 | 438 | 105/200 | -- | -- | -- |
-| baseline | coupled | engine | ₹70,034.44 | 336 | 139/200 | 4 / ₹7,124.54 | 0 / ₹0.00 | 21 / ₹8,25,195.23 |
+| baseline | coupled | engine | ₹70,034.44 | 336 | 139/200 | 4 / ₹7,124.54 | 0 / ₹0.00 | 24 / ₹8,51,931.94 |
 | baseline | coupled | one_shot | ₹51,638.78 | 200 | 150/200 | -- | -- | -- |
 | baseline | coupled | null | ₹0.00 | 0 | 200/200 | -- | -- | -- |
 | issuer_outage | nominal | ladder | ₹5,89,856.35 | 398 | 95/200 | -- | -- | -- |
-| issuer_outage | nominal | engine | ₹4,10,881.23 | 292 | 132/200 | 8 / ₹2,26,799.67 | 0 / ₹0.00 | 27 / ₹8,79,195.55 |
+| issuer_outage | nominal | engine | ₹4,10,881.23 | 292 | 132/200 | 8 / ₹2,26,799.67 | 0 / ₹0.00 | 38 / ₹9,63,825.74 |
 | issuer_outage | nominal | one_shot | ₹2,55,757.88 | 200 | 143/200 | -- | -- | -- |
 | issuer_outage | nominal | null | ₹0.00 | 0 | 200/200 | -- | -- | -- |
 | issuer_outage | misspecified | ladder | ₹6,47,592.60 | 354 | 80/200 | -- | -- | -- |
-| issuer_outage | misspecified | engine | ₹4,24,282.25 | 264 | 125/200 | 12 / ₹2,92,172.87 | 0 / ₹0.00 | 27 / ₹8,79,195.55 |
+| issuer_outage | misspecified | engine | ₹4,24,282.25 | 264 | 125/200 | 12 / ₹2,92,172.87 | 0 / ₹0.00 | 41 / ₹10,03,408.65 |
 | issuer_outage | misspecified | one_shot | ₹4,75,650.64 | 200 | 135/200 | -- | -- | -- |
 | issuer_outage | misspecified | null | ₹0.00 | 0 | 200/200 | -- | -- | -- |
 | issuer_outage | coupled | ladder | ₹40,820.43 | 441 | 90/200 | -- | -- | -- |
-| issuer_outage | coupled | engine | ₹41,394.84 | 326 | 130/200 | 2 / ₹3,394.48 | 0 / ₹0.00 | 27 / ₹8,79,195.55 |
+| issuer_outage | coupled | engine | ₹41,394.84 | 326 | 130/200 | 2 / ₹3,394.48 | 0 / ₹0.00 | 37 / ₹9,93,739.27 |
 | issuer_outage | coupled | one_shot | ₹20,116.17 | 200 | 144/200 | -- | -- | -- |
 | issuer_outage | coupled | null | ₹0.00 | 0 | 200/200 | -- | -- | -- |
 | delayed_salary | nominal | ladder | ₹7,29,597.78 | 397 | 103/200 | -- | -- | -- |
-| delayed_salary | nominal | engine | ₹4,34,814.99 | 303 | 137/200 | 7 / ₹2,35,381.54 | 0 / ₹0.00 | 21 / ₹8,25,195.23 |
+| delayed_salary | nominal | engine | ₹4,34,814.99 | 303 | 137/200 | 7 / ₹2,35,381.54 | 0 / ₹0.00 | 24 / ₹8,63,315.57 |
 | delayed_salary | nominal | one_shot | ₹3,27,324.98 | 200 | 147/200 | -- | -- | -- |
 | delayed_salary | nominal | null | ₹0.00 | 0 | 200/200 | -- | -- | -- |
 | delayed_salary | misspecified | ladder | ₹8,18,171.38 | 358 | 92/200 | -- | -- | -- |
-| delayed_salary | misspecified | engine | ₹4,69,806.24 | 276 | 127/200 | 12 / ₹3,68,828.31 | 0 / ₹0.00 | 21 / ₹8,25,195.23 |
+| delayed_salary | misspecified | engine | ₹4,69,806.24 | 276 | 127/200 | 12 / ₹3,68,828.31 | 0 / ₹0.00 | 30 / ₹9,26,596.93 |
 | delayed_salary | misspecified | one_shot | ₹5,20,966.06 | 200 | 139/200 | -- | -- | -- |
 | delayed_salary | misspecified | null | ₹0.00 | 0 | 200/200 | -- | -- | -- |
 | delayed_salary | coupled | ladder | ₹49,546.58 | 448 | 96/200 | -- | -- | -- |
-| delayed_salary | coupled | engine | ₹43,399.28 | 344 | 132/200 | 3 / ₹6,358.81 | 0 / ₹0.00 | 21 / ₹8,25,195.23 |
+| delayed_salary | coupled | engine | ₹43,399.28 | 344 | 132/200 | 3 / ₹6,358.81 | 0 / ₹0.00 | 24 / ₹8,60,326.10 |
 | delayed_salary | coupled | one_shot | ₹22,444.05 | 200 | 146/200 | -- | -- | -- |
 | delayed_salary | coupled | null | ₹0.00 | 0 | 200/200 | -- | -- | -- |
 | stacking_spike | coupled | ladder | ₹25,023.10 | 445 | 102/200 | -- | -- | -- |
-| stacking_spike | coupled | engine | ₹22,006.39 | 353 | 136/200 | 3 / ₹3,213.52 | 0 / ₹0.00 | 21 / ₹8,25,195.23 |
+| stacking_spike | coupled | engine | ₹22,006.39 | 353 | 136/200 | 3 / ₹3,213.52 | 0 / ₹0.00 | 24 / ₹8,53,890.03 |
 | stacking_spike | coupled | one_shot | ₹15,578.24 | 200 | 151/200 | -- | -- | -- |
 | stacking_spike | coupled | null | ₹0.00 | 0 | 200/200 | -- | -- | -- |
 | festival_season | nominal | ladder | ₹33,57,617.77 | 328 | 134/200 | -- | -- | -- |
-| festival_season | nominal | engine | ₹13,91,415.60 | 202 | 165/200 | 41 / ₹20,37,612.54 | 0 / ₹0.00 | 57 / ₹28,02,843.27 |
+| festival_season | nominal | engine | ₹13,91,415.60 | 202 | 165/200 | 41 / ₹20,37,612.54 | 0 / ₹0.00 | 59 / ₹28,29,899.23 |
 | festival_season | nominal | one_shot | ₹20,34,280.07 | 200 | 165/200 | -- | -- | -- |
 | festival_season | nominal | null | ₹0.00 | 0 | 200/200 | -- | -- | -- |
 | festival_season | misspecified | ladder | ₹35,77,772.71 | 275 | 131/200 | -- | -- | -- |
-| festival_season | misspecified | engine | ₹15,60,307.40 | 168 | 165/200 | 45 / ₹21,39,655.14 | 0 / ₹0.00 | 57 / ₹28,02,843.27 |
+| festival_season | misspecified | engine | ₹15,60,307.40 | 168 | 165/200 | 45 / ₹21,39,655.14 | 0 / ₹0.00 | 60 / ₹28,59,960.31 |
 | festival_season | misspecified | one_shot | ₹28,20,632.67 | 200 | 158/200 | -- | -- | -- |
 | festival_season | misspecified | null | ₹0.00 | 0 | 200/200 | -- | -- | -- |
 | festival_season | coupled | ladder | ₹59,762.55 | 484 | 128/200 | -- | -- | -- |
-| festival_season | coupled | engine | ₹57,790.23 | 299 | 160/200 | 1 / ₹3,881.24 | 0 / ₹0.00 | 57 / ₹28,02,843.27 |
+| festival_season | coupled | engine | ₹57,790.23 | 299 | 160/200 | 1 / ₹3,881.24 | 0 / ₹0.00 | 60 / ₹28,63,019.17 |
 | festival_season | coupled | one_shot | ₹39,709.16 | 200 | 163/200 | -- | -- | -- |
 | festival_season | coupled | null | ₹0.00 | 0 | 200/200 | -- | -- | -- |
 | retry_storm | nominal | ladder | ₹10,13,111.07 | 322 | 88/200 | -- | -- | -- |
-| retry_storm | nominal | engine | ₹6,06,276.04 | 250 | 118/200 | 14 / ₹4,25,538.50 | 0 / ₹0.00 | 22 / ₹9,26,890.10 |
+| retry_storm | nominal | engine | ₹6,06,276.04 | 250 | 118/200 | 14 / ₹4,25,538.50 | 0 / ₹0.00 | 25 / ₹9,50,042.67 |
 | retry_storm | nominal | one_shot | ₹6,47,403.00 | 200 | 138/200 | -- | -- | -- |
 | retry_storm | nominal | null | ₹0.00 | 0 | 200/200 | -- | -- | -- |
 | retry_storm | misspecified | ladder | ₹10,98,555.81 | 266 | 88/200 | -- | -- | -- |
-| retry_storm | misspecified | engine | ₹6,68,607.31 | 210 | 116/200 | 17 / ₹6,03,062.80 | 0 / ₹0.00 | 22 / ₹9,26,890.10 |
+| retry_storm | misspecified | engine | ₹6,68,607.31 | 210 | 116/200 | 17 / ₹6,03,062.80 | 0 / ₹0.00 | 30 / ₹10,12,819.53 |
 | retry_storm | misspecified | one_shot | ₹9,14,490.44 | 200 | 123/200 | -- | -- | -- |
 | retry_storm | misspecified | null | ₹0.00 | 0 | 200/200 | -- | -- | -- |
 | retry_storm | coupled | ladder | ₹65,436.98 | 408 | 80/200 | -- | -- | -- |
-| retry_storm | coupled | engine | ₹64,320.02 | 320 | 110/200 | 3 / ₹4,698.15 | 0 / ₹0.00 | 22 / ₹9,26,890.10 |
+| retry_storm | coupled | engine | ₹64,320.02 | 320 | 110/200 | 3 / ₹4,698.15 | 0 / ₹0.00 | 27 / ₹9,77,385.63 |
 | retry_storm | coupled | one_shot | ₹45,767.51 | 200 | 138/200 | -- | -- | -- |
 | retry_storm | coupled | null | ₹0.00 | 0 | 200/200 | -- | -- | -- |
 
@@ -226,134 +226,134 @@ Coverage is *measured*, not assumed. The gate is calibrated once on `baseline` a
 
 | regime | arm | gate live | marginal coverage | per-class coverage (NOW / EVER / WONT) | mean set size | singleton rate | singleton {WONT_PAY} | OFFERs |
 |---|---|---|---:|---:|---:|---:|---:|---:|
-| baseline | nominal | conformal | 0.900 (n=4674) | 0.965 / 0.864 / 0.839 | 2.51 / 3 | 0.132 | 0.000 | 0 |
-| baseline | misspecified | conformal | 0.915 (n=4467) | 0.951 / 0.893 / 0.882 | 2.58 / 3 | 0.092 | 0.000 | 0 |
-| baseline | coupled | conformal | 0.897 (n=5039) | 0.967 / 0.872 / 0.815 | 2.40 / 3 | 0.195 | 0.000 | 0 |
-| issuer_outage | nominal | conformal | 0.876 (n=4908) | 0.919 / 0.883 / 0.818 | 2.41 / 3 | 0.174 | 0.000 | 0 |
-| issuer_outage | misspecified | conformal | 0.886 (n=4814) | 0.918 / 0.866 / 0.854 | 2.44 / 3 | 0.157 | 0.000 | 0 |
-| issuer_outage | coupled | conformal | 0.886 (n=5023) | 0.928 / 0.873 / 0.832 | 2.38 / 3 | 0.193 | 0.000 | 0 |
-| delayed_salary | nominal | conformal | 0.901 (n=4917) | 0.963 / 0.882 / 0.828 | 2.44 / 3 | 0.175 | 0.000 | 0 |
-| delayed_salary | misspecified | conformal | 0.915 (n=4796) | 0.960 / 0.893 / 0.865 | 2.47 / 3 | 0.154 | 0.000 | 0 |
-| delayed_salary | coupled | conformal | 0.905 (n=5039) | 0.972 / 0.882 / 0.822 | 2.40 / 3 | 0.195 | 0.000 | 0 |
-| stacking_spike | coupled | conformal | 0.900 (n=5097) | 0.970 / 0.870 / 0.817 | 2.39 / 3 | 0.204 | 0.000 | 0 |
-| festival_season | nominal | conformal | 0.904 (n=3510) | 0.946 / 0.829 / 0.847 | 2.53 / 3 | 0.129 | 0.000 | 0 |
-| festival_season | misspecified | conformal | 0.925 (n=3328) | 0.940 / 0.911 / 0.899 | 2.61 / 3 | 0.082 | 0.000 | 0 |
-| festival_season | coupled | conformal | 0.905 (n=3887) | 0.953 / 0.899 / 0.803 | 2.38 / 3 | 0.214 | 0.000 | 0 |
-| retry_storm | nominal | conformal | 0.915 (n=4658) | 0.969 / 0.939 / 0.869 | 2.55 / 3 | 0.129 | 0.000 | 0 |
-| retry_storm | misspecified | conformal | 0.922 (n=4538) | 0.961 / 0.948 / 0.888 | 2.59 / 3 | 0.106 | 0.000 | 0 |
-| retry_storm | coupled | conformal | 0.903 (n=4908) | 0.966 / 0.867 / 0.861 | 2.47 / 3 | 0.174 | 0.000 | 0 |
-| baseline | nominal | conformal | 0.920 (n=4479) | 0.967 / 0.945 / 0.825 | 2.50 / 3 | 0.148 | 0.000 | 0 |
-| baseline | misspecified | conformal | 0.945 (n=4222) | 0.967 / 0.982 / 0.881 | 2.60 / 3 | 0.096 | 0.000 | 0 |
-| baseline | coupled | conformal | 0.920 (n=4777) | 0.973 / 0.938 / 0.811 | 2.41 / 3 | 0.201 | 0.000 | 0 |
-| issuer_outage | nominal | conformal | 0.914 (n=4691) | 0.955 / 0.939 / 0.823 | 2.42 / 3 | 0.187 | 0.000 | 0 |
-| issuer_outage | misspecified | conformal | 0.921 (n=4557) | 0.953 / 0.953 / 0.841 | 2.46 / 3 | 0.163 | 0.000 | 0 |
-| issuer_outage | coupled | conformal | 0.916 (n=4789) | 0.954 / 0.936 / 0.830 | 2.39 / 3 | 0.203 | 0.000 | 0 |
-| delayed_salary | nominal | conformal | 0.924 (n=4671) | 0.969 / 0.946 / 0.827 | 2.44 / 3 | 0.183 | 0.000 | 0 |
-| delayed_salary | misspecified | conformal | 0.930 (n=4571) | 0.963 / 0.977 / 0.838 | 2.47 / 3 | 0.165 | 0.000 | 0 |
-| delayed_salary | coupled | conformal | 0.925 (n=4799) | 0.973 / 0.915 / 0.837 | 2.40 / 3 | 0.205 | 0.000 | 0 |
-| stacking_spike | coupled | conformal | 0.921 (n=4827) | 0.974 / 0.920 / 0.822 | 2.40 / 3 | 0.209 | 0.000 | 0 |
-| festival_season | nominal | conformal | 0.931 (n=3498) | 0.963 / 0.933 / 0.812 | 2.55 / 3 | 0.132 | 0.000 | 0 |
-| festival_season | misspecified | conformal | 0.938 (n=3313) | 0.969 / 0.940 / 0.829 | 2.64 / 3 | 0.084 | 0.000 | 0 |
-| festival_season | coupled | conformal | 0.942 (n=3836) | 0.970 / 0.968 / 0.802 | 2.42 / 3 | 0.209 | 0.000 | 0 |
-| retry_storm | nominal | conformal | 0.915 (n=4443) | 0.967 / 0.961 / 0.847 | 2.52 / 3 | 0.146 | 0.000 | 0 |
-| retry_storm | misspecified | conformal | 0.939 (n=4219) | 0.968 / 0.980 / 0.894 | 2.60 / 3 | 0.101 | 0.000 | 0 |
-| retry_storm | coupled | conformal | 0.906 (n=4699) | 0.970 / 0.938 / 0.828 | 2.44 / 3 | 0.193 | 0.000 | 0 |
-| baseline | nominal | conformal | 0.907 (n=4538) | 0.944 / 0.906 / 0.851 | 2.49 / 3 | 0.128 | 0.000 | 0 |
-| baseline | misspecified | conformal | 0.914 (n=4387) | 0.941 / 0.935 / 0.860 | 2.54 / 3 | 0.098 | 0.000 | 0 |
-| baseline | coupled | conformal | 0.906 (n=4863) | 0.948 / 0.919 / 0.825 | 2.39 / 3 | 0.187 | 0.000 | 0 |
-| issuer_outage | nominal | conformal | 0.902 (n=4765) | 0.936 / 0.911 / 0.839 | 2.42 / 3 | 0.170 | 0.000 | 0 |
-| issuer_outage | misspecified | conformal | 0.911 (n=4683) | 0.935 / 0.927 / 0.860 | 2.44 / 3 | 0.155 | 0.000 | 0 |
-| issuer_outage | coupled | conformal | 0.902 (n=4942) | 0.940 / 0.915 / 0.826 | 2.37 / 3 | 0.200 | 0.000 | 0 |
-| delayed_salary | nominal | conformal | 0.908 (n=4725) | 0.943 / 0.893 / 0.858 | 2.43 / 3 | 0.163 | 0.000 | 0 |
-| delayed_salary | misspecified | conformal | 0.922 (n=4638) | 0.943 / 0.928 / 0.882 | 2.46 / 3 | 0.147 | 0.000 | 0 |
-| delayed_salary | coupled | conformal | 0.912 (n=4896) | 0.947 / 0.937 / 0.832 | 2.38 / 3 | 0.192 | 0.000 | 0 |
-| stacking_spike | coupled | conformal | 0.898 (n=4876) | 0.950 / 0.885 / 0.821 | 2.39 / 3 | 0.189 | 0.000 | 0 |
-| festival_season | nominal | conformal | 0.915 (n=3624) | 0.946 / 0.884 / 0.853 | 2.50 / 3 | 0.129 | 0.000 | 0 |
-| festival_season | misspecified | conformal | 0.925 (n=3451) | 0.937 / 0.912 / 0.902 | 2.57 / 3 | 0.085 | 0.000 | 0 |
-| festival_season | coupled | conformal | 0.918 (n=3881) | 0.949 / 0.849 / 0.872 | 2.40 / 3 | 0.187 | 0.000 | 0 |
-| retry_storm | nominal | conformal | 0.896 (n=4552) | 0.944 / 0.880 / 0.865 | 2.53 / 3 | 0.131 | 0.000 | 0 |
-| retry_storm | misspecified | conformal | 0.905 (n=4408) | 0.937 / 0.882 / 0.888 | 2.58 / 3 | 0.103 | 0.000 | 0 |
-| retry_storm | coupled | conformal | 0.900 (n=4802) | 0.954 / 0.881 / 0.859 | 2.45 / 3 | 0.176 | 0.000 | 0 |
-| baseline | nominal | conformal | 0.896 (n=4642) | 0.940 / 0.886 / 0.836 | 2.51 / 3 | 0.139 | 0.000 | 0 |
-| baseline | misspecified | conformal | 0.915 (n=4473) | 0.943 / 0.922 / 0.864 | 2.56 / 3 | 0.107 | 0.000 | 0 |
-| baseline | coupled | conformal | 0.888 (n=4893) | 0.947 / 0.881 / 0.797 | 2.43 / 3 | 0.183 | 0.000 | 0 |
-| issuer_outage | nominal | conformal | 0.889 (n=4828) | 0.922 / 0.901 / 0.824 | 2.42 / 3 | 0.172 | 0.000 | 0 |
-| issuer_outage | misspecified | conformal | 0.892 (n=4731) | 0.925 / 0.901 / 0.831 | 2.45 / 3 | 0.155 | 0.000 | 0 |
-| issuer_outage | coupled | conformal | 0.886 (n=4962) | 0.921 / 0.886 / 0.823 | 2.38 / 3 | 0.195 | 0.000 | 0 |
-| delayed_salary | nominal | conformal | 0.899 (n=4831) | 0.950 / 0.899 / 0.814 | 2.45 / 3 | 0.173 | 0.000 | 0 |
-| delayed_salary | misspecified | conformal | 0.915 (n=4774) | 0.947 / 0.942 / 0.838 | 2.47 / 3 | 0.163 | 0.000 | 0 |
-| delayed_salary | coupled | conformal | 0.898 (n=4942) | 0.951 / 0.894 / 0.810 | 2.42 / 3 | 0.191 | 0.000 | 0 |
-| stacking_spike | coupled | conformal | 0.887 (n=4962) | 0.946 / 0.872 / 0.799 | 2.41 / 3 | 0.195 | 0.000 | 0 |
-| festival_season | nominal | conformal | 0.911 (n=3718) | 0.940 / 0.886 / 0.835 | 2.50 / 3 | 0.130 | 0.000 | 0 |
-| festival_season | misspecified | conformal | 0.918 (n=3585) | 0.935 / 0.928 / 0.848 | 2.55 / 3 | 0.097 | 0.000 | 0 |
-| festival_season | coupled | conformal | 0.915 (n=4030) | 0.945 / 0.899 / 0.814 | 2.38 / 3 | 0.197 | 0.000 | 0 |
-| retry_storm | nominal | conformal | 0.869 (n=4651) | 0.935 / 0.824 / 0.834 | 2.52 / 3 | 0.141 | 0.000 | 0 |
-| retry_storm | misspecified | conformal | 0.883 (n=4441) | 0.923 / 0.799 / 0.882 | 2.60 / 3 | 0.100 | 0.000 | 0 |
-| retry_storm | coupled | conformal | 0.863 (n=4862) | 0.937 / 0.815 / 0.819 | 2.46 / 3 | 0.178 | 0.000 | 0 |
-| baseline | nominal | conformal | 0.902 (n=4493) | 0.945 / 0.902 / 0.849 | 2.52 / 3 | 0.115 | 0.000 | 0 |
-| baseline | misspecified | conformal | 0.917 (n=4382) | 0.944 / 0.931 / 0.874 | 2.56 / 3 | 0.093 | 0.000 | 0 |
-| baseline | coupled | conformal | 0.911 (n=4776) | 0.958 / 0.910 / 0.846 | 2.43 / 3 | 0.168 | 0.000 | 0 |
-| issuer_outage | nominal | conformal | 0.876 (n=4721) | 0.904 / 0.871 / 0.841 | 2.41 / 3 | 0.158 | 0.000 | 0 |
-| issuer_outage | misspecified | conformal | 0.880 (n=4660) | 0.891 / 0.897 / 0.854 | 2.42 / 3 | 0.147 | 0.000 | 0 |
-| issuer_outage | coupled | conformal | 0.876 (n=4781) | 0.896 / 0.878 / 0.844 | 2.39 / 3 | 0.168 | 0.000 | 0 |
-| delayed_salary | nominal | conformal | 0.904 (n=4754) | 0.957 / 0.900 / 0.835 | 2.43 / 3 | 0.164 | 0.000 | 0 |
-| delayed_salary | misspecified | conformal | 0.900 (n=4703) | 0.944 / 0.920 / 0.830 | 2.45 / 3 | 0.155 | 0.000 | 0 |
-| delayed_salary | coupled | conformal | 0.910 (n=4804) | 0.958 / 0.915 / 0.840 | 2.42 / 3 | 0.172 | 0.000 | 0 |
-| stacking_spike | coupled | conformal | 0.903 (n=4842) | 0.958 / 0.886 / 0.834 | 2.41 / 3 | 0.179 | 0.000 | 0 |
-| festival_season | nominal | conformal | 0.895 (n=3746) | 0.954 / 0.753 / 0.838 | 2.54 / 3 | 0.136 | 0.000 | 0 |
-| festival_season | misspecified | conformal | 0.910 (n=3579) | 0.954 / 0.820 / 0.854 | 2.61 / 3 | 0.096 | 0.000 | 0 |
-| festival_season | coupled | conformal | 0.901 (n=4128) | 0.964 / 0.741 / 0.821 | 2.40 / 3 | 0.216 | 0.000 | 0 |
-| retry_storm | nominal | conformal | 0.904 (n=4490) | 0.953 / 0.905 / 0.871 | 2.53 / 3 | 0.114 | 0.000 | 0 |
-| retry_storm | misspecified | conformal | 0.928 (n=4332) | 0.940 / 0.916 / 0.923 | 2.58 / 3 | 0.082 | 0.000 | 0 |
-| retry_storm | coupled | conformal | 0.891 (n=4735) | 0.954 / 0.872 / 0.849 | 2.45 / 3 | 0.160 | 0.000 | 0 |
-| baseline | nominal | conformal | 0.921 (n=4597) | 0.962 / 0.904 / 0.866 | 2.52 / 3 | 0.118 | 0.000 | 0 |
-| baseline | misspecified | conformal | 0.926 (n=4477) | 0.957 / 0.923 / 0.878 | 2.56 / 3 | 0.094 | 0.000 | 0 |
-| baseline | coupled | conformal | 0.916 (n=4994) | 0.967 / 0.886 / 0.842 | 2.40 / 3 | 0.188 | 0.000 | 0 |
-| issuer_outage | nominal | conformal | 0.919 (n=4846) | 0.947 / 0.924 / 0.864 | 2.41 / 3 | 0.163 | 0.000 | 0 |
-| issuer_outage | misspecified | conformal | 0.926 (n=4783) | 0.945 / 0.941 / 0.883 | 2.43 / 3 | 0.152 | 0.000 | 0 |
-| issuer_outage | coupled | conformal | 0.911 (n=5037) | 0.950 / 0.885 / 0.853 | 2.36 / 3 | 0.195 | 0.000 | 0 |
-| delayed_salary | nominal | conformal | 0.935 (n=4804) | 0.963 / 0.916 / 0.895 | 2.45 / 3 | 0.156 | 0.000 | 0 |
-| delayed_salary | misspecified | conformal | 0.932 (n=4792) | 0.963 / 0.910 / 0.888 | 2.46 / 3 | 0.154 | 0.000 | 0 |
-| delayed_salary | coupled | conformal | 0.917 (n=5018) | 0.965 / 0.883 / 0.848 | 2.39 / 3 | 0.192 | 0.000 | 0 |
-| stacking_spike | coupled | conformal | 0.928 (n=5060) | 0.968 / 0.907 / 0.864 | 2.38 / 3 | 0.198 | 0.000 | 0 |
-| festival_season | nominal | conformal | 0.941 (n=3678) | 0.970 / 0.950 / 0.848 | 2.56 / 3 | 0.115 | 0.000 | 0 |
-| festival_season | misspecified | conformal | 0.950 (n=3559) | 0.966 / 0.935 / 0.914 | 2.61 / 3 | 0.085 | 0.000 | 0 |
-| festival_season | coupled | conformal | 0.945 (n=4098) | 0.975 / 0.937 / 0.850 | 2.40 / 3 | 0.205 | 0.000 | 0 |
-| retry_storm | nominal | conformal | 0.917 (n=4587) | 0.975 / 0.895 / 0.877 | 2.56 / 3 | 0.116 | 0.000 | 0 |
-| retry_storm | misspecified | conformal | 0.946 (n=4446) | 0.971 / 0.954 / 0.922 | 2.61 / 3 | 0.088 | 0.000 | 0 |
-| retry_storm | coupled | conformal | 0.917 (n=4916) | 0.976 / 0.895 / 0.867 | 2.45 / 3 | 0.175 | 0.000 | 0 |
-| baseline | nominal | conformal | 0.898 (n=4519) | 0.967 / 0.836 / 0.841 | 2.52 / 3 | 0.138 | 0.000 | 0 |
-| baseline | misspecified | conformal | 0.915 (n=4339) | 0.963 / 0.846 / 0.888 | 2.58 / 3 | 0.102 | 0.000 | 0 |
-| baseline | coupled | conformal | 0.898 (n=4826) | 0.966 / 0.805 / 0.845 | 2.42 / 3 | 0.193 | 0.000 | 0 |
-| issuer_outage | nominal | conformal | 0.909 (n=4785) | 0.957 / 0.864 / 0.861 | 2.40 / 3 | 0.186 | 0.000 | 0 |
-| issuer_outage | misspecified | conformal | 0.915 (n=4625) | 0.952 / 0.865 / 0.887 | 2.45 / 3 | 0.158 | 0.000 | 0 |
-| issuer_outage | coupled | conformal | 0.908 (n=4833) | 0.955 / 0.884 / 0.850 | 2.39 / 3 | 0.194 | 0.000 | 0 |
-| delayed_salary | nominal | conformal | 0.901 (n=4787) | 0.963 / 0.829 / 0.846 | 2.43 / 3 | 0.186 | 0.000 | 0 |
-| delayed_salary | misspecified | conformal | 0.922 (n=4608) | 0.965 / 0.881 / 0.880 | 2.49 / 3 | 0.155 | 0.000 | 0 |
-| delayed_salary | coupled | conformal | 0.903 (n=4878) | 0.972 / 0.832 / 0.838 | 2.41 / 3 | 0.201 | 0.000 | 0 |
-| stacking_spike | coupled | conformal | 0.903 (n=4878) | 0.972 / 0.844 / 0.830 | 2.41 / 3 | 0.201 | 0.000 | 0 |
-| festival_season | nominal | conformal | 0.927 (n=3469) | 0.975 / 0.935 / 0.836 | 2.56 / 3 | 0.125 | 0.000 | 0 |
-| festival_season | misspecified | conformal | 0.944 (n=3341) | 0.971 / 0.967 / 0.883 | 2.62 / 3 | 0.091 | 0.000 | 0 |
-| festival_season | coupled | conformal | 0.916 (n=3847) | 0.971 / 0.933 / 0.797 | 2.40 / 3 | 0.211 | 0.000 | 0 |
-| retry_storm | nominal | conformal | 0.910 (n=4480) | 0.972 / 0.903 / 0.864 | 2.56 / 3 | 0.130 | 0.000 | 0 |
-| retry_storm | misspecified | conformal | 0.920 (n=4337) | 0.967 / 0.897 / 0.891 | 2.62 / 3 | 0.102 | 0.000 | 0 |
-| retry_storm | coupled | conformal | 0.916 (n=4742) | 0.973 / 0.940 / 0.859 | 2.48 / 3 | 0.178 | 0.000 | 0 |
-| baseline | nominal | conformal | 0.921 (n=4732) | 0.985 / 0.904 / 0.826 | 2.49 / 3 | 0.130 | 0.000 | 0 |
-| baseline | misspecified | conformal | 0.936 (n=4593) | 0.984 / 0.927 / 0.863 | 2.54 / 3 | 0.104 | 0.000 | 0 |
-| baseline | coupled | conformal | 0.929 (n=5076) | 0.991 / 0.927 / 0.812 | 2.39 / 3 | 0.189 | 0.000 | 0 |
-| issuer_outage | nominal | conformal | 0.902 (n=4937) | 0.941 / 0.892 / 0.838 | 2.41 / 3 | 0.166 | 0.000 | 0 |
-| issuer_outage | misspecified | conformal | 0.909 (n=4871) | 0.942 / 0.921 / 0.839 | 2.43 / 3 | 0.155 | 0.000 | 0 |
-| issuer_outage | coupled | conformal | 0.901 (n=5117) | 0.951 / 0.886 / 0.816 | 2.36 / 3 | 0.196 | 0.000 | 0 |
-| delayed_salary | nominal | conformal | 0.928 (n=4947) | 0.989 / 0.904 / 0.835 | 2.43 / 3 | 0.168 | 0.000 | 0 |
-| delayed_salary | misspecified | conformal | 0.940 (n=4871) | 0.981 / 0.923 / 0.873 | 2.45 / 3 | 0.155 | 0.000 | 0 |
-| delayed_salary | coupled | conformal | 0.922 (n=5159) | 0.987 / 0.896 / 0.816 | 2.37 / 3 | 0.202 | 0.000 | 0 |
-| stacking_spike | coupled | conformal | 0.927 (n=5149) | 0.989 / 0.927 / 0.805 | 2.37 / 3 | 0.201 | 0.000 | 0 |
-| festival_season | nominal | conformal | 0.953 (n=3640) | 0.997 / 0.905 / 0.841 | 2.57 / 3 | 0.122 | 0.000 | 0 |
-| festival_season | misspecified | conformal | 0.955 (n=3585) | 0.994 / 0.905 / 0.860 | 2.59 / 3 | 0.109 | 0.000 | 0 |
-| festival_season | coupled | conformal | 0.952 (n=4114) | 0.997 / 0.887 / 0.823 | 2.39 / 3 | 0.223 | 0.000 | 0 |
-| retry_storm | nominal | conformal | 0.927 (n=4698) | 0.994 / 0.976 / 0.852 | 2.53 / 3 | 0.124 | 0.000 | 0 |
-| retry_storm | misspecified | conformal | 0.943 (n=4577) | 0.993 / 0.973 / 0.887 | 2.57 / 3 | 0.101 | 0.000 | 0 |
-| retry_storm | coupled | conformal | 0.923 (n=5010) | 1.000 / 0.957 / 0.835 | 2.44 / 3 | 0.178 | 0.000 | 0 |
+| baseline | nominal | conformal | 0.906 (n=4590) | 0.967 / 0.865 / 0.849 | 2.54 / 3 | 0.116 | 0.000 | 0 |
+| baseline | misspecified | conformal | 0.926 (n=4368) | 0.966 / 0.887 / 0.896 | 2.62 / 3 | 0.071 | 0.000 | 0 |
+| baseline | coupled | conformal | 0.901 (n=4958) | 0.972 / 0.873 / 0.818 | 2.43 / 3 | 0.182 | 0.000 | 0 |
+| issuer_outage | nominal | conformal | 0.889 (n=4764) | 0.931 / 0.878 / 0.839 | 2.45 / 3 | 0.149 | 0.000 | 0 |
+| issuer_outage | misspecified | conformal | 0.900 (n=4670) | 0.930 / 0.865 / 0.876 | 2.48 / 3 | 0.131 | 0.000 | 0 |
+| issuer_outage | coupled | conformal | 0.891 (n=4920) | 0.935 / 0.873 / 0.837 | 2.40 / 3 | 0.176 | 0.000 | 0 |
+| delayed_salary | nominal | conformal | 0.907 (n=4812) | 0.970 / 0.880 / 0.835 | 2.47 / 3 | 0.157 | 0.000 | 0 |
+| delayed_salary | misspecified | conformal | 0.924 (n=4678) | 0.970 / 0.889 / 0.878 | 2.51 / 3 | 0.133 | 0.000 | 0 |
+| delayed_salary | coupled | conformal | 0.907 (n=4956) | 0.972 / 0.882 / 0.828 | 2.43 / 3 | 0.182 | 0.000 | 0 |
+| stacking_spike | coupled | conformal | 0.903 (n=5030) | 0.973 / 0.869 / 0.820 | 2.41 / 3 | 0.194 | 0.000 | 0 |
+| festival_season | nominal | conformal | 0.904 (n=3494) | 0.946 / 0.832 / 0.847 | 2.54 / 3 | 0.125 | 0.000 | 0 |
+| festival_season | misspecified | conformal | 0.926 (n=3304) | 0.943 / 0.906 / 0.899 | 2.62 / 3 | 0.075 | 0.000 | 0 |
+| festival_season | coupled | conformal | 0.905 (n=3848) | 0.953 / 0.895 / 0.804 | 2.39 / 3 | 0.206 | 0.000 | 0 |
+| retry_storm | nominal | conformal | 0.917 (n=4578) | 0.973 / 0.935 / 0.874 | 2.58 / 3 | 0.114 | 0.000 | 0 |
+| retry_storm | misspecified | conformal | 0.933 (n=4420) | 0.971 / 0.946 / 0.903 | 2.63 / 3 | 0.082 | 0.000 | 0 |
+| retry_storm | coupled | conformal | 0.910 (n=4836) | 0.976 / 0.879 / 0.866 | 2.49 / 3 | 0.161 | 0.000 | 0 |
+| baseline | nominal | conformal | 0.923 (n=4394) | 0.969 / 0.952 / 0.827 | 2.53 / 3 | 0.132 | 0.000 | 0 |
+| baseline | misspecified | conformal | 0.951 (n=4118) | 0.967 / 0.985 / 0.900 | 2.64 / 3 | 0.073 | 0.000 | 0 |
+| baseline | coupled | conformal | 0.920 (n=4704) | 0.973 / 0.941 / 0.811 | 2.43 / 3 | 0.189 | 0.000 | 0 |
+| issuer_outage | nominal | conformal | 0.924 (n=4562) | 0.962 / 0.945 / 0.840 | 2.46 / 3 | 0.164 | 0.000 | 0 |
+| issuer_outage | misspecified | conformal | 0.930 (n=4424) | 0.960 / 0.955 / 0.861 | 2.51 / 3 | 0.137 | 0.000 | 0 |
+| issuer_outage | coupled | conformal | 0.924 (n=4666) | 0.963 / 0.941 / 0.838 | 2.43 / 3 | 0.182 | 0.000 | 0 |
+| delayed_salary | nominal | conformal | 0.926 (n=4580) | 0.972 / 0.948 / 0.830 | 2.47 / 3 | 0.167 | 0.000 | 0 |
+| delayed_salary | misspecified | conformal | 0.935 (n=4446) | 0.971 / 0.976 / 0.846 | 2.52 / 3 | 0.142 | 0.000 | 0 |
+| delayed_salary | coupled | conformal | 0.927 (n=4730) | 0.973 / 0.919 / 0.841 | 2.42 / 3 | 0.193 | 0.000 | 0 |
+| stacking_spike | coupled | conformal | 0.924 (n=4756) | 0.973 / 0.930 / 0.826 | 2.42 / 3 | 0.198 | 0.000 | 0 |
+| festival_season | nominal | conformal | 0.936 (n=3464) | 0.971 / 0.935 / 0.812 | 2.57 / 3 | 0.124 | 0.000 | 0 |
+| festival_season | misspecified | conformal | 0.940 (n=3298) | 0.969 / 0.950 / 0.830 | 2.65 / 3 | 0.079 | 0.000 | 0 |
+| festival_season | coupled | conformal | 0.945 (n=3800) | 0.975 / 0.970 / 0.802 | 2.43 / 3 | 0.201 | 0.000 | 0 |
+| retry_storm | nominal | conformal | 0.918 (n=4366) | 0.974 / 0.962 / 0.851 | 2.55 / 3 | 0.131 | 0.000 | 0 |
+| retry_storm | misspecified | conformal | 0.946 (n=4122) | 0.972 / 0.983 / 0.907 | 2.64 / 3 | 0.080 | 0.000 | 0 |
+| retry_storm | coupled | conformal | 0.909 (n=4624) | 0.976 / 0.944 / 0.828 | 2.46 / 3 | 0.179 | 0.000 | 0 |
+| baseline | nominal | conformal | 0.909 (n=4466) | 0.946 / 0.906 / 0.855 | 2.51 / 3 | 0.114 | 0.000 | 0 |
+| baseline | misspecified | conformal | 0.917 (n=4304) | 0.943 / 0.934 / 0.867 | 2.57 / 3 | 0.081 | 0.000 | 0 |
+| baseline | coupled | conformal | 0.909 (n=4778) | 0.953 / 0.921 / 0.828 | 2.42 / 3 | 0.172 | 0.000 | 0 |
+| issuer_outage | nominal | conformal | 0.913 (n=4638) | 0.951 / 0.911 / 0.853 | 2.46 / 3 | 0.147 | 0.000 | 0 |
+| issuer_outage | misspecified | conformal | 0.925 (n=4548) | 0.950 / 0.928 / 0.880 | 2.49 / 3 | 0.130 | 0.000 | 0 |
+| issuer_outage | coupled | conformal | 0.911 (n=4810) | 0.954 / 0.917 / 0.833 | 2.41 / 3 | 0.178 | 0.000 | 0 |
+| delayed_salary | nominal | conformal | 0.912 (n=4656) | 0.951 / 0.897 / 0.858 | 2.45 / 3 | 0.150 | 0.000 | 0 |
+| delayed_salary | misspecified | conformal | 0.930 (n=4540) | 0.950 / 0.928 / 0.895 | 2.49 / 3 | 0.129 | 0.000 | 0 |
+| delayed_salary | coupled | conformal | 0.916 (n=4790) | 0.954 / 0.936 / 0.836 | 2.41 / 3 | 0.174 | 0.000 | 0 |
+| stacking_spike | coupled | conformal | 0.901 (n=4820) | 0.953 / 0.892 / 0.821 | 2.40 / 3 | 0.179 | 0.000 | 0 |
+| festival_season | nominal | conformal | 0.918 (n=3574) | 0.949 / 0.880 / 0.859 | 2.52 / 3 | 0.117 | 0.000 | 0 |
+| festival_season | misspecified | conformal | 0.930 (n=3382) | 0.945 / 0.909 / 0.905 | 2.60 / 3 | 0.067 | 0.000 | 0 |
+| festival_season | coupled | conformal | 0.922 (n=3836) | 0.954 / 0.856 / 0.872 | 2.41 / 3 | 0.177 | 0.000 | 0 |
+| retry_storm | nominal | conformal | 0.900 (n=4492) | 0.947 / 0.881 / 0.870 | 2.55 / 3 | 0.119 | 0.000 | 0 |
+| retry_storm | misspecified | conformal | 0.914 (n=4326) | 0.944 / 0.887 / 0.898 | 2.61 / 3 | 0.086 | 0.000 | 0 |
+| retry_storm | coupled | conformal | 0.902 (n=4756) | 0.954 / 0.884 / 0.862 | 2.47 / 3 | 0.168 | 0.000 | 0 |
+| baseline | nominal | conformal | 0.903 (n=4534) | 0.948 / 0.889 / 0.843 | 2.54 / 3 | 0.119 | 0.000 | 0 |
+| baseline | misspecified | conformal | 0.917 (n=4368) | 0.945 / 0.922 / 0.869 | 2.60 / 3 | 0.085 | 0.000 | 0 |
+| baseline | coupled | conformal | 0.894 (n=4790) | 0.952 / 0.889 / 0.802 | 2.46 / 3 | 0.166 | 0.000 | 0 |
+| issuer_outage | nominal | conformal | 0.898 (n=4686) | 0.932 / 0.900 / 0.837 | 2.46 / 3 | 0.147 | 0.000 | 0 |
+| issuer_outage | misspecified | conformal | 0.901 (n=4596) | 0.930 / 0.905 / 0.849 | 2.49 / 3 | 0.131 | 0.000 | 0 |
+| issuer_outage | coupled | conformal | 0.902 (n=4792) | 0.935 / 0.892 / 0.850 | 2.43 / 3 | 0.166 | 0.000 | 0 |
+| delayed_salary | nominal | conformal | 0.905 (n=4738) | 0.952 / 0.904 / 0.826 | 2.48 / 3 | 0.157 | 0.000 | 0 |
+| delayed_salary | misspecified | conformal | 0.918 (n=4640) | 0.951 / 0.938 / 0.843 | 2.51 / 3 | 0.139 | 0.000 | 0 |
+| delayed_salary | coupled | conformal | 0.902 (n=4840) | 0.954 / 0.899 / 0.814 | 2.45 / 3 | 0.174 | 0.000 | 0 |
+| stacking_spike | coupled | conformal | 0.893 (n=4860) | 0.953 / 0.883 / 0.800 | 2.44 / 3 | 0.178 | 0.000 | 0 |
+| festival_season | nominal | conformal | 0.917 (n=3660) | 0.943 / 0.896 / 0.848 | 2.52 / 3 | 0.116 | 0.000 | 0 |
+| festival_season | misspecified | conformal | 0.921 (n=3512) | 0.940 / 0.929 / 0.848 | 2.59 / 3 | 0.079 | 0.000 | 0 |
+| festival_season | coupled | conformal | 0.922 (n=3954) | 0.949 / 0.904 / 0.832 | 2.41 / 3 | 0.182 | 0.000 | 0 |
+| retry_storm | nominal | conformal | 0.872 (n=4576) | 0.935 / 0.817 / 0.840 | 2.55 / 3 | 0.127 | 0.000 | 0 |
+| retry_storm | misspecified | conformal | 0.888 (n=4368) | 0.930 / 0.795 / 0.887 | 2.62 / 3 | 0.085 | 0.000 | 0 |
+| retry_storm | coupled | conformal | 0.869 (n=4764) | 0.940 / 0.807 / 0.829 | 2.49 / 3 | 0.161 | 0.000 | 0 |
+| baseline | nominal | conformal | 0.910 (n=4422) | 0.954 / 0.908 / 0.857 | 2.54 / 3 | 0.101 | 0.000 | 0 |
+| baseline | misspecified | conformal | 0.922 (n=4306) | 0.953 / 0.932 / 0.878 | 2.58 / 3 | 0.077 | 0.000 | 0 |
+| baseline | coupled | conformal | 0.914 (n=4728) | 0.960 / 0.915 / 0.847 | 2.44 / 3 | 0.159 | 0.000 | 0 |
+| issuer_outage | nominal | conformal | 0.879 (n=4664) | 0.906 / 0.881 / 0.841 | 2.42 / 3 | 0.148 | 0.000 | 0 |
+| issuer_outage | misspecified | conformal | 0.889 (n=4548) | 0.903 / 0.894 / 0.866 | 2.46 / 3 | 0.126 | 0.000 | 0 |
+| issuer_outage | coupled | conformal | 0.885 (n=4692) | 0.908 / 0.885 / 0.852 | 2.41 / 3 | 0.153 | 0.000 | 0 |
+| delayed_salary | nominal | conformal | 0.907 (n=4702) | 0.959 / 0.908 / 0.835 | 2.45 / 3 | 0.154 | 0.000 | 0 |
+| delayed_salary | misspecified | conformal | 0.910 (n=4602) | 0.958 / 0.917 / 0.841 | 2.48 / 3 | 0.136 | 0.000 | 0 |
+| delayed_salary | coupled | conformal | 0.914 (n=4740) | 0.960 / 0.917 / 0.844 | 2.44 / 3 | 0.161 | 0.000 | 0 |
+| stacking_spike | coupled | conformal | 0.909 (n=4788) | 0.961 / 0.895 / 0.842 | 2.42 / 3 | 0.170 | 0.000 | 0 |
+| festival_season | nominal | conformal | 0.906 (n=3660) | 0.961 / 0.756 / 0.855 | 2.58 / 3 | 0.116 | 0.000 | 0 |
+| festival_season | misspecified | conformal | 0.912 (n=3528) | 0.959 / 0.807 / 0.855 | 2.63 / 3 | 0.083 | 0.000 | 0 |
+| festival_season | coupled | conformal | 0.906 (n=4068) | 0.967 / 0.735 / 0.834 | 2.42 / 3 | 0.205 | 0.000 | 0 |
+| retry_storm | nominal | conformal | 0.908 (n=4440) | 0.957 / 0.903 / 0.876 | 2.55 / 3 | 0.105 | 0.000 | 0 |
+| retry_storm | misspecified | conformal | 0.936 (n=4248) | 0.955 / 0.914 / 0.931 | 2.62 / 3 | 0.064 | 0.000 | 0 |
+| retry_storm | coupled | conformal | 0.900 (n=4672) | 0.961 / 0.880 / 0.861 | 2.47 / 3 | 0.149 | 0.000 | 0 |
+| baseline | nominal | conformal | 0.922 (n=4550) | 0.962 / 0.905 / 0.866 | 2.53 / 3 | 0.109 | 0.000 | 0 |
+| baseline | misspecified | conformal | 0.929 (n=4394) | 0.960 / 0.923 / 0.884 | 2.59 / 3 | 0.077 | 0.000 | 0 |
+| baseline | coupled | conformal | 0.920 (n=4926) | 0.967 / 0.894 / 0.849 | 2.42 / 3 | 0.177 | 0.000 | 0 |
+| issuer_outage | nominal | conformal | 0.927 (n=4718) | 0.956 / 0.921 / 0.878 | 2.45 / 3 | 0.140 | 0.000 | 0 |
+| issuer_outage | misspecified | conformal | 0.935 (n=4666) | 0.956 / 0.939 / 0.894 | 2.47 / 3 | 0.131 | 0.000 | 0 |
+| issuer_outage | coupled | conformal | 0.919 (n=4938) | 0.959 / 0.884 / 0.865 | 2.39 / 3 | 0.179 | 0.000 | 0 |
+| delayed_salary | nominal | conformal | 0.936 (n=4724) | 0.965 / 0.913 / 0.895 | 2.48 / 3 | 0.141 | 0.000 | 0 |
+| delayed_salary | misspecified | conformal | 0.935 (n=4710) | 0.965 / 0.911 / 0.894 | 2.48 / 3 | 0.139 | 0.000 | 0 |
+| delayed_salary | coupled | conformal | 0.919 (n=4956) | 0.967 / 0.890 / 0.848 | 2.41 / 3 | 0.182 | 0.000 | 0 |
+| stacking_spike | coupled | conformal | 0.929 (n=4992) | 0.968 / 0.909 / 0.864 | 2.40 / 3 | 0.188 | 0.000 | 0 |
+| festival_season | nominal | conformal | 0.940 (n=3628) | 0.970 / 0.949 / 0.848 | 2.58 / 3 | 0.103 | 0.000 | 0 |
+| festival_season | misspecified | conformal | 0.952 (n=3510) | 0.969 / 0.936 / 0.914 | 2.64 / 3 | 0.072 | 0.000 | 0 |
+| festival_season | coupled | conformal | 0.945 (n=4046) | 0.975 / 0.933 / 0.852 | 2.42 / 3 | 0.195 | 0.000 | 0 |
+| retry_storm | nominal | conformal | 0.920 (n=4542) | 0.975 / 0.905 / 0.878 | 2.57 / 3 | 0.107 | 0.000 | 0 |
+| retry_storm | misspecified | conformal | 0.952 (n=4346) | 0.974 / 0.954 / 0.931 | 2.64 / 3 | 0.067 | 0.000 | 0 |
+| retry_storm | coupled | conformal | 0.921 (n=4856) | 0.978 / 0.903 / 0.870 | 2.47 / 3 | 0.165 | 0.000 | 0 |
+| baseline | nominal | conformal | 0.899 (n=4480) | 0.967 / 0.837 / 0.842 | 2.53 / 3 | 0.130 | 0.000 | 0 |
+| baseline | misspecified | conformal | 0.921 (n=4284) | 0.966 / 0.850 / 0.897 | 2.60 / 3 | 0.091 | 0.000 | 0 |
+| baseline | coupled | conformal | 0.903 (n=4788) | 0.971 / 0.816 / 0.845 | 2.43 / 3 | 0.186 | 0.000 | 0 |
+| issuer_outage | nominal | conformal | 0.913 (n=4694) | 0.962 / 0.859 / 0.866 | 2.43 / 3 | 0.170 | 0.000 | 0 |
+| issuer_outage | misspecified | conformal | 0.923 (n=4518) | 0.960 / 0.862 / 0.901 | 2.49 / 3 | 0.138 | 0.000 | 0 |
+| issuer_outage | coupled | conformal | 0.917 (n=4722) | 0.962 / 0.883 / 0.863 | 2.42 / 3 | 0.175 | 0.000 | 0 |
+| delayed_salary | nominal | conformal | 0.906 (n=4730) | 0.971 / 0.835 / 0.847 | 2.45 / 3 | 0.176 | 0.000 | 0 |
+| delayed_salary | misspecified | conformal | 0.928 (n=4536) | 0.970 / 0.878 / 0.891 | 2.51 / 3 | 0.141 | 0.000 | 0 |
+| delayed_salary | coupled | conformal | 0.904 (n=4832) | 0.972 / 0.835 / 0.838 | 2.42 / 3 | 0.194 | 0.000 | 0 |
+| stacking_spike | coupled | conformal | 0.904 (n=4834) | 0.972 / 0.846 / 0.833 | 2.42 / 3 | 0.194 | 0.000 | 0 |
+| festival_season | nominal | conformal | 0.928 (n=3432) | 0.975 / 0.943 / 0.837 | 2.57 / 3 | 0.115 | 0.000 | 0 |
+| festival_season | misspecified | conformal | 0.948 (n=3288) | 0.974 / 0.969 / 0.889 | 2.64 / 3 | 0.077 | 0.000 | 0 |
+| festival_season | coupled | conformal | 0.921 (n=3792) | 0.978 / 0.943 / 0.797 | 2.42 / 3 | 0.199 | 0.000 | 0 |
+| retry_storm | nominal | conformal | 0.911 (n=4430) | 0.972 / 0.905 / 0.865 | 2.58 / 3 | 0.121 | 0.000 | 0 |
+| retry_storm | misspecified | conformal | 0.927 (n=4256) | 0.971 / 0.899 / 0.902 | 2.65 / 3 | 0.085 | 0.000 | 0 |
+| retry_storm | coupled | conformal | 0.917 (n=4654) | 0.976 / 0.939 / 0.861 | 2.51 / 3 | 0.163 | 0.000 | 0 |
+| baseline | nominal | conformal | 0.928 (n=4652) | 0.990 / 0.910 / 0.835 | 2.52 / 3 | 0.115 | 0.000 | 0 |
+| baseline | misspecified | conformal | 0.942 (n=4496) | 0.990 / 0.927 / 0.871 | 2.57 / 3 | 0.085 | 0.000 | 0 |
+| baseline | coupled | conformal | 0.934 (n=4980) | 0.991 / 0.931 / 0.825 | 2.42 / 3 | 0.173 | 0.000 | 0 |
+| issuer_outage | nominal | conformal | 0.913 (n=4826) | 0.955 / 0.900 / 0.844 | 2.45 / 3 | 0.147 | 0.000 | 0 |
+| issuer_outage | misspecified | conformal | 0.920 (n=4732) | 0.954 / 0.920 / 0.856 | 2.47 / 3 | 0.130 | 0.000 | 0 |
+| issuer_outage | coupled | conformal | 0.907 (n=5028) | 0.957 / 0.895 / 0.819 | 2.39 / 3 | 0.181 | 0.000 | 0 |
+| delayed_salary | nominal | conformal | 0.933 (n=4862) | 0.991 / 0.910 / 0.843 | 2.45 / 3 | 0.153 | 0.000 | 0 |
+| delayed_salary | misspecified | conformal | 0.950 (n=4748) | 0.991 / 0.924 / 0.892 | 2.49 / 3 | 0.133 | 0.000 | 0 |
+| delayed_salary | coupled | conformal | 0.928 (n=5078) | 0.992 / 0.902 / 0.824 | 2.39 / 3 | 0.189 | 0.000 | 0 |
+| stacking_spike | coupled | conformal | 0.931 (n=5050) | 0.992 / 0.926 / 0.817 | 2.40 / 3 | 0.185 | 0.000 | 0 |
+| festival_season | nominal | conformal | 0.956 (n=3606) | 0.999 / 0.905 / 0.848 | 2.58 / 3 | 0.114 | 0.000 | 0 |
+| festival_season | misspecified | conformal | 0.962 (n=3538) | 0.999 / 0.910 / 0.870 | 2.61 / 3 | 0.097 | 0.000 | 0 |
+| festival_season | coupled | conformal | 0.956 (n=4076) | 0.999 / 0.891 / 0.831 | 2.40 / 3 | 0.216 | 0.000 | 0 |
+| retry_storm | nominal | conformal | 0.933 (n=4630) | 1.000 / 0.977 / 0.859 | 2.55 / 3 | 0.111 | 0.000 | 0 |
+| retry_storm | misspecified | conformal | 0.953 (n=4486) | 1.000 / 0.974 / 0.904 | 2.60 / 3 | 0.082 | 0.000 | 0 |
+| retry_storm | coupled | conformal | 0.927 (n=4950) | 1.000 / 0.966 / 0.842 | 2.45 / 3 | 0.168 | 0.000 | 0 |
 
 ## Pre-registered regimes
 

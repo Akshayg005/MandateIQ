@@ -217,6 +217,83 @@ def update(b: Belief, obs: DeclineClass, *, source_version: str) -> Belief:
     return Belief(probs=probs, provenance=provenance)
 
 
+def observe_terminal(cause_probs: Mapping[Cause, float], *, source_version: str) -> Belief:
+    """A Belief from a MEASURED posterior over the three causes, given an
+    OBSERVED terminal outcome (DEAD or OPTED_OUT) -- conditioning on a
+    ledger fact, not inferring from an ambiguous decline signal the way
+    update() does. No PRIOR belief is accepted as a parameter (unlike
+    update()) -- the terminal observation supersedes whatever came before,
+    the same way init() needs no prior either.
+
+    R2, 2026-09-04 (reports/gates.md, "Post-B16 remediation gates", R2a):
+    before this function existed, the only belief-update path was update()
+    with a DeclineClass likelihood, and after a couple of INSUFFICIENT_FUNDS
+    updates the belief could sit at ~99% CANT_PAY_NOW -- one further,
+    ordinary CARD_EXPIRED-shaped update (prior 0.75 toward CANT_PAY_EVER)
+    could not move `b.dominant()` to CANT_PAY_EVER even once the instrument
+    was actually confirmed dead, so allocator.py's REAUTH inference path
+    (`_best_action`'s `elif b.dominant() == Cause.CANT_PAY_EVER`) was never
+    entered and ATTEMPT kept winning by default.
+
+    CORRECTED same day (stats-reviewer / payments-domain review, before this
+    gate was ticked): the first version of this function took a single
+    `cause` and returned a DEGENERATE (1.0/0/0) posterior, on the reasoning
+    that "an observed DEAD outcome means CANT_PAY_EVER ... that is what the
+    cause label MEANS, not a hypothesis about it." Checked against this
+    project's own frozen generative process (`eval/frozen/sim_config.yaml`,
+    the `nominal` arm) and found FALSE: direct 200-seed simulation measures
+    P(CANT_PAY_EVER | DEAD) = 0.899 and P(WONT_PAY | OPTED_OUT) = 0.904 --
+    roughly 10% of each terminal outcome has a DIFFERENT true cause, drawn
+    by chance from a cause whose own dead/opt-out base rate is low, not
+    zero (`CANT_PAY_NOW`/`WONT_PAY` both carry `base_dead: 0.02` against
+    `CANT_PAY_EVER`'s `0.55`; `CANT_PAY_NOW`/`CANT_PAY_EVER` both carry a
+    non-zero `base_optout`). A degenerate 1.0 was ALSO irreversible in a way
+    nothing else in this module is: `cause_map._PRIORS` contains no zeros,
+    so `update()` on an exact `(0, 1, 0)` belief returns that identical
+    belief regardless of any later evidence (`0 * anything = 0`) -- an
+    absorbing state no other belief in this system can reach, dormant today
+    only because no mandate's belief survives past its own terminal outcome
+    in this eval harness, but a real hazard for any future multi-cycle
+    persistence (R4).
+
+    `cause_probs` is therefore the CALLER's measured distribution, not an
+    assumption this module makes -- see `eval/run.py`'s
+    `_TERMINAL_OBSERVED_CAUSE_PROBS`, derived directly from the frozen
+    simulator's own generative process and cited there. The Outcome-to-
+    distribution mapping is the CALLER's decision, not this module's:
+    belief.py stays free of any Outcome-shaped knowledge, the same
+    separation that already keeps the Outcome->DeclineClass proxy in
+    eval/allocator_sweep.py's `_proxy_decline_class()` rather than here.
+    Validated exactly like `init()`'s prior (every Cause named once,
+    non-negative, sums to 1.0) -- raises `BeliefError` on the same terms.
+
+    This is NOT the "pure static Bayes, no damping" behaviour update()
+    documents -- it never touches likelihood()/REFERENCE_PRIOR. It is
+    still an inference under (now honestly quantified) uncertainty, not
+    the certain, definitional collapse the first version claimed.
+
+    source_version is REQUIRED and keyword-only, the same discipline as
+    update(): which observation channel produced this measurement, so a
+    belief built this way stays traceable to what produced it (B11's "a
+    belief that cannot be traced to a specific normaliser version is not
+    auditable" -- generalised here to "traced to a specific OBSERVATION
+    source", the same requirement applied to a different evidence kind)."""
+    if set(cause_probs.keys()) != set(Cause):
+        raise BeliefError(
+            f"cause_probs must name every Cause exactly once; got keys "
+            f"{set(cause_probs.keys())!r}, expected {set(Cause)!r}"
+        )
+    probs = tuple(float(cause_probs[c]) for c in CAUSE_ORDER)
+    if any(p < 0.0 for p in probs):
+        raise BeliefError(f"cause_probs contains a negative probability: {probs}")
+    total = sum(probs)
+    if abs(total - 1.0) > _SUM_TOL:
+        raise BeliefError(f"cause_probs must sum to 1.0, got {total} from {probs}")
+    _validate_source_version(source_version)
+    provenance = f"{_provenance()};source={source_version};observed=terminal"
+    return Belief(probs=probs, provenance=provenance)
+
+
 def quantised(b: Belief, step: float) -> tuple[int, int, int]:
     """b's three probabilities, each rounded to the nearest multiple of
     `step` and expressed as an integer count of steps -- a stable, hashable

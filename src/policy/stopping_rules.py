@@ -35,7 +35,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 from enum import Enum
 
-from src.core.types import Action, MandateState, Profile
+from src.core.types import Action, MandateState, Outcome, Profile
 
 
 class Verdict(str, Enum):
@@ -57,11 +57,23 @@ class AllocationContext:
     (including slot 1, the given original). committed_days: on_day values
     already committed this cycle, strictly increasing. contacts_sent: how
     many customer-facing contacts (ATTEMPT, OFFER, or REAUTH) have already
-    gone out this cycle. mandate_state and opted_out: hard, ledger-observed
-    facts -- never inferred from belief. max_contacts_per_cycle,
+    gone out this cycle. mandate_state, opted_out, and instrument_dead: hard,
+    ledger-observed facts -- never inferred from belief. max_contacts_per_cycle,
     quiet_hours_start, and quiet_hours_end: denormalised from PolicyCosts at
     construction time, so stopping_rules.py needs no import of
-    src/policy/costs.py."""
+    src/policy/costs.py.
+
+    instrument_dead -- added R2, 2026-09-04 (reports/gates.md, "Post-B16
+    remediation gates"): True once a terminal DEAD outcome has actually been
+    observed for this mandate. Defaults False so every pre-existing
+    construction site (none of which mentions this field) is unaffected.
+    Distinct from `opted_out`, which already existed and already denies
+    everything but STOP -- this field exists because a dead instrument has
+    NO equivalent representation before R2: `permitted()` had no rule at all
+    for "the issuer just confirmed this instrument does not work", so
+    ATTEMPT stayed legal after a DEAD outcome purely by omission. See
+    with_terminal() below for how a caller sets this (or opted_out, for the
+    other terminal outcome) from an observed Outcome."""
 
     mandate_id: str
     cycle_id: int
@@ -78,13 +90,16 @@ class AllocationContext:
     max_contacts_per_cycle: int
     quiet_hours_start: int
     quiet_hours_end: int
+    instrument_dead: bool = False
 
     def signature(self) -> tuple:
         """Hashable projection used as the memo key's ctx component
         (PLAN_DETAIL.md:1022, `(quantised(b, 1e-6), r, ctx.signature())`).
         Every field that can vary the feasible action set or a Q-value must
         appear here, or two distinct contexts would collide in the memo and
-        silently share a cached value that does not apply to both."""
+        silently share a cached value that does not apply to both. --
+        instrument_dead included (R2): it changes permitted(ATTEMPT)'s
+        verdict, exactly the kind of field this docstring warns about."""
         return (
             self.mandate_id,
             self.cycle_id,
@@ -101,6 +116,7 @@ class AllocationContext:
             self.max_contacts_per_cycle,
             self.quiet_hours_start,
             self.quiet_hours_end,
+            self.instrument_dead,
         )
 
     def with_attempt(self, on_day: int) -> "AllocationContext":
@@ -120,6 +136,29 @@ class AllocationContext:
         """A new context reflecting one more customer-facing contact that
         is not an ATTEMPT (OFFER or REAUTH) -- contacts_sent +1 only."""
         return replace(self, contacts_sent=self.contacts_sent + 1)
+
+    def with_terminal(self, outcome: Outcome) -> "AllocationContext":
+        """A new context reflecting an OBSERVED terminal outcome -- R2,
+        2026-09-04. `Outcome.DEAD` sets instrument_dead (the issuer
+        confirmed the instrument does not work: CANT_PAY_EVER by
+        definition); `Outcome.OPTED_OUT` sets the existing opted_out (the
+        customer said so: WONT_PAY by definition, and 6(c) makes it
+        terminal). Both are hard, ledger-observed facts, not an inference
+        from belief -- the same category as every other field this class
+        already treats that way. Raises ValueError for any other Outcome:
+        RECOVERED needs no context transition (the cycle succeeded, nothing
+        left to re-solve for) and STILL_PENDING is not terminal at all --
+        calling this with either is an upstream bug, not a case to handle
+        silently."""
+        if outcome == Outcome.DEAD:
+            return replace(self, instrument_dead=True)
+        if outcome == Outcome.OPTED_OUT:
+            return replace(self, opted_out=True)
+        raise ValueError(
+            f"with_terminal() called with non-terminal-for-this-purpose "
+            f"outcome {outcome!r} -- only DEAD and OPTED_OUT need a context "
+            f"transition"
+        )
 
 
 _CONTACTING_ACTIONS = (Action.ATTEMPT, Action.OFFER, Action.REAUTH)
@@ -160,6 +199,17 @@ def permitted(
     # Revoked-never-retried: a revoked mandate has no instrument to charge.
     # ATTEMPT is never legal; REAUTH/OFFER/STOP remain available.
     if ctx.mandate_state == MandateState.REVOKED and action == Action.ATTEMPT:
+        return Verdict.DENY
+
+    # R2, 2026-09-04: a CONFIRMED-dead instrument (an observed DEAD outcome,
+    # not a belief about one) has nothing left to charge. Same shape as the
+    # REVOKED rule above -- ATTEMPT denied, REAUTH/OFFER/STOP remain
+    # available -- but a distinct ledger fact: REVOKED is a mandate-lifecycle
+    # state: never had a live instrument; instrument_dead is "had one, the
+    # issuer just confirmed it stopped working." Before this rule existed,
+    # ATTEMPT stayed legal after an observed DEAD outcome purely because
+    # nothing denied it (reports/gates.md, R2a).
+    if ctx.instrument_dead and action == Action.ATTEMPT:
         return Verdict.DENY
 
     # NPCI attempt cap: 1 original + 3 retries = 4, ever.

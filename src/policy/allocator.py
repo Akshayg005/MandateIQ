@@ -257,7 +257,24 @@ def _validate_hazard_tuple(h: tuple[float, float, float, float]) -> None:
 def _binding_constraint(ctx: AllocationContext, r0: int) -> str | None:
     """Which hard rule, if any, already forecloses ATTEMPT at the root --
     recorded on the Plan for auditability regardless of what the eventual
-    chosen_action turns out to be."""
+    chosen_action turns out to be.
+
+    R2, 2026-09-04 (payments-domain review): `ctx.instrument_dead` was
+    missing from this function -- a real correctness bug, not a style gap.
+    A post-DEAD re-solve that returned REAUTH (ATTEMPT denied ONLY by
+    `permitted()`'s instrument_dead rule -- none of the other four checks
+    below apply) previously wrote `binding_constraint = None` to the Plan,
+    which src/execute/shadow.py renders as "(none -- decided on belief and
+    expected value)". That is not a missing field, it is the ledger stating
+    a hard-forced decision was a free economic choice -- across every
+    engine cell in the fresh 8-seed sweep, thousands of REAUTHs carried
+    this false audit record. Checked FIRST, same reasoning as AFA_CLIFF:
+    a hard-observed fact should never be shadowed by a later check in this
+    list, though today none of the other four can co-occur with it anyway
+    (REVOKED/opted_out/AFA_CLIFF are each mutually exclusive states this
+    context can be in at the moment instrument_dead is set)."""
+    if ctx.instrument_dead:
+        return "INSTRUMENT_DEAD"
     if requires_afa(ctx.amount_paise, ctx.category):
         return "AFA_CLIFF"
     if r0 <= 0:
