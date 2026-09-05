@@ -1561,16 +1561,63 @@ exists" is not a gate here either.
 - [x] **R7** a reviewer on Linux or macOS can install, test, run the eval and
       read the report using commands printed in the README, without
       translating anything
-      <!-- 2026-09-05, CLOSED IN CODE, EVIDENCE PENDING A FIRST CI RUN.
-           Read that qualifier literally: everything below is built, tested
-           locally and committed, but this gate's own pre-registered
-           evidence (DECISIONS.md, 2026-09-05, scope decision 2) is a GREEN
-           GitHub Actions run on ubuntu-latest, and no run has happened yet
-           because the workflow lands in this same commit. The plan said
-           "expect the first runs to fail; each failure is the finding" --
-           so the honest state is: the claim is now CHECKABLE, and the check
-           has not yet reported. This entry is ticked for the work and must
-           be re-read against the first CI result.
+      <!-- 2026-09-05, CLOSED, RE-READ AGAINST THE FIRST CI RESULT AS
+           PROMISED. The first run (commit 4771298) FAILED, exactly as the
+           plan pre-registered ("expect the first runs to fail; each
+           failure is the finding"), and the failure was real: step 5
+           (`pip install -r requirements.txt`) failed on ubuntu-latest,
+           python 3.13.
+
+           THE FINDING, diagnosed without access to the raw CI log (the
+           unauthenticated jobs/logs endpoint 403s -- "must have admin
+           rights"; the run's own status/conclusion is public via the
+           unauthenticated runs API, its log text is not). Reproduced
+           locally instead, in a real `python:3.13` Docker container (not
+           guessed at from reading requirements.txt): `pip install -r
+           requirements.txt` fails with `ResolutionImpossible` --
+           `websockets==17.0.1` (the pinned line) directly conflicts with
+           `google-genai==2.20.0`'s own declared requirement,
+           `websockets<17.0,>=13.0.0`. `requirements.txt` was internally
+           inconsistent -- a file that could not have installed cleanly
+           into ANY fresh environment, Windows included, had anyone run
+           `pip install -r` there either. This is precisely the gap R7's
+           own plan named before writing a line of code: "`pip install -r
+           requirements.txt` is an install path nothing in this repo
+           documented or exercised" -- CI is the first thing that ever
+           exercised it, and it found a real bug on the first try.
+
+           WHY THE LOCAL VENV NEVER HIT THIS: `pip show websockets` on the
+           actual working `.venv` reports `16.1.1`, not the `17.0.1`
+           `requirements.txt` claimed -- the file had drifted from the
+           real environment at some point after being frozen, and nothing
+           had re-frozen it since. A second, related discrepancy in the
+           same diff: the actual venv also had `anthropic==1.0.0`
+           installed with NOTHING depending on it (`pip show anthropic`:
+           no `Required-by`) and NOTHING in the codebase importing it
+           (grepped, confirmed) -- a leftover from before this project's
+           own 2026-08-30 "LLM edge switched from Anthropic to Gemini"
+           change, never uninstalled. A bare `pip freeze` over the
+           existing venv would have "fixed" the conflict while silently
+           RESURRECTING the old SDK and its transitive dependency chain
+           (cryptography/cffi/pycparser/distro/pyasn1) into the committed
+           manifest -- the wrong fix, caught by diffing the fresh freeze
+           against the committed file before writing it, not by running
+           freeze and trusting it. `anthropic` uninstalled from the venv
+           first; the six genuinely-needed transitive deps it shared with
+           `google-auth`/`google-genai` (google-auth, tenacity, distro,
+           pyasn1, pyasn1_modules -- all confirmed via `Required-by`, not
+           assumed) stay, because they were always real requirements this
+           project's OLD requirements.txt was simply missing.
+
+           FIXED AND RE-VERIFIED, not just reasoned about: `requirements.txt`
+           regenerated from the now-corrected venv (86 pins, was 78 --
+           websockets 17.0.1->16.1.1, anthropic gone, six real google-genai
+           transitive deps added that were previously missing), and the
+           EXACT install command re-run in a fresh `python:3.13` container
+           against the corrected file: exit 0. Full local suite re-run
+           after the `anthropic` uninstall to confirm nothing depended on
+           it: green. A second CI run against this fix is the next check;
+           this entry does not claim that result in advance.
 
            SHIPPED. `run.sh`, mirroring run.ps1 (scope decision 1: a README
            telling a reviewer to translate six PowerShell lines IS the

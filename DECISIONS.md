@@ -6063,3 +6063,81 @@ WONT_PAY-side-untouched properties (`tests/eval/test_wontpay_channel.py`);
 `dependence_sweep()`'s structure, marginal-preservation-across-the-grid,
 and agreement with the main grid's own operating-point row
 (`tests/eval/test_offramp_channel.py`).
+
+
+---
+
+### 2026-09-05 · R7 · The first CI run failed, exactly as pre-registered, and the failure was real
+
+Commit `4771298` pushed R7's work, including a `.github/workflows/ci.yml`
+that had never run before. Its first run failed at step 5
+(`pip install -r requirements.txt`, ubuntu-latest, python 3.13) — R7's own
+plan pre-registered this exact outcome ("expect the first runs to fail;
+each failure is the finding"), so this is the check working, not a
+surprise.
+
+**Diagnosed by reproduction, not by reading the log** — the unauthenticated
+`GET /repos/.../actions/jobs/{id}/logs` endpoint 403s ("must have admin
+rights to Repository"); only the run's status/conclusion is available
+without a token. Reproduced instead in a real `python:3.13` Docker
+container (already running on this machine for Postgres): `pip install -r
+requirements.txt` fails with `ResolutionImpossible` —
+`websockets==17.0.1` (the pinned line) conflicts directly with
+`google-genai==2.20.0`'s own declared requirement,
+`websockets<17.0,>=13.0.0`. `requirements.txt` was internally
+inconsistent and could not have installed cleanly into *any* fresh
+environment — this was never a Linux-specific problem, only the first
+environment ever to actually run `pip install -r requirements.txt`
+against it.
+
+**Root cause, confirmed rather than assumed**: `pip show websockets` on
+the real, working local `.venv` reports `16.1.1` — the committed file had
+drifted from the actual environment at some point after being frozen
+(`setup.ps1`'s own documented flow: install, then `pip freeze` — the freeze
+evidently wasn't re-run after `websockets` was later touched, whether by a
+direct upgrade or a transitive resolution during some other install).
+
+**A second discrepancy in the same diff, and the wrong fix was avoided
+before it was made.** The real venv also had `anthropic==1.0.0` installed
+— confirmed via `pip show anthropic` to have **zero** `Required-by`
+entries (nothing depends on it) and confirmed via a full-repo grep to have
+**zero** import sites. A leftover from before this project's own
+2026-08-30 "LLM edge switched from Anthropic to Gemini" change, never
+uninstalled from this machine's venv. The naive fix here — running
+`pip freeze` over the existing (drifted) venv and committing the result —
+would have "fixed" the websockets conflict while silently **resurrecting
+anthropic and its entire transitive dependency chain**
+(`cryptography`/`cffi`/`pycparser`/`distro`/`pyasn1`/`pyasn1_modules`) into
+the committed manifest, re-shipping a provider this project deliberately
+moved away from. Caught by **diffing the fresh freeze against the
+committed file before writing anything**, not by running `pip freeze` and
+trusting its output — the same "verify before acting on a review finding"
+discipline this project has applied to every human/subagent review this
+session, applied here to a tool's own output instead.
+
+`anthropic` was uninstalled from the venv first. Five of its
+co-discovered-but-legitimate neighbours stay: `google-auth`, `tenacity`,
+`distro`, `pyasn1`, `pyasn1_modules` are real transitive dependencies of
+`google-genai==2.20.0` (confirmed via `pip show ... | grep Required-by`
+for each, not assumed from the name), simply missing from the old,
+stale `requirements.txt` — not new scope creep, but real, previously
+undeclared requirements this fix also surfaces correctly for the first
+time.
+
+**Fixed and re-verified.** `requirements.txt` regenerated from the
+corrected venv: 86 pins (was 78) — `websockets` 17.0.1→16.1.1, `anthropic`
+gone, the six real `google-genai` transitive dependencies it was missing
+added. The exact CI install command re-run against the corrected file in
+a fresh `python:3.13` container: exit 0. Full local test suite re-run
+after the `anthropic` uninstall, to confirm nothing in the codebase
+depended on it despite the clean grep: green, no change. This entry
+records what was found and fixed; a second CI run against the fix is the
+next check, and this entry does not claim that result in advance.
+
+**What this says about the gate, not just the bug.** `reports/gates.md`'s
+R7 entry was ticked "CLOSED IN CODE, EVIDENCE PENDING A FIRST CI RUN" with
+an explicit note to re-read it against the first result — this is that
+re-read. The gate's own design (measure, don't assert) is what surfaced a
+real, previously-invisible bug on the very first real exercise of a path
+("reviewer runs `pip install -r requirements.txt`") this project had
+never actually walked before. That is the entire argument for R7 existing.
