@@ -739,9 +739,53 @@ _CPN, _CPE, _WP = Cause.CANT_PAY_NOW, Cause.CANT_PAY_EVER, Cause.WONT_PAY
 
 def _measured_dead_probs() -> dict[Cause, float]:
     """A representative non-degenerate measured distribution, shaped like
-    eval/run.py's real _TERMINAL_OBSERVED_CAUSE_PROBS[Outcome.DEAD] but
-    defined locally so this test file does not depend on eval/ internals."""
+    this module's own real TERMINAL_OBSERVED_CAUSE_PROBS[Outcome.DEAD] but
+    defined locally so tests of the general observe_terminal() contract
+    stay independent of that specific measured table."""
     return {_CPE: 0.90, _WP: 0.06, _CPN: 0.04}
+
+
+# === TERMINAL_OBSERVED_CAUSE_PROBS / TERMINAL_OBSERVATION_SOURCE_VERSION ===
+#
+# R4, 2026-09-04 (reports/gates.md, "Post-B16 remediation gates"): relocated
+# here from eval/run.py -- src/execute/cycle.py (R4) is the first PRODUCTION
+# caller of observe_terminal(), and src/ must never import eval/, so a value
+# only eval/run.py defined would be unreachable from there. eval/run.py now
+# imports these under their original names as aliases; these tests pin the
+# values and shape at their real home, not just at the alias.
+
+def test_terminal_observed_cause_probs_has_exactly_dead_and_optout():
+    from src.core.types import Outcome
+    from src.policy.belief import TERMINAL_OBSERVED_CAUSE_PROBS
+
+    assert set(TERMINAL_OBSERVED_CAUSE_PROBS.keys()) == {Outcome.DEAD, Outcome.OPTED_OUT}, \
+        "RECOVERED must never appear here -- no cause left to decide once recovered"
+
+
+@pytest.mark.parametrize("outcome_name, expected", [
+    ("DEAD", {Cause.CANT_PAY_EVER: 0.8991, Cause.WONT_PAY: 0.0512, Cause.CANT_PAY_NOW: 0.0497}),
+    ("OPTED_OUT", {Cause.WONT_PAY: 0.9040, Cause.CANT_PAY_NOW: 0.0684, Cause.CANT_PAY_EVER: 0.0276}),
+])
+def test_terminal_observed_cause_probs_matches_the_measured_table(outcome_name, expected):
+    from src.core.types import Outcome
+    from src.policy.belief import TERMINAL_OBSERVED_CAUSE_PROBS
+
+    outcome = Outcome[outcome_name]
+    probs = TERMINAL_OBSERVED_CAUSE_PROBS[outcome]
+    assert set(probs.keys()) == set(Cause)
+    for cause, value in expected.items():
+        assert probs[cause] == pytest.approx(value, abs=1e-6)
+    assert sum(probs.values()) == pytest.approx(1.0, abs=1e-9)
+
+
+def test_eval_run_aliases_the_same_objects_belief_defines():
+    """Not merely equal-valued copies -- eval/run.py must reference belief.py's
+    own objects, so a future edit to one cannot silently drift from the other."""
+    import eval.run as run_mod
+    from src.policy import belief as belief_mod
+
+    assert run_mod._TERMINAL_OBSERVED_CAUSE_PROBS is belief_mod.TERMINAL_OBSERVED_CAUSE_PROBS
+    assert run_mod.TERMINAL_OBSERVATION_SOURCE_VERSION == belief_mod.TERMINAL_OBSERVATION_SOURCE_VERSION
 
 
 def test_observe_terminal_produces_the_measured_distribution_exactly():
@@ -892,3 +936,135 @@ def test_observe_terminal_is_hashable():
 
     h = hash(observed)
     assert isinstance(h, int), f"hash(observed) returned {type(h).__name__}, not int"
+
+
+# === R5: update_from_likelihood_ratio ========================================
+#
+# The generic, evidence-agnostic Bayes update R5's intent channel needs.
+# `scripts/guard_invariants.py`'s SRC_LLM_IMPORT forbids src/policy/ from
+# importing src.llm in any form, so an intent score cannot arrive as an LLM
+# call here -- it arrives as a plain declared likelihood ratio, computed by
+# an adapter in src/execute/ (the layer already permitted to touch both
+# sides). This function knows nothing about LLMs, nothing about Outcome,
+# and nothing about DeclineClass: the CALLER declares the ratio.
+
+
+def _lr(**kw) -> dict:
+    return {Cause[k]: v for k, v in kw.items()}
+
+
+def test_update_from_likelihood_ratio_applies_bayes():
+    from src.policy.belief import CAUSE_ORDER, REFERENCE_PRIOR, init, update_from_likelihood_ratio
+
+    b = init(dict(zip(CAUSE_ORDER, REFERENCE_PRIOR)))
+    out = update_from_likelihood_ratio(
+        b, _lr(CANT_PAY_NOW=1.0, CANT_PAY_EVER=1.0, WONT_PAY=4.0),
+        source_version="test-v1",
+    )
+    # Uniform prior x (1, 1, 4) -> (1/6, 1/6, 4/6).
+    assert out[Cause.WONT_PAY] == pytest.approx(4.0 / 6.0)
+    assert out[Cause.CANT_PAY_NOW] == pytest.approx(1.0 / 6.0)
+    assert sum(out.probs) == pytest.approx(1.0)
+
+
+def test_update_from_likelihood_ratio_is_scale_invariant():
+    """Only ratios matter -- any factor common to all three causes cancels
+    inside Bayes' rule, exactly as likelihood()'s deliberate lack of
+    normalisation already relies on."""
+    from src.policy.belief import CAUSE_ORDER, REFERENCE_PRIOR, init, update_from_likelihood_ratio
+
+    b = init(dict(zip(CAUSE_ORDER, REFERENCE_PRIOR)))
+    a = update_from_likelihood_ratio(
+        b, _lr(CANT_PAY_NOW=0.2, CANT_PAY_EVER=0.2, WONT_PAY=0.8), source_version="v")
+    c = update_from_likelihood_ratio(
+        b, _lr(CANT_PAY_NOW=20.0, CANT_PAY_EVER=20.0, WONT_PAY=80.0), source_version="v")
+    assert a.probs == pytest.approx(c.probs)
+
+
+def test_update_from_likelihood_ratio_matches_the_declineclass_path():
+    """The generic function must agree with update() when handed exactly
+    the likelihood vector update() would have used -- otherwise this is a
+    second, silently different inference path rather than the same one
+    with a wider input."""
+    from src.policy.belief import (
+        CAUSE_ORDER, REFERENCE_PRIOR, init, likelihood, update,
+        update_from_likelihood_ratio,
+    )
+
+    b = init(dict(zip(CAUSE_ORDER, REFERENCE_PRIOR)))
+    dc = DeclineClass.CUSTOMER_DECLINED
+    lik = likelihood(dc)
+    via_generic = update_from_likelihood_ratio(
+        b, dict(zip(CAUSE_ORDER, lik)), source_version="x")
+    via_dc = update(b, dc, source_version="x")
+    assert via_generic.probs == pytest.approx(via_dc.probs)
+
+
+def test_update_from_likelihood_ratio_requires_every_cause():
+    from src.policy.belief import (
+        CAUSE_ORDER, REFERENCE_PRIOR, BeliefError, init, update_from_likelihood_ratio,
+    )
+
+    b = init(dict(zip(CAUSE_ORDER, REFERENCE_PRIOR)))
+    with pytest.raises(BeliefError):
+        update_from_likelihood_ratio(
+            b, {Cause.WONT_PAY: 2.0}, source_version="v")
+
+
+def test_update_from_likelihood_ratio_rejects_negative_and_all_zero():
+    from src.policy.belief import (
+        CAUSE_ORDER, REFERENCE_PRIOR, BeliefError, init, update_from_likelihood_ratio,
+    )
+
+    b = init(dict(zip(CAUSE_ORDER, REFERENCE_PRIOR)))
+    with pytest.raises(BeliefError):
+        update_from_likelihood_ratio(
+            b, _lr(CANT_PAY_NOW=-1.0, CANT_PAY_EVER=1.0, WONT_PAY=1.0), source_version="v")
+    with pytest.raises(BeliefError):
+        update_from_likelihood_ratio(
+            b, _lr(CANT_PAY_NOW=0.0, CANT_PAY_EVER=0.0, WONT_PAY=0.0), source_version="v")
+
+
+def test_update_from_likelihood_ratio_requires_source_version():
+    """Same discipline as update()/observe_terminal(): a belief whose
+    evidence channel cannot be named is not auditable."""
+    from src.policy.belief import (
+        CAUSE_ORDER, REFERENCE_PRIOR, BeliefError, init, update_from_likelihood_ratio,
+    )
+
+    b = init(dict(zip(CAUSE_ORDER, REFERENCE_PRIOR)))
+    with pytest.raises(BeliefError):
+        update_from_likelihood_ratio(
+            b, _lr(CANT_PAY_NOW=1.0, CANT_PAY_EVER=1.0, WONT_PAY=2.0), source_version="")
+
+
+def test_update_from_likelihood_ratio_stamps_provenance():
+    from src.policy.belief import (
+        CAUSE_ORDER, REFERENCE_PRIOR, init, update_from_likelihood_ratio,
+    )
+
+    b = init(dict(zip(CAUSE_ORDER, REFERENCE_PRIOR)))
+    out = update_from_likelihood_ratio(
+        b, _lr(CANT_PAY_NOW=1.0, CANT_PAY_EVER=1.0, WONT_PAY=2.0),
+        source_version="eval-intent-channel-v1")
+    assert "source=eval-intent-channel-v1" in out.provenance
+    assert "cause_map=" in out.provenance
+    assert ";observed=terminal" not in out.provenance
+
+
+def test_update_from_likelihood_ratio_cannot_reach_a_degenerate_belief():
+    """A single observation must never drive a cause's posterior to exactly
+    zero -- that is the absorbing state observe_terminal()'s own docstring
+    records this project building and reversing on the same day. A finite,
+    positive ratio cannot do it, and this pins that."""
+    from src.policy.belief import (
+        CAUSE_ORDER, REFERENCE_PRIOR, init, update_from_likelihood_ratio,
+    )
+
+    b = init(dict(zip(CAUSE_ORDER, REFERENCE_PRIOR)))
+    for _ in range(20):
+        b = update_from_likelihood_ratio(
+            b, _lr(CANT_PAY_NOW=0.05, CANT_PAY_EVER=0.05, WONT_PAY=0.90),
+            source_version="v")
+    assert all(p > 0.0 for p in b.probs)
+    assert b[Cause.WONT_PAY] > 0.99

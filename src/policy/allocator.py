@@ -102,6 +102,7 @@ from src.policy.belief import Belief, quantised
 from src.policy.constraints import MAX_ATTEMPTS, assert_not_pre_notification_exempt, requires_afa, within_mandate_ceiling
 from src.policy.costs import PolicyCosts
 from src.policy.gate import ConformalGate, FullSetGate
+from src.policy.offramp import Offer, construct_offer
 from src.policy.profiles import get as get_profile
 from src.policy.stopping_rules import AllocationContext, Verdict, permitted
 
@@ -179,6 +180,23 @@ class Plan:
     binding_constraint: str | None
     solver_version: str
     decision_sha256: str
+    # R5, 2026-09-05 (reports/gates.md, "Post-B16 remediation gates"): the
+    # actual pause/downgrade/cancel menu, present iff chosen_action is
+    # OFFER and None otherwise. src/policy/offramp.py was complete and
+    # tested from B8 but had NO CALLER anywhere in src/ -- a chosen OFFER
+    # had never produced an Offer object, while offramp.py's own docstring
+    # asserted "allocator.py only calls construct_offer() once OFFER has
+    # already been chosen". That sentence is true now; it was false before.
+    #
+    # DELIBERATELY NOT part of decision_sha256's payload. The digest covers
+    # the DECISION -- action, belief, conformal set, committed slots -- and
+    # an Offer is a deterministic presentation artifact derived from
+    # (belief, ctx) after that decision is made. Including it would change
+    # nothing about which decisions are distinguishable while making every
+    # already-persisted hash unreproducible for anyone re-deriving one from
+    # a `plan` row. tests/policy/test_allocator.py pins a literal digest so
+    # this cannot drift silently.
+    offer: Offer | None = None
 
 
 def _next_day_in_window(lo: int, hi: int, earliest: int, cycle_len: int = _CYCLE_LEN_DAYS) -> int:
@@ -426,6 +444,11 @@ def _build_plan(
     committed: tuple[CommittedAttempt, ...],
     binding_constraint: str | None,
 ) -> Plan:
+    """Assemble the Plan. When the root decision is OFFER, this is where
+    construct_offer() runs -- once, on the decision that was actually
+    taken, never on a hypothetical explored inside the backward induction.
+    The lookahead compares VALUES; only the root produces an artifact the
+    customer could ever see."""
     conformal_set = gate.pred_set(b0)
     payload = {
         "mandate_id": ctx.mandate_id,
@@ -441,6 +464,7 @@ def _build_plan(
         "solver_version": _SOLVER_VERSION,
     }
     digest = decision_sha256(payload)
+    offer = construct_offer(b0, ctx) if action == Action.OFFER else None
     return Plan(
         mandate_id=ctx.mandate_id,
         cycle_id=ctx.cycle_id,
@@ -452,6 +476,7 @@ def _build_plan(
         binding_constraint=binding_constraint,
         solver_version=_SOLVER_VERSION,
         decision_sha256=digest,
+        offer=offer,
     )
 
 

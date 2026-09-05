@@ -67,6 +67,7 @@ from eval import corpus
 from eval.frozen.simulator import Simulator, _logits_from_base_rates, _softmax, load_config
 from eval.gate_criteria import ATTEMPT_RATE_FLOOR, DISCRIMINATION_MARGIN, attempt_rate, discrimination_gap
 from src.core.types import Action, Cause, DeclineClass, MandateState, Outcome, Profile
+from src.execute.intent_channel import likelihood_ratio_from_intent_score
 from src.model import competing_risks, features, person_period
 from src.policy import belief as belief_mod
 from src.policy.allocator import AllocatorError, solve
@@ -88,6 +89,294 @@ SEEDS = range(20)  # seeds 0-19 -- matches tests/eval/test_gate_criteria.py
 # normaliser version is not auditable"). A reader grepping the ledger for
 # this string finds simulated evidence, not observed evidence.
 PROXY_SOURCE_VERSION = "eval-allocator-sweep-proxy-v1"
+
+# === R5: the synthetic WONT_PAY evidence channel ============================
+#
+# reports/gates.md, "Post-B16 remediation gates", R5. Everything in this
+# section is FABRICATED and disclosed as such: it reads the simulator's
+# PRIVILEGED true cause (`SimMandate.initial_cause`) and feeds the result
+# into the DECISION path. That is a materially stronger claim than the
+# score-only privileged read `false_reauth_count` already makes -- which is
+# exactly why R5's gate requires the channel's own ROC to be published
+# beside every number it produces, and why `eval/offramp_channel.py` sweeps
+# channel QUALITY rather than asserting one.
+#
+# Why it exists. Before R5 this harness had a two-symbol decline alphabet
+# (CARD_EXPIRED / INSUFFICIENT_FUNDS), whose WONT_PAY likelihood components
+# are IDENTICAL (0.30 each) -- so the WONT_PAY likelihood ratio against the
+# other causes is monotone non-increasing, and exhaustive enumeration over
+# every sequence reachable within the NPCI cap gives max P(WONT_PAY) = 0.10
+# (re-derived, not quoted, in tests/eval/test_wontpay_channel.py).
+# `ConformalCauseGate` can never return the `{WONT_PAY}` singleton
+# `allocator.py` fires on, so `n_offer` was 0 in all 256 engine cells and
+# `false_offramp_count` was a structural zero rather than a measurement.
+# The off-ramp -- the lane this entire project exists to defend -- was
+# untested-and-central. R5 buys tested-and-imperfect, which is a weaker
+# claim honestly made instead of a stronger one nobody checked.
+#
+# Two channels, per DECISIONS.md (2026-09-04, R0), because picking one
+# would have been a worse answer either way:
+#
+#   "decline" -- emits DeclineClass.CUSTOMER_DECLINED (R5's new taxonomy
+#                class, src/classify/), which belief.update() inverts
+#                through src/classify/cause_map.py's hand-authored table.
+#                Stays entirely inside the payments story: a real Razorpay
+#                `payment_cancelled` event, given a class to land in.
+#   "intent"   -- emits a SCORE, which src/execute/intent_channel.py maps
+#                to a DECLARED likelihood ratio for
+#                belief.update_from_likelihood_ratio(). This is the honest
+#                real-world channel for exit intent and the only consumer
+#                src/llm/intent.py has ever had outside the golden set --
+#                but it needs a fabricated support-ticket signal in eval,
+#                which is a bigger fabrication than a decline string. It is
+#                therefore measured in the sweep and NOT folded into the
+#                published headline grid.
+#
+# Both are MISSPECIFIED on purpose, in the same way the pre-existing slot-1
+# signal already is: the channel's true (tpr, fpr) is a sweep parameter,
+# while the allocator's inference runs through cause_map's independent
+# hand-authored numbers (decline) or intent_channel's independently
+# declared operating point (intent). The allocator can therefore still be
+# wrong, in both directions.
+#
+# `channel=None` is the pre-R5 path, unchanged -- every number this project
+# has already published came from it, and tests/eval/test_wontpay_channel.py
+# pins that equivalence rather than trusting it.
+
+# Provenance stamps. Deliberately NOT PROXY_SOURCE_VERSION and deliberately
+# NOT a taxonomy version: a reader grepping the ledger for either string
+# must be able to tell WHICH fabricated channel produced a belief, and
+# stamping this as taxonomy output would be the provenance lie
+# PROXY_SOURCE_VERSION's own comment above already refuses to make.
+WONTPAY_CHANNEL_SOURCE_VERSION = "eval-wontpay-channel-v1"
+INTENT_CHANNEL_SOURCE_VERSION = "eval-intent-channel-v1"
+
+CHANNEL_KINDS: tuple[str, ...] = ("decline", "intent")
+
+# The two score values the "intent" channel emits, straddling
+# src/execute/intent_channel.py's DECLARED threshold. Two values, not a
+# continuous draw: the channel's quality is fully described by (tpr, fpr),
+# and adding score-magnitude structure would invent a second, unmeasurable
+# dimension of realism on top of an already-fabricated signal. Its realised
+# ROC is therefore exactly the two-point curve through (fpr, tpr), which is
+# what gets published.
+_INTENT_SCORE_POSITIVE = 0.90
+_INTENT_SCORE_NEGATIVE = 0.10
+
+
+@dataclass
+class WontPayChannel:
+    """A quality-parameterised, cause-aware synthetic evidence channel.
+
+    kind: "decline" or "intent" -- see the section comment above.
+    tpr:  P(this channel emits positive evidence | true cause is WONT_PAY).
+    fpr:  P(this channel emits positive evidence | true cause is not).
+    rng:  MUST be a stream independent of both the simulator's own RNG and
+          the slot-1 decline stream, so switching the channel on cannot
+          perturb the outcome draws or the slot-1 draws every previously
+          reported number depends on.
+
+    Mutable (the rng advances); never shared across cells.
+    """
+
+    kind: str
+    tpr: float
+    fpr: float
+    rng: random.Random
+
+    # R5 REVIEW PASS, 2026-09-05 (stats-reviewer, HIGH). The published grid
+    # sweeps the MARGINAL (tpr, fpr) while `fires()` draws an independent
+    # Bernoulli each call -- holding fixed, at exactly zero, the one axis
+    # the singleton firing rule is actually sensitive to. A single
+    # CUSTOMER_DECLINED observation moves belief to ~0.62 WONT_PAY (see
+    # tests/eval/test_wontpay_channel.py); the fitted gate's own singleton
+    # boundary sits around p(WONT_PAY) 0.80-0.90 REGARDLESS of alpha
+    # (verified 2026-09-05: alpha 0.05/0.20/0.30/0.40 all fire the
+    # singleton somewhere in that narrow band -- see the calibration-atom
+    # finding in reports/gates.md's R5 entry), so it takes roughly TWO
+    # coincident firings on the SAME mandate to open the off-ramp. Two
+    # independent draws from a real customer's decline history is not a
+    # safe assumption: a customer who dismisses one collect request is
+    # measurably more likely to dismiss the next one, for reasons that have
+    # nothing to do with wanting to leave (a bad app UX, a bill they have
+    # forgotten about, one bad week).
+    #
+    # `habitual_fraction` is a SEPARATE sweep dimension for exactly this.
+    # It holds the MARGINAL fpr fixed (proof below) while concentrating the
+    # false-firing mass into a shrinking sub-population of mandates that,
+    # once habitual, fire almost every time -- the standard two-point
+    # mixture for inducing over-dispersion in a Bernoulli sequence without
+    # moving its mean, so the channel's realised ROC stays comparable
+    # across dependence levels.
+    #
+    # 1.0, the DEFAULT, is EXACTLY today's iid behaviour: `_effective_fpr()`
+    # below reduces to a constant `fpr` at habitual_fraction=1.0, `fires()`
+    # takes the identical branch it always took, and not one existing
+    # published number moves. Values below 1.0 are additive, swept
+    # separately (see eval/offramp_channel.py's `dependence_sweep()`), and
+    # touch nothing in the main 1024-cell grid.
+    habitual_fraction: float = 1.0
+    _habitual: dict = field(default_factory=dict)
+
+    # --- realised-ROC bookkeeping, filled in by fires() ------------------
+    # R5's gate requires "the synthetic channel's own ROC published beside"
+    # every result. These are the REALISED rates, counted from the draws
+    # that actually happened, not the nominal (tpr, fpr) parameters -- a
+    # channel that was configured at 0.60 and realised 0.57 on this cell's
+    # 200 mandates must publish 0.57, or the ROC is a restatement of the
+    # input rather than a measurement of the output.
+    #
+    # `log` carries one (mandate_id, is_wont_pay, fired) row per draw so
+    # eval/offramp_channel.py can compute a MANDATE-level cluster bootstrap
+    # CI -- draws are clustered (one mandate contributes up to four
+    # decision points), so a naive row-level interval overstates precision,
+    # the same reasoning bench/llm_vs_stats.py's cluster_bootstrap_ci()
+    # already documents.
+    mandate_id: str = ""
+    n_wont_pay: int = 0
+    n_positive_on_wont_pay: int = 0
+    n_other: int = 0
+    n_positive_on_other: int = 0
+    log: list = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if self.kind not in CHANNEL_KINDS:
+            raise ValueError(
+                f"unknown channel kind {self.kind!r}; expected one of {CHANNEL_KINDS}"
+            )
+        for name, v in (("tpr", self.tpr), ("fpr", self.fpr)):
+            if not 0.0 <= v <= 1.0:
+                raise ValueError(f"{name} must lie in [0, 1]; got {v}")
+        if not 0.0 < self.habitual_fraction <= 1.0:
+            raise ValueError(
+                f"habitual_fraction must lie in (0, 1]; got {self.habitual_fraction}"
+            )
+
+    def _effective_fpr(self) -> float:
+        """The per-observation false-fire rate for THIS mandate under the
+        two-point habitual-dismisser mixture, persistent across calls for
+        the same mandate_id (drawn once, from `self.rng`, so the mixture's
+        own randomness shares the channel's single stream rather than
+        opening a second one).
+
+        At habitual_fraction=1.0 this returns `self.fpr` unconditionally --
+        every mandate is "habitual" by construction, so the mixture
+        degenerates to the plain iid case and this function is provably
+        equivalent to the constant `self.fpr` `fires()` always used.
+
+        At habitual_fraction=h<1.0: with probability h this mandate is
+        "habitual" and fires at rate min(1, fpr/h) on every call; otherwise
+        it never fires falsely. E[fire] = h * min(1, fpr/h) + (1-h)*0 = fpr
+        EXACTLY whenever h >= fpr, so the sweep's own ROC stays comparable
+        across dependence levels -- only WITHIN-mandate correlation moves.
+        Below h < fpr the mixture caps at rate 1.0 and understates the true
+        marginal; `WontPayChannel.realised()`'s own `fpr_realised` already
+        surfaces that as a measured discrepancy, so it is not separately
+        guarded here -- a caller sweeping h < fpr sees its own mistake in
+        the artifact rather than a silent wrong number.
+        """
+        if self.habitual_fraction >= 1.0:
+            return self.fpr
+        if self.mandate_id not in self._habitual:
+            self._habitual[self.mandate_id] = self.rng.random() < self.habitual_fraction
+        if not self._habitual[self.mandate_id]:
+            return 0.0
+        return min(1.0, self.fpr / self.habitual_fraction)
+
+    def fires(self, cause: Cause) -> bool:
+        """Draw one observation. Reads the PRIVILEGED true cause -- see the
+        section comment. Called once per decision point, so evidence
+        accumulates across a mandate's retries exactly as repeated real
+        observations would, and a false-positive channel accumulates FALSE
+        evidence at the same rate.
+
+        The habitual-dismisser mixture applies only to the FALSE-positive
+        side (cause is not WONT_PAY) -- the reviewer's finding is
+        specifically that repeat false firings threaten a paying customer;
+        WONT_PAY's own tpr draw is unchanged in every case.
+        """
+        is_wont_pay = cause is Cause.WONT_PAY
+        p = self.tpr if is_wont_pay else self._effective_fpr()
+        fired = self.rng.random() < p
+        if is_wont_pay:
+            self.n_wont_pay += 1
+            self.n_positive_on_wont_pay += int(fired)
+        else:
+            self.n_other += 1
+            self.n_positive_on_other += int(fired)
+        self.log.append((self.mandate_id, is_wont_pay, fired))
+        return fired
+
+    def for_mandate(self, mandate_id: str) -> "WontPayChannel":
+        """Tag subsequent draws with the mandate they belong to. Mutates
+        and returns self -- the channel is per-cell by construction (its
+        rng must not be shared), so there is nothing to copy."""
+        self.mandate_id = mandate_id
+        return self
+
+    def realised(self) -> dict:
+        """The measured ROC point, plus the counts it was computed from.
+        None where the denominator is zero -- never 0.0, which would read
+        as "measured, and it was nothing"."""
+        return {
+            "n_wont_pay": self.n_wont_pay,
+            "n_other": self.n_other,
+            "positive_on_wont_pay": self.n_positive_on_wont_pay,
+            "positive_on_other": self.n_positive_on_other,
+            "tpr_realised": (
+                self.n_positive_on_wont_pay / self.n_wont_pay if self.n_wont_pay else None
+            ),
+            "fpr_realised": (
+                self.n_positive_on_other / self.n_other if self.n_other else None
+            ),
+        }
+
+    def intent_score(self, cause: Cause) -> float:
+        """One synthetic exit-intent score, for kind="intent"."""
+        return _INTENT_SCORE_POSITIVE if self.fires(cause) else _INTENT_SCORE_NEGATIVE
+
+    def describe(self) -> dict:
+        return {"kind": self.kind, "tpr": self.tpr, "fpr": self.fpr}
+
+
+def channel_decline_class(outcome: Outcome, *, cause: Cause, channel) -> DeclineClass | None:
+    """The DeclineClass this harness treats as observed after `outcome`.
+
+    Identical to `_proxy_decline_class(outcome)` unless a "decline" channel
+    is live AND fires for this mandate's true cause, in which case
+    CUSTOMER_DECLINED is emitted instead. A terminal outcome whose proxy is
+    None stays None: RECOVERED ends the cycle, and DEAD/OPTED_OUT are
+    handled by `belief.observe_terminal()` in eval/run.py, which conditions
+    on an OBSERVED ledger fact rather than on a decline string (R2a).
+
+    An "intent" channel deliberately returns the plain proxy: the two
+    channels are different evidence KINDS, and emitting both from one draw
+    would double-count the same signal.
+    """
+    proxy = _proxy_decline_class(outcome)
+    if channel is None or channel.kind != "decline" or proxy is None:
+        return proxy
+    return DeclineClass.CUSTOMER_DECLINED if channel.fires(cause) else proxy
+
+
+def apply_intent_channel(b, cause: Cause, channel):
+    """Fold one synthetic exit-intent observation into `b`, if an "intent"
+    channel is live. Returns `b` unchanged otherwise.
+
+    The score crosses into the decision core exactly as a production one
+    would: through src/execute/intent_channel.py's DECLARED operating
+    point, never through the sweep's own (tpr, fpr). Those two are
+    independent on purpose -- the adapter is therefore MISSPECIFIED at
+    every sweep point except by coincidence, which is the realistic case
+    and the reason the sweep exists.
+    """
+    if channel is None or channel.kind != "intent":
+        return b
+    lr = likelihood_ratio_from_intent_score(channel.intent_score(cause))
+    return belief_mod.update_from_likelihood_ratio(
+        b, lr, source_version=INTENT_CHANNEL_SOURCE_VERSION,
+    )
+
 
 _OUTCOME_TO_DECLINE_CLASS: dict[Outcome, DeclineClass | None] = {
     Outcome.DEAD: DeclineClass.CARD_EXPIRED,
@@ -166,26 +455,58 @@ def slot1_failure_probs(cause: Cause, config: dict) -> dict[str, float]:
     return {_SLOT1_DEAD: dead / total, _SLOT1_PENDING: pending / total}
 
 
-def draw_slot1_decline(cause: Cause, config: dict, rng: random.Random) -> DeclineClass:
+def draw_slot1_decline(
+    cause: Cause, config: dict, rng: random.Random, *, channel=None,
+) -> DeclineClass:
     """Draw the decline class the mandate's already-failed slot-1 attempt
     would have carried. `rng` must be a stream independent of the
     simulator's own, so adding this signal cannot perturb the outcome draws
-    every previously-reported number depends on."""
+    every previously-reported number depends on.
+
+    R5: a live "decline" channel that fires REPLACES the draw with
+    CUSTOMER_DECLINED -- it does not add to it. A slot-1 attempt the
+    customer dismissed did not ALSO fail for insufficient funds; one
+    attempt has one decline reason. The channel draws from its OWN rng
+    (see WontPayChannel.rng), so the `rng.random()` call below still
+    happens and consumes the same value it always did -- switching the
+    channel on cannot shift this stream and desynchronise every other
+    mandate's slot-1 draw.
+    """
     p = slot1_failure_probs(cause, config)
-    if rng.random() < p[_SLOT1_DEAD]:
+    drawn = rng.random()
+    if channel is not None and channel.kind == "decline" and channel.fires(cause):
+        return DeclineClass.CUSTOMER_DECLINED
+    if drawn < p[_SLOT1_DEAD]:
         return DeclineClass.CARD_EXPIRED
     return DeclineClass.INSUFFICIENT_FUNDS
 
 
-def initial_belief(cause: Cause, config: dict, rng: random.Random) -> belief_mod.Belief:
+def initial_belief(
+    cause: Cause, config: dict, rng: random.Random, *, channel=None,
+) -> belief_mod.Belief:
     """The belief the allocator starts a cycle with: the uniform reference
     prior updated by the slot-1 decline observation. Equivalent to
     cause_map.prior(dc) by belief.py's own documented round-trip identity,
     written as an explicit update() so the evidence step is visible rather
-    than implied."""
-    dc = draw_slot1_decline(cause, config, rng)
+    than implied.
+
+    R5: with an "intent" channel live, one synthetic exit-intent
+    observation is folded in ON TOP of the ordinary slot-1 decline --
+    additional evidence of a different kind, not a replacement for it,
+    which is how a real support ticket would arrive alongside a real
+    decline string. The "decline" channel instead replaces the decline
+    itself (see draw_slot1_decline). The resulting Belief carries the
+    channel's own provenance stamp either way.
+    """
+    dc = draw_slot1_decline(cause, config, rng, channel=channel)
     uniform = belief_mod.init(dict(zip(belief_mod.CAUSE_ORDER, belief_mod.REFERENCE_PRIOR)))
-    return belief_mod.update(uniform, dc, source_version=PROXY_SOURCE_VERSION)
+    source = (
+        WONTPAY_CHANNEL_SOURCE_VERSION
+        if dc == DeclineClass.CUSTOMER_DECLINED
+        else PROXY_SOURCE_VERSION
+    )
+    b = belief_mod.update(uniform, dc, source_version=source)
+    return apply_intent_channel(b, cause, channel)
 
 
 @dataclass

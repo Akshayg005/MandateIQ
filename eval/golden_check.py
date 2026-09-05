@@ -10,8 +10,8 @@ confirmation, not silently decided either way (payments-domain review,
 were what was actually built).
 
 Cached, by design (DECISIONS.md, 2026-08-30): the live edge is rate-limited
-to ~15 requests/minute, and the golden set is 50 + 30 = 80 rows, so an
-uncached run costs ~5.5 minutes -- unacceptable at every Stop-hook checkpoint.
+to ~15 requests/minute, and the golden set is 56 + 30 = 86 rows, so an
+uncached run costs ~6 minutes -- unacceptable at every Stop-hook checkpoint.
 The cache is namespaced by (normalizer_version | intent_version), which are
 themselves content hashes of the system prompt + tool schema (src/llm/
 normalizer.py, intent.py) -- so a prompt edit changes the version, which
@@ -26,10 +26,12 @@ output (PLAN_DETAIL.md's explicit "Must NOT" for those files). golden_check
 always reports cache hits/misses/live-calls-made, so a green run can never be
 silently misread as "the model was consulted" when it mostly wasn't.
 
-Two zero-tolerance checks gate the exit code independently of aggregate
+Three zero-tolerance checks gate the exit code independently of aggregate
 accuracy -- a golden set that hits its accuracy floor while still producing
-a false MANDATE_REVOKED verdict, or false-off-ramping a paying customer,
-must still fail. This is what "must NOT pass on a tie with a lowered
+a false MANDATE_REVOKED verdict, a false CUSTOMER_DECLINED one (R5,
+2026-09-05: the WONT_PAY-dominant class, so a false one routes a paying
+customer toward an off-ramp offer), or false-off-ramping a paying customer
+from support text, must still fail. This is what "must NOT pass on a tie with a lowered
 threshold" (PLAN_DETAIL.md B11) means in practice: the threshold cannot be
 gamed by averaging away the one confusion this system exists to prevent.
 
@@ -48,12 +50,12 @@ how the intent check gates only the false-off-ramp direction: this project
 reports both error costs but gates only the one a false positive cannot
 walk back (money-auditor's framing, same principle applied here).
 
-Only 12 of these 50 rows would actually reach the LLM in production
-(decline_taxonomy.py's classify() answers the other 38 confidently) -- a
+Only 12 of these 56 rows would actually reach the LLM in production
+(decline_taxonomy.py's classify() answers the other 44 confidently) -- a
 THIRD gate, separate from the aggregate floor, requires escalation-only
 accuracy to clear DECLINE_ACCURACY_FLOOR on its own: the aggregate can be
 made to look fine by a component doing badly on exactly the rows that are
-its actual job, since 76% of the set never exercises it at all. Reuses the
+its actual job, since 79% of the set never exercises it at all. Reuses the
 existing floor rather than inventing a second number for a 12-row subset
 this project has no principled way to derive one for yet. DECISIONS.md,
 2026-08-31, has the full reasoning for why the golden set keeps both
@@ -96,6 +98,17 @@ class DeclineResult:
     # that may still be alive, regardless of which class it was confused
     # from (payments-domain review, 2026-08-31; see module docstring).
     any_to_mandate_revoked_confusions: int
+    # R5, 2026-09-05: the same zero-tolerance treatment for the OTHER
+    # unwalkable-back error this taxonomy can now make. CUSTOMER_DECLINED
+    # is the WONT_PAY-dominant class R5 added to make the conformal
+    # off-ramp gate reachable; a FALSE one does not merely mis-label a row,
+    # it pushes belief toward the {WONT_PAY} singleton that fires an
+    # off-ramp offer at a customer who was always going to pay -- the
+    # precise harm root CLAUDE.md's safety-design section exists to
+    # prevent. Directional, exactly like the field above: the reverse error
+    # (a real CUSTOMER_DECLINED missed) costs a retry slot, not a customer,
+    # and is reported through aggregate accuracy rather than gated to zero.
+    any_to_customer_declined_confusions: int
 
 
 @dataclass(frozen=True)
@@ -131,7 +144,7 @@ def _load_cache(path: pathlib.Path) -> dict:
 
 def _save_cache(path: pathlib.Path, cache: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(cache, indent=2, sort_keys=True), encoding="utf-8")
+    path.write_text(json.dumps(cache, indent=2, sort_keys=True), encoding="utf-8", newline="\n")
 
 
 def _persisting(cache: dict, cache_path: pathlib.Path, fn: Callable):
@@ -169,6 +182,7 @@ def score_declines(
         from before calling in.
     """
     total = correct = cache_hits = cache_misses = confusions = any_revoked = 0
+    any_customer_declined = 0
     _SWAP = {"INSUFFICIENT_FUNDS", "MANDATE_REVOKED"}
 
     for row in rows:
@@ -188,12 +202,15 @@ def score_declines(
             confusions += 1
         if label != "MANDATE_REVOKED" and predicted == "MANDATE_REVOKED":
             any_revoked += 1
+        if label != "CUSTOMER_DECLINED" and predicted == "CUSTOMER_DECLINED":
+            any_customer_declined += 1
 
     accuracy = correct / total if total else 0.0
     return DeclineResult(
         accuracy=accuracy, total=total, correct=correct,
         cache_hits=cache_hits, cache_misses=cache_misses,
         any_to_mandate_revoked_confusions=any_revoked,
+        any_to_customer_declined_confusions=any_customer_declined,
         insufficient_funds_revoked_confusions=confusions,
     )
 
@@ -266,6 +283,10 @@ def _report(
     print(
         f"  any label falsely predicted MANDATE_REVOKED: "
         f"{decline.any_to_mandate_revoked_confusions}  (zero-tolerance)"
+    )
+    print(
+        f"  any label falsely predicted CUSTOMER_DECLINED: "
+        f"{decline.any_to_customer_declined_confusions}  (zero-tolerance)"
     )
     print(
         f"intent    {intent.correct}/{intent.total} = {intent.band_accuracy:.1%}  "
@@ -440,6 +461,13 @@ def main(argv: list[str] | None = None) -> int:
             f"{decline_result.any_to_mandate_revoked_confusions} label(s) falsely "
             "predicted MANDATE_REVOKED -- zero-tolerance (stops retrying a mandate "
             "that may still be alive)"
+        )
+    if decline_result.any_to_customer_declined_confusions > 0:
+        failures.append(
+            f"{decline_result.any_to_customer_declined_confusions} label(s) falsely "
+            "predicted CUSTOMER_DECLINED -- zero-tolerance (R5: this is the "
+            "WONT_PAY-dominant class, so a false one routes a paying customer "
+            "toward an off-ramp offer)"
         )
     if intent_result.band_accuracy < INTENT_BAND_ACCURACY_FLOOR:
         failures.append(

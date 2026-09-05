@@ -95,7 +95,16 @@ if ($LASTEXITCODE -ne 0) {
     Write-Host ""
     Die "pip install failed on Python $PyTarget. Read the error above for which package. If it is a missing wheel, that package has no Python $PyTarget build yet: pin an older version, or set `$PyTarget to 3.12 at the top of this script, delete the .venv folder, and re-run."
 }
-& $Py -m pip freeze | Out-File -Encoding utf8 requirements.txt
+# -Encoding utf8 in PS 5.1 ALWAYS writes a BOM, and Out-File writes CRLF.
+# `pip install -r` tolerates both, but nothing else does reliably, and R7
+# needs this file to be a clean, platform-neutral install input for CI on
+# ubuntu-latest. Written through .NET's UTF8Encoding($false) -- no BOM --
+# with LF joins, so setup.ps1 and setup.sh produce the same bytes.
+$frozen = (& $Py -m pip freeze) -join "`n"
+[System.IO.File]::WriteAllText(
+    (Join-Path $PSScriptRoot "requirements.txt"),
+    $frozen + "`n",
+    (New-Object System.Text.UTF8Encoding $false))
 Ok "dependencies installed"
 
 # --------------------------------------------------------------- postgres --

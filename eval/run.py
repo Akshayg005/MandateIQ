@@ -73,15 +73,19 @@ import numpy as np
 
 from eval import regimes as regimes_mod
 from eval.allocator_sweep import (
+    INTENT_CHANNEL_SOURCE_VERSION,
     PROXY_SOURCE_VERSION,
-    _proxy_decline_class,
+    WONTPAY_CHANNEL_SOURCE_VERSION,
+    WontPayChannel,
+    apply_intent_channel,
+    channel_decline_class,
     fit_nominal_hazard_model,
     hazard_from_fit,
     initial_belief,
 )
 from eval.frozen.scoring import MandateResult, aggregate, score_mandate
 from eval.frozen.simulator import Simulator, load_config
-from src.core.types import Action, Cause, MandateState, Outcome, Profile
+from src.core.types import Action, Cause, DeclineClass, MandateState, Outcome, Profile
 from src.model import conformal
 from src.policy import belief as belief_mod
 from src.policy.allocator import AllocationContext, AllocatorError, Plan, solve
@@ -99,61 +103,57 @@ ALL_PROFILES: tuple[Profile, ...] = (Profile.strict, Profile.permissive)
 # 500_000 is allocator_sweep's slot-1 stream; these must not collide with it.
 _SLOT1_OFFSET = 700_000
 _CALIB_SLOT1_OFFSET = 900_000
+# R5: the synthetic WONT_PAY channel draws from its OWN stream. Sharing
+# _SLOT1_OFFSET would shift every slot-1 decline draw the moment the
+# channel was switched on, silently changing every number this project has
+# already published for reasons unrelated to the channel.
+_CHANNEL_OFFSET = 1_100_000
+_CALIB_CHANNEL_OFFSET = 1_300_000
+
+# The channel-quality operating point the PUBLISHED grid runs at.
+# PRE-REGISTERED in eval/offramp_channel.py's module docstring before the
+# first sweep ran (reports/gates.md, R5; DECISIONS.md, 2026-09-05) and
+# imported from there rather than restated, so the two cannot drift apart.
+# The "decline" kind, not "intent": folding a fabricated support-ticket
+# signal into the headline grid is a bigger fabrication than a decline
+# string (DECISIONS.md, 2026-09-04, R0's own words). The intent channel is
+# measured in eval/offramp_channel.py's sweep instead.
+DEFAULT_CHANNEL_KIND = "decline"
 # The calibration draw's own seed. Disjoint from any reported seed, and its
-# mandate ids are namespaced (see _calib_group_id) so conformal's own
-# assert_disjoint can actually check the split rather than trust it.
+# mandate ids are namespaced (see _calib_group_id) so a real disjointness
+# check WOULD have something meaningful to compare against.
+#
+# CORRECTED, R5 review pass, 2026-09-05 (stats-reviewer): this comment
+# previously claimed conformal.assert_disjoint() "can actually check the
+# split" here, as though it does. It is never called on this path --
+# verified: `assert_disjoint` appears only in eval/model_fit_report.py, a
+# different, unrelated report. Disjointness holds by CONSTRUCTION alone
+# (CALIB_SEED sits outside the reported 0-7 range, and calib ids carry the
+# `calib424242:` prefix _calib_group_id adds, a different namespace
+# entirely from the plain/slot-qualified ids the reported cells use) --
+# not by a runtime assertion. Not wired up here: a real check would compare
+# sets living in genuinely different id formats, which would pass
+# trivially regardless of whether the SEEDS actually overlapped, so it
+# would not catch the failure mode assert_disjoint() exists to catch.
 CALIB_SEED = 424_242
 
 CAUSE_ORDER: tuple[Cause, ...] = tuple(belief_mod.CAUSE_ORDER)
 
-# R2, 2026-09-04 (reports/gates.md, "Post-B16 remediation gates"): the
-# Outcome -> MEASURED posterior mapping for an OBSERVED terminal outcome --
-# not a proxy decline class to Bayes-update on (see PROXY_SOURCE_VERSION
-# below, which stamps the OPPOSITE kind of evidence: a fabricated
-# DeclineClass this eval harness invented from a bare Outcome).
-#
-# CORRECTED same day (stats-reviewer / payments-domain review, before this
-# gate was ticked): the first version of this constant mapped each terminal
-# Outcome to a single Cause with an assumed 1.0 certainty -- "DEAD means
-# CANT_PAY_EVER because that is what the cause label means." That claim was
-# checked against eval/frozen/sim_config.yaml's own generative process
-# (nominal arm) rather than assumed, and found false: a direct 200-seed
-# simulation (`sim.attempt()` driven to the first DEAD/OPTED_OUT outcome
-# per mandate, ground truth read from `m.initial_cause` -- the same
-# privileged, score-only read `false_reauth_count` already uses) measures:
-#
-#   P(CANT_PAY_EVER | DEAD)    = 6882 / 7654 = 0.8991   (n=7654)
-#   P(WONT_PAY | OPTED_OUT)    = 8617 / 9532 = 0.9040   (n=9532)
-#
-# -- roughly 10% of each terminal outcome has a DIFFERENT true cause: a
-# CANT_PAY_NOW or WONT_PAY mandate can still draw a DEAD event, since
-# `sim_config.yaml`'s `base_dead`/`base_optout` rates are LOW but never
-# zero for the "wrong" causes (e.g. CANT_PAY_NOW/WONT_PAY both carry
-# `base_dead: 0.02` against CANT_PAY_EVER's `0.55`). A degenerate 1.0 was
-# additionally IRREVERSIBLE -- see belief.observe_terminal()'s docstring --
-# which these measured, non-zero-everywhere distributions are not.
-# RECOVERED is deliberately absent -- the cycle succeeded, there is no
-# cause left to decide, and _run_engine_mandate must not call
-# belief_mod.observe_terminal or ctx.with_terminal for it.
-_TERMINAL_OBSERVED_CAUSE_PROBS: dict[Outcome, dict[Cause, float]] = {
-    Outcome.DEAD: {
-        Cause.CANT_PAY_EVER: 0.8991, Cause.WONT_PAY: 0.0512, Cause.CANT_PAY_NOW: 0.0497,
-    },
-    Outcome.OPTED_OUT: {
-        Cause.WONT_PAY: 0.9040, Cause.CANT_PAY_NOW: 0.0684, Cause.CANT_PAY_EVER: 0.0276,
-    },
-}
-
-# Distinct from PROXY_SOURCE_VERSION: that one stamps a FABRICATED
-# DeclineClass. This one stamps a belief collapsed by
-# belief_mod.observe_terminal() from an ACTUALLY OBSERVED terminal Outcome
-# -- a real ledger fact in production (the mandate's own terminal
-# lifecycle/execution state), not a fabricated decline string. Kept
-# separate so a reader grepping the ledger for either string can tell which
-# kind of evidence produced a given belief (B11's "a belief that cannot be
-# traced ... is not auditable", the same requirement applied to a different
-# evidence kind).
-TERMINAL_OBSERVATION_SOURCE_VERSION = "eval-observed-terminal-v1"
+# R4, 2026-09-04 (reports/gates.md, "Post-B16 remediation gates"): relocated
+# to src/policy/belief.py as TERMINAL_OBSERVED_CAUSE_PROBS /
+# TERMINAL_OBSERVATION_SOURCE_VERSION -- src/execute/cycle.py (R4) is the
+# first PRODUCTION caller of observe_terminal(), and src/ must never import
+# eval/, so a value only this module defined would be unreachable from
+# there. Values, derivation and the measured 0.8991/0.9040 numbers are
+# unchanged; see belief.py's own docstring for the full writeup (the
+# ~10%-wrong-cause reasoning, the degenerate-1.0 correction this project
+# made and reversed the same day, and why RECOVERED is deliberately absent
+# -- the cycle succeeded, there is no cause left to decide, and
+# _run_engine_mandate must not call belief_mod.observe_terminal or
+# ctx.with_terminal for it). Aliased under their original names here so
+# every existing call site below needs no further change.
+_TERMINAL_OBSERVED_CAUSE_PROBS = belief_mod.TERMINAL_OBSERVED_CAUSE_PROBS
+TERMINAL_OBSERVATION_SOURCE_VERSION = belief_mod.TERMINAL_OBSERVATION_SOURCE_VERSION
 
 
 # --- results -----------------------------------------------------------------
@@ -199,8 +199,30 @@ class CellResult:
     # the two error costs (protocol.md: reported alongside, never folded in)
     missed_recovery_count: int = 0
     missed_recovery_paise: int = 0
+    # PRE-REGISTERED Day-1 metric, MEANING UNCHANGED BYTE FOR BYTE (R2b's
+    # lesson: never redefine a pre-registered metric after seeing it). It
+    # counts an OFFER to a mandate the exact counterfactual says WOULD have
+    # paid -- i.e. it is computed inside the `would_pay` branch below.
     false_offramp_count: int = 0
     false_offramp_paise: int = 0
+    # R5, ADDED BESIDE IT, never folded into it. false_offramp_count had no
+    # denominator: an OFFER to a mandate that would NOT have paid was
+    # counted nowhere, so root CLAUDE.md's "report BOTH error costs" was one
+    # real number and one structural zero. These three make the pair two
+    # measurements.
+    #   offramp_scored_count -- OFFERs that reached the counterfactual at
+    #     all, i.e. the exact denominator of false_offramp_count. Normally
+    #     equal to n_offer; it can be smaller, because an OFFER returned by
+    #     the POST-TERMINAL re-solve lands on an already-resolved mandate
+    #     that the counterfactual branch skips. Reported rather than assumed
+    #     so `false_offramp_count / n_offer` can never quietly become a rate
+    #     with the wrong denominator.
+    #   true_offramp_* -- the counterpart: an OFFER to a mandate that would
+    #     NOT have recovered. Not "correct" (the counterfactual cannot see
+    #     intent), only "cost us no recovery".
+    offramp_scored_count: int = 0
+    true_offramp_count: int = 0
+    true_offramp_paise: int = 0
     # issuer_outage's own pre-registered falsification criterion: REAUTH
     # issued on a mandate whose true cause is NOT CANT_PAY_EVER. PRE-
     # REGISTERED, NEVER REDEFINED (DECISIONS.md, 2026-09-04, R0) -- the
@@ -237,6 +259,17 @@ class CellResult:
     singleton_rate: float | None = None
     mean_set_size: float | None = None
     coverage_per_class: dict[str, float] = field(default_factory=dict)
+    # R5: the synthetic WONT_PAY channel this cell ran under, and the ROC
+    # it ACTUALLY realised on this cell's own draws -- never a restatement
+    # of the configured (tpr, fpr). "off" is the pre-R5 configuration every
+    # previously published number came from.
+    channel_kind: str = "off"
+    channel_tpr: float | None = None
+    channel_fpr: float | None = None
+    channel_n_wont_pay: int = 0
+    channel_positive_on_wont_pay: int = 0
+    channel_n_other: int = 0
+    channel_positive_on_other: int = 0
     violations: list[str] = field(default_factory=list)
     # Wall clock. Measured, deliberately NOT serialised -- see
     # UNSERIALISED_CELL_FIELDS.
@@ -390,7 +423,8 @@ class DecisionTrace:
 
 def _run_engine_mandate(m, sim: Simulator, profile: Profile, hazard,
                         costs: PolicyCosts, gate, b, cell: CellResult,
-                        trace: list[DecisionTrace] | None = None):
+                        trace: list[DecisionTrace] | None = None,
+                        channel=None):
     """Drive one mandate through the allocator. Returns the ordered attempts
     actually made; mutates `cell`'s action counters and error costs. When
     `trace` is given, appends one DecisionTrace per solve() call.
@@ -436,7 +470,29 @@ def _run_engine_mandate(m, sim: Simulator, profile: Profile, hazard,
         ctx = ctx.with_attempt(committed.on_day)
         cell.n_attempt += 1
 
-        dc = _proxy_decline_class(result.outcome)
+        # R5: with a "decline" channel live this may be CUSTOMER_DECLINED
+        # instead of the plain proxy -- see eval/allocator_sweep.py's
+        # channel section.
+        #
+        # CORRECTED, R5 review pass, 2026-09-05 (stats-reviewer): this
+        # comment previously claimed the channel "consumes exactly one draw
+        # per decision point regardless of which branch is taken". Verified
+        # FALSE for two of the four outcomes: `channel_decline_class()`
+        # returns the proxy immediately, without calling `channel.fires()`,
+        # whenever `_proxy_decline_class(outcome) is None` -- true for
+        # RECOVERED and OPTED_OUT (`_OUTCOME_TO_DECLINE_CLASS` maps both to
+        # None). So no draw is consumed on those two outcomes; one IS
+        # consumed on DEAD, but `dc` is then never read below (the terminal
+        # branch conditions belief on the OBSERVED outcome via
+        # `observe_terminal()`, never on `dc`) -- that draw still enters
+        # `channel.log` (and so the published ROC/repeat-rate) without ever
+        # reaching a belief. Verified benign for the ROC estimate: `fires()`
+        # draws from a stream independent of `sim.attempt()`'s own, so the
+        # outcome-dependent selection of WHICH mandates get a DEAD draw is
+        # independent of that draw's own result given cause -- tpr/fpr stay
+        # unbiased, only the sample size differs from a naive count of
+        # decision points.
+        dc = channel_decline_class(result.outcome, cause=m.initial_cause, channel=channel)
         if result.outcome != Outcome.STILL_PENDING:
             # Terminal. The ATTEMPT sequence is over, but the DECISION
             # sequence is not: a dead instrument is exactly when REAUTH is
@@ -490,7 +546,13 @@ def _run_engine_mandate(m, sim: Simulator, profile: Profile, hazard,
             break
 
         if dc is not None:
-            b = belief_mod.update(b, dc, source_version=PROXY_SOURCE_VERSION)
+            source = (
+                WONTPAY_CHANNEL_SOURCE_VERSION
+                if dc == DeclineClass.CUSTOMER_DECLINED
+                else PROXY_SOURCE_VERSION
+            )
+            b = belief_mod.update(b, dc, source_version=source)
+        b = apply_intent_channel(b, m.initial_cause, channel)
 
     if stopped_action == Action.OFFER:
         cell.n_offer += 1
@@ -543,12 +605,20 @@ def _run_engine_mandate(m, sim: Simulator, profile: Profile, hazard,
         would_pay = _counterfactual_recovers(
             shadow, m.mandate_id, from_slot=2 + len(attempts), last_day=last_day
         )
+        if stopped_action == Action.OFFER:
+            # R5: the denominator false_offramp_count never had. Counted
+            # OUTSIDE the would_pay branch, so an OFFER to a mandate that
+            # would not have paid lands somewhere instead of nowhere.
+            cell.offramp_scored_count += 1
         if would_pay:
             cell.missed_recovery_count += 1
             cell.missed_recovery_paise += m.amount_paise
             if stopped_action == Action.OFFER:
                 cell.false_offramp_count += 1
                 cell.false_offramp_paise += m.amount_paise
+        elif stopped_action == Action.OFFER:
+            cell.true_offramp_count += 1
+            cell.true_offramp_paise += m.amount_paise
 
     return attempts
 
@@ -579,13 +649,41 @@ def _result_for(m, attempts) -> MandateResult:
 
 def _calib_group_id(mandate_id: str) -> str:
     """Simulator mandate ids (M0000...) repeat across seeds, so a bare id
-    cannot prove the calibration and report sets are disjoint. Namespacing by
-    the calibration seed gives conformal.assert_disjoint() something real to
-    check -- the same convention eval/corpus.py already uses."""
+    cannot prove the calibration and report sets are disjoint by inspection.
+    Namespacing by the calibration seed gives a disjointness check (if one
+    were run against this stream) something real to compare -- the same
+    convention eval/corpus.py already uses. No such check is called on this
+    path today (see CALIB_SEED's own comment); disjointness holds by
+    construction, not by assertion."""
     return f"calib{CALIB_SEED}:{mandate_id}"
 
 
-def fit_gate(base_cfg: dict, *, alpha: float = 0.05):
+def make_channel(spec, seed: int, *, offset: int = _CHANNEL_OFFSET):
+    """One WontPayChannel for one cell, on its own RNG stream.
+
+    `spec` is (kind, tpr, fpr), (kind, tpr, fpr, habitual_fraction), or
+    None. The 4-tuple form is additive (R5 review pass, 2026-09-05): every
+    EXISTING caller passes the 3-tuple, which defaults habitual_fraction to
+    1.0 -- WontPayChannel's own exactly-iid default -- so nothing already
+    published changes.
+
+    A fresh instance per cell: the channel accumulates its own
+    realised-ROC counters, and sharing one across cells would pool them
+    into a number no single cell could be checked against.
+    """
+    if spec is None:
+        return None
+    if len(spec) == 4:
+        kind, tpr, fpr, habitual_fraction = spec
+    else:
+        kind, tpr, fpr = spec
+        habitual_fraction = 1.0
+    return WontPayChannel(kind=kind, tpr=tpr, fpr=fpr,
+                          habitual_fraction=habitual_fraction,
+                          rng=random.Random(seed + offset))
+
+
+def fit_gate(base_cfg: dict, *, alpha: float = 0.05, channel_spec=None):
     """Calibrate the off-ramp gate ONCE, on the baseline regime, from its own
     simulator draw. Returns (gate, kind, diagnostics).
 
@@ -600,9 +698,18 @@ def fit_gate(base_cfg: dict, *, alpha: float = 0.05):
     """
     sim = Simulator("nominal", seed=CALIB_SEED, config=base_cfg)
     rng = random.Random(CALIB_SEED + _CALIB_SLOT1_OFFSET)
+    # R5: RE-CALIBRATION IS MANDATORY, not optional. The channel changes the
+    # belief distribution, so it changes this calibration pool -- calibrating
+    # on the pre-R5 pool and querying a post-R5 belief would be exactly the
+    # exchangeability break split conformal's coverage guarantee rests on.
+    # Its own stream (_CALIB_CHANNEL_OFFSET), disjoint from every reported
+    # seed's, for the same reason the slot-1 stream already is.
+    channel = make_channel(channel_spec, CALIB_SEED, offset=_CALIB_CHANNEL_OFFSET)
     scores, y, ids = [], [], []
     for m in sim.mandates:
-        b = initial_belief(m.initial_cause, base_cfg, rng)
+        if channel is not None:
+            channel.for_mandate(m.mandate_id)
+        b = initial_belief(m.initial_cause, base_cfg, rng, channel=channel)
         scores.append(list(b.probs))
         y.append(CAUSE_ORDER.index(m.initial_cause))
         ids.append(_calib_group_id(m.mandate_id))
@@ -620,11 +727,21 @@ def fit_gate(base_cfg: dict, *, alpha: float = 0.05):
     except conformal.ConformalUnderpowered as exc:
         return FullSetGate(), "full_set", {"reason": f"underpowered: {exc}"}
 
-    return (
-        ConformalCauseGate(predictor),
-        "conformal",
-        {"alpha": alpha, "n_calib": len(y), "calib_seed": CALIB_SEED},
-    )
+    diag = {"alpha": alpha, "n_calib": len(y), "calib_seed": CALIB_SEED}
+    if channel is not None:
+        # The Mondrian floor is ceil(1/alpha) - 1 per class (19 at
+        # alpha=0.05); calibrate() raises ConformalUnderpowered above if any
+        # class is below it, so reaching here proves the floor holds. The
+        # per-class counts are recorded anyway: "it did not raise" is a
+        # weaker artifact than the numbers themselves, and R5 has to
+        # re-report calibration after changing the belief distribution.
+        diag["channel"] = channel.describe()
+        diag["channel_realised"] = channel.realised()
+        diag["calib_per_class"] = {
+            c.value: int(sum(1 for yy in y if CAUSE_ORDER[yy] == c)) for c in CAUSE_ORDER
+        }
+        diag["mondrian_floor"] = -(-1 // alpha) - 1 if alpha else None
+    return (ConformalCauseGate(predictor), "conformal", diag)
 
 
 def _score_recorded_queries(recorder: "_RecordingGate", truth: dict[str, Cause],
@@ -705,7 +822,12 @@ def run_ladder_cell(regime: str, arm: str, profile: Profile, cfg: dict,
 
 def run_engine_cell(regime: str, arm: str, profile: Profile, cfg: dict, seed: int,
                     hazard, costs: PolicyCosts, gate, gate_kind: str,
-                    traces: dict[str, list[DecisionTrace]] | None = None) -> CellResult:
+                    traces: dict[str, list[DecisionTrace]] | None = None,
+                    channel=None) -> CellResult:
+    """`channel` is a PREPARED WontPayChannel (see make_channel), not a
+    spec -- the caller keeps the instance so it can read the emission log
+    back afterwards, which is what eval/offramp_channel.py computes the
+    channel's own ROC and its cluster-bootstrap CI from."""
     t0 = time.perf_counter()
     cell = CellResult(regime=regime, arm=arm, profile=profile.value,
                       policy="engine", seed=seed, gate_kind=gate_kind)
@@ -717,14 +839,24 @@ def run_engine_cell(regime: str, arm: str, profile: Profile, cfg: dict, seed: in
     for m in sim.mandates:
         if m.amount_paise > afa_free_limit_paise(m.category):
             cell.n_above_afa += 1
-        b0 = initial_belief(m.initial_cause, cfg, slot1_rng)
+        if channel is not None:
+            channel.for_mandate(m.mandate_id)
+        b0 = initial_belief(m.initial_cause, cfg, slot1_rng, channel=channel)
         trace = [] if traces is not None else None
         attempts = _run_engine_mandate(m, sim, profile, hazard, costs, recorder, b0,
-                                       cell, trace=trace)
+                                       cell, trace=trace, channel=channel)
         if traces is not None:
             traces[m.mandate_id] = trace
         results.append(_result_for(m, attempts))
 
+    if channel is not None:
+        cell.channel_kind = channel.kind
+        cell.channel_tpr = channel.tpr
+        cell.channel_fpr = channel.fpr
+        cell.channel_n_wont_pay = channel.n_wont_pay
+        cell.channel_positive_on_wont_pay = channel.n_positive_on_wont_pay
+        cell.channel_n_other = channel.n_other
+        cell.channel_positive_on_other = channel.n_positive_on_other
     _fill_bars(cell, aggregate(results, arm=arm, profile=profile.value), sim.mandates)
     if gate_kind == "conformal":
         _score_recorded_queries(
@@ -782,7 +914,8 @@ def run_all(*, regime_names: Sequence[str], arms: Sequence[str],
             profiles: Sequence[Profile], seed: int,
             verbose: bool = True,
             config_path: pathlib.Path | None = None,
-            seeds: Sequence[int] | None = None) -> dict[str, Any]:
+            seeds: Sequence[int] | None = None,
+            channel_spec=None) -> dict[str, Any]:
     """`seeds` runs the whole grid once per seed and concatenates the cells.
 
     Everything in B13's first report was a single draw with no error bar,
@@ -803,9 +936,13 @@ def run_all(*, regime_names: Sequence[str], arms: Sequence[str],
 
     if verbose:
         print("calibrating the conformal off-ramp gate on baseline...", file=sys.stderr)
-    gate, gate_kind, gate_diag = fit_gate(base_cfg)
+    gate, gate_kind, gate_diag = fit_gate(base_cfg, channel_spec=channel_spec)
     if verbose:
         print(f"  gate: {gate_kind} {gate_diag}", file=sys.stderr)
+        if channel_spec is not None:
+            print(f"  SYNTHETIC WONT_PAY channel live: {channel_spec} "
+                  f"-- see eval/allocator_sweep.py's channel section",
+                  file=sys.stderr)
 
     cells: list[CellResult] = []
     for sd in seed_list:
@@ -817,7 +954,8 @@ def run_all(*, regime_names: Sequence[str], arms: Sequence[str],
             for profile in profiles:
                 cells.append(run_ladder_cell(regime, arm, profile, cfg, sd))
                 cells.append(run_engine_cell(regime, arm, profile, cfg, sd,
-                                             hazard, costs, gate, gate_kind))
+                                             hazard, costs, gate, gate_kind,
+                                             channel=make_channel(channel_spec, sd)))
                 cells.append(run_null_cell(regime, arm, profile, cfg, sd, "null"))
                 cells.append(run_null_cell(regime, arm, profile, cfg, sd, "one_shot"))
                 if verbose:
@@ -832,11 +970,19 @@ def run_all(*, regime_names: Sequence[str], arms: Sequence[str],
                     )
 
     return {
-        "schema": 2,
+        # schema 3 (R5, 2026-09-05): CellResult gained the off-ramp
+        # denominator/true-positive fields and the synthetic-channel ROC
+        # fields, and the payload gained `wontpay_channel`. Additive --
+        # every schema-2 key still means exactly what it meant.
+        "schema": 3,
         "seed": seed_list[0],
         "seeds": seed_list,
         "gate_kind": gate_kind,
         "gate_diagnostics": gate_diag,
+        "wontpay_channel": (
+            None if channel_spec is None
+            else {"kind": channel_spec[0], "tpr": channel_spec[1], "fpr": channel_spec[2]}
+        ),
         "arms": list(arms),
         "profiles": [p.value for p in profiles],
         "regimes": {
@@ -874,7 +1020,33 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
                          "footing for the engine-vs-one_shot comparison.")
     ap.add_argument("--out", type=pathlib.Path, default=ARTIFACT)
     ap.add_argument("--quiet", action="store_true")
+    ap.add_argument("--channel-kind", default=DEFAULT_CHANNEL_KIND,
+                    choices=("decline", "intent", "off"),
+                    help="R5's SYNTHETIC WONT_PAY evidence channel. It reads "
+                         "the simulator's privileged true cause and feeds it "
+                         "into the decision path -- see eval/allocator_sweep.py's "
+                         "channel section. `off` reproduces the pre-R5 "
+                         "configuration, in which the off-ramp can never fire.")
+    ap.add_argument("--channel-tpr", type=float, default=None,
+                    help="channel sensitivity; defaults to the operating point "
+                         "pre-registered in eval/offramp_channel.py")
+    ap.add_argument("--channel-fpr", type=float, default=None,
+                    help="channel false-positive rate; defaults as above")
     return ap.parse_args(argv)
+
+
+def channel_spec_from_args(args) -> tuple[str, float, float] | None:
+    """(kind, tpr, fpr), or None for `off`. The default rates come from
+    eval/offramp_channel.py's PRE-REGISTERED operating point -- imported,
+    never restated, so the published grid and the sweep that justified its
+    operating point cannot silently disagree."""
+    if args.channel_kind == "off":
+        return None
+    from eval.offramp_channel import OPERATING_POINT
+
+    tpr = OPERATING_POINT[0] if args.channel_tpr is None else args.channel_tpr
+    fpr = OPERATING_POINT[1] if args.channel_fpr is None else args.channel_fpr
+    return (args.channel_kind, tpr, fpr)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -894,9 +1066,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     payload = run_all(regime_names=regime_names, arms=arms, profiles=profiles,
                       seed=args.seed, verbose=not args.quiet,
                       config_path=args.config,
-                      seeds=list(range(args.seeds)) if args.seeds else None)
+                      seeds=list(range(args.seeds)) if args.seeds else None,
+                      channel_spec=channel_spec_from_args(args))
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    args.out.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    args.out.write_text(json.dumps(payload, indent=2), encoding="utf-8", newline="\n")
     try:
         shown = args.out.resolve().relative_to(_REPO_ROOT)
     except ValueError:

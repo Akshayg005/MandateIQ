@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import pytest
 
-from src.core.money import Paise, fmt, pct_of, split_floor
+from fractions import Fraction
+
+from src.core.money import Paise, fmt, interpolate_crossing, pct_of, split_floor
 
 # --- fmt: rupee display, two-decimal paise, Indian digit grouping ----------
 
@@ -134,3 +136,60 @@ def test_split_floor_single_slot_returns_whole_amount():
 
 def test_split_floor_zero_amount_is_all_zeros():
     assert split_floor(Paise(0), 5) == [0, 0, 0, 0, 0]
+
+
+# --- interpolate_crossing: exact x where a line through two points hits y=0
+# (R3, 2026-09-04). No test existed for this function before R3 became its
+# first real caller -- added here rather than assumed correct on the
+# strength of the docstring alone.
+
+
+def test_interpolate_crossing_exact_midpoint():
+    # (0, -10) -> (10, +10): straight line crosses y=0 at x=5 exactly.
+    assert interpolate_crossing(0, -10, 10, 10) == Fraction(5)
+
+
+def test_interpolate_crossing_returns_exact_fraction_not_integer():
+    # (0, -1) -> (3, 2): crosses at x = 1, an exact integer -- pick a case
+    # that is NOT integral to prove the return type carries real precision.
+    # (0, -1) -> (1, 2): slope 3, crosses at x0 + 1/3.
+    result = interpolate_crossing(0, -1, 1, 2)
+    assert result == Fraction(1, 3)
+    assert isinstance(result, Fraction)
+
+
+def test_interpolate_crossing_x0_exactly_zero():
+    assert interpolate_crossing(100, 0, 200, 50) == Fraction(100)
+
+
+def test_interpolate_crossing_x1_exactly_zero():
+    assert interpolate_crossing(100, -50, 200, 0) == Fraction(200)
+
+
+def test_interpolate_crossing_negative_to_positive_and_reverse_agree():
+    # Sign convention must not matter -- swapping which endpoint is
+    # negative/positive must not change the crossing point.
+    a = interpolate_crossing(0, -4, 8, 4)
+    b = interpolate_crossing(0, 4, 8, -4)
+    assert a == b == Fraction(4)
+
+
+def test_interpolate_crossing_raises_without_a_sign_change():
+    # Both y-values positive: no crossing exists between these two points.
+    with pytest.raises(ValueError, match="sign change"):
+        interpolate_crossing(0, 5, 10, 15)
+
+
+def test_interpolate_crossing_raises_both_negative():
+    with pytest.raises(ValueError, match="sign change"):
+        interpolate_crossing(0, -5, 10, -1)
+
+
+def test_interpolate_crossing_large_paise_values_stay_exact():
+    # Realistic scale (R3's actual use: x = LTV in paise, y = recovered_paise
+    # difference) -- confirms no float ever enters the computation, even at
+    # values in the tens of millions.
+    result = interpolate_crossing(0, -15_047_099, 20_000_000, 5_000_000)
+    # Exact rational, hand-verified: x = 0 + 15047099 * 20000000 / 20047099
+    expected = Fraction(15_047_099 * 20_000_000, 20_047_099)
+    assert result == expected

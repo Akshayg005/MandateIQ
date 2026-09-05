@@ -157,6 +157,12 @@ tbody tr[aria-selected="true"] { background: #eaf0fd; }
 .decision { border: 1px solid var(--rule); border-radius: 4px; padding: 9px 11px; margin-bottom: 9px; }
 .decision > header { display: flex; gap: 9px; align-items: baseline; margin-bottom: 7px; }
 .decision > header .slot { font: 650 12px var(--sans); }
+/* R5: the off-ramp menu, shown only on an OFFER decision. Ordered list,
+   never a bulleted set -- the order (pause, then downgrade, then cancel)
+   is the product decision, not a formatting one. */
+.offer { border-left: 2px solid var(--rule); padding: 6px 0 4px 10px; margin: 8px 0 2px; font-size: 11.5px; }
+.offer ol { margin: 5px 0; padding-left: 18px; }
+.offer li { margin-bottom: 3px; }
 .belief { display: grid; grid-template-columns: 118px 1fr 52px; gap: 2px 8px; align-items: center; font-size: 11.5px; margin: 5px 0; }
 .belief .track { background: #eef0f4; height: 9px; border-radius: 2px; overflow: hidden; }
 /* Same inline-span trap as .bars .fill above: without display:block the

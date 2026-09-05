@@ -252,3 +252,36 @@ CREATE TABLE shadow_ledger (
   CHECK ((our_action = 'ATTEMPT') = (our_slot IS NOT NULL AND our_day IS NOT NULL))
 );
 CREATE INDEX shadow_ledger_run ON shadow_ledger (run_id, divergence);
+
+-- mandate (R4) ----------------------------------------------------------------
+--
+-- The static, per-mandate registry a real planning pass reads: "which
+-- mandates exist and what are their terms." Before R4, mandate_id was a bare
+-- TEXT everywhere -- every ledger/plan/committed_schedule row carries one,
+-- but no table listed a mandate independent of a row already describing one
+-- of its attempts. src/execute/cycle.py's plan_cycle() is the first caller
+-- that needs to iterate "every mandate", not "every row already committed
+-- for one" -- and eval/'s in-memory Mandate dataclass (eval/frozen/
+-- simulator.py) has no durable Postgres equivalent, since the eval harness
+-- never persists anything.
+--
+-- No cycle_id column: a mandate has many cycles over its life (R4_PLAN.md);
+-- cycle_id is a parameter of each planning pass, exactly the way
+-- plan/ledger/committed_schedule already key on (mandate_id, cycle_id) pairs
+-- rather than storing cycle_id as a property of the mandate itself.
+--
+-- No FK from ledger/plan/committed_schedule to this table: every existing
+-- B9/B10 test constructs an ad hoc mandate_id string never registered here,
+-- and retrofitting a hard FK would break dozens of already-certified tests
+-- for zero R4 benefit. This is a new, independent read source, not a rewrite
+-- of the existing schema's relationships. Additive DDL, same precedent as
+-- every table appended above; nothing under eval/frozen/ is touched.
+CREATE TABLE mandate (
+  mandate_id    TEXT        PRIMARY KEY,
+  amount_paise  BIGINT      NOT NULL,
+  ceiling_paise BIGINT      NOT NULL,   -- clause 4(c): the customer-set max
+  category      TEXT        NOT NULL,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CHECK (amount_paise >= 0),
+  CHECK (ceiling_paise >= amount_paise)
+);

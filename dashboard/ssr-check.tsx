@@ -54,7 +54,20 @@ need(acquirer, "conformal gate", "acquirer");
 need(acquirer, "above AFA", "acquirer");
 const withLedger = M.mandates.find((x: any) => x.ledger.length);
 const d = renderToString(<Drilldown m={withLedger} />);
-for (const s of ["conformal set", "binding constraint", "ledger trail", "slot ", "idempotency key"])
+// R5, 2026-09-05: "slot " used to be in this list and was passing for the
+// WRONG reason -- it matched the literal string "no slot spent", rendered
+// for a decision that spent NO slot, not the chosen slot number the gate
+// actually requires. It only ever passed because the first ledger-bearing
+// mandate happened to also carry a slot-less decision; a data refresh that
+// changed which mandate that is broke it, which is how the weakness was
+// found. Replaced by two checks that cannot pass that way: the glossary
+// term as its own element, and the day the slot landed on.
+for (const s of ["conformal set", "binding constraint", "ledger trail",
+                 ">slot<", "· day ", "idempotency key"])
   need(d, s, "drilldown");
+// The chosen slot NUMBER itself, read from the record rather than hard-coded
+// so this cannot go stale against a data refresh.
+const attempt = withLedger.decisions.find((x: any) => x.chosen_slot !== null);
+if (attempt) need(d, String(attempt.chosen_slot), "drilldown");
 console.log("rendered: merchant " + merchant.length + " chars, acquirer " + acquirer.length +
             " chars, " + drills + " drill-downs, no exceptions");

@@ -33,6 +33,14 @@ class DeclineClass(str, Enum):
     INSUFFICIENT_FUNDS and MANDATE_REVOKED must never collapse into one
     class -- one is a transient liquidity gap, the other a dead instrument.
     UNKNOWN is explicit, never a silent default.
+
+    CUSTOMER_DECLINED (R5) is the customer dismissing ONE collect request,
+    which is neither of those two and is not "no signal" either. It must
+    never collapse into MANDATE_REVOKED for the same reason the two above
+    must never collapse into each other: one dismissed approval prompt is
+    not a revoked mandate. See src/classify/decline_taxonomy.py's docstring
+    finding 3, which established that distinction before a class existed to
+    carry it.
     """
 
     INSUFFICIENT_FUNDS = "INSUFFICIENT_FUNDS"
@@ -41,6 +49,7 @@ class DeclineClass(str, Enum):
     ACCOUNT_CLOSED = "ACCOUNT_CLOSED"
     ISSUER_DECLINE = "ISSUER_DECLINE"
     BANK_TIMEOUT = "BANK_TIMEOUT"
+    CUSTOMER_DECLINED = "CUSTOMER_DECLINED"
     UNKNOWN = "UNKNOWN"
 
 

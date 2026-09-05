@@ -47,4 +47,10 @@
 {"raw": "51", "label": "INSUFFICIENT_FUNDS"}
 {"raw": "U17 - see acquirer for details", "label": "UNKNOWN"}
 {"raw": "N/A", "label": "UNKNOWN"}
-{"raw": "payment_cancelled: customer cancelled the UPI AutoPay mandate approval request", "label": "UNKNOWN"}
+{"raw": "payment_cancelled: customer cancelled the UPI AutoPay mandate approval request", "label": "CUSTOMER_DECLINED"}
+{"raw": "payment_cancelled", "label": "CUSTOMER_DECLINED"}
+{"raw": "The customer declined the collect request on their UPI app.", "label": "CUSTOMER_DECLINED"}
+{"raw": "Customer rejected the collect request sent for the monthly subscription debit.", "label": "CUSTOMER_DECLINED"}
+{"raw": "payment_cancelled: user did not approve the autopay notification and dismissed it", "label": "CUSTOMER_DECLINED"}
+{"raw": "payment_collect_request_expired: customer did not respond to the collect request within the time limit", "label": "BANK_TIMEOUT"}
+{"raw": "The standing instruction was withdrawn by the customer at their bank.", "label": "MANDATE_REVOKED"}

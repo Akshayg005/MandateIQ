@@ -201,3 +201,102 @@ def test_substring_match_googlemaps_not_flagged(tmp_path, monkeypatch):
 
     result = gi.main()
     assert result == 0, "Substring 'llm' in comments/strings should not be flagged"
+
+
+# --- R1: eval/run.py must not import eval.sim2 (Phase B sim only for defensibility report) ---
+
+
+def test_flags_eval_run_importing_eval_sim2_import_form(tmp_path, monkeypatch):
+    """eval/run.py importing eval.sim2 via 'import eval.sim2' must be flagged."""
+    import scripts.guard_invariants as gi
+
+    eval_dir = tmp_path / "eval"
+    eval_dir.mkdir(parents=True)
+    run_file = eval_dir / "run.py"
+    run_file.write_text("import eval.sim2\n", encoding="utf-8")
+
+    monkeypatch.setattr(sys, "argv", ["guard_invariants.py"])
+    monkeypatch.setattr(gi, "resolve_paths", lambda: ([run_file], "test"))
+
+    result = gi.main()
+    assert result != 0, (
+        "eval/run.py importing eval.sim2 via 'import eval.sim2' should be flagged"
+    )
+
+
+def test_flags_eval_run_importing_eval_sim2_from_form(tmp_path, monkeypatch):
+    """eval/run.py importing via 'from eval.sim2 import ...' must be flagged."""
+    import scripts.guard_invariants as gi
+
+    eval_dir = tmp_path / "eval"
+    eval_dir.mkdir(parents=True)
+    run_file = eval_dir / "run.py"
+    run_file.write_text(
+        "from eval.sim2 import Simulator2, generate_corpus\n", encoding="utf-8"
+    )
+
+    monkeypatch.setattr(sys, "argv", ["guard_invariants.py"])
+    monkeypatch.setattr(gi, "resolve_paths", lambda: ([run_file], "test"))
+
+    result = gi.main()
+    assert result != 0, (
+        "eval/run.py importing eval.sim2 via 'from eval.sim2 import' should be flagged"
+    )
+
+
+def test_flags_eval_run_importing_eval_sim2_from_eval_form(tmp_path, monkeypatch):
+    """eval/run.py importing via 'from eval import sim2' must be flagged."""
+    import scripts.guard_invariants as gi
+
+    eval_dir = tmp_path / "eval"
+    eval_dir.mkdir(parents=True)
+    run_file = eval_dir / "run.py"
+    run_file.write_text("from eval import sim2\n", encoding="utf-8")
+
+    monkeypatch.setattr(sys, "argv", ["guard_invariants.py"])
+    monkeypatch.setattr(gi, "resolve_paths", lambda: ([run_file], "test"))
+
+    result = gi.main()
+    assert result != 0, (
+        "eval/run.py importing via 'from eval import sim2' should be flagged"
+    )
+
+
+def test_allows_non_run_file_importing_eval_sim2(tmp_path, monkeypatch):
+    """A file other than eval/run.py (e.g. eval/defensibility.py) can import sim2."""
+    import scripts.guard_invariants as gi
+
+    eval_dir = tmp_path / "eval"
+    eval_dir.mkdir(parents=True)
+    other_file = eval_dir / "defensibility.py"
+    other_file.write_text("from eval.sim2 import Simulator2\n", encoding="utf-8")
+
+    monkeypatch.setattr(sys, "argv", ["guard_invariants.py"])
+    monkeypatch.setattr(gi, "resolve_paths", lambda: ([other_file], "test"))
+
+    result = gi.main()
+    assert result == 0, (
+        "A file other than eval/run.py should be allowed to import eval.sim2"
+    )
+
+
+def test_allows_eval_run_importing_unrelated_modules(tmp_path, monkeypatch):
+    """eval/run.py can import modules other than eval.sim2."""
+    import scripts.guard_invariants as gi
+
+    eval_dir = tmp_path / "eval"
+    eval_dir.mkdir(parents=True)
+    run_file = eval_dir / "run.py"
+    run_file.write_text(
+        "from eval.frozen.simulator import Simulator\n"
+        "from eval.corpus import generate\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(sys, "argv", ["guard_invariants.py"])
+    monkeypatch.setattr(gi, "resolve_paths", lambda: ([run_file], "test"))
+
+    result = gi.main()
+    assert result == 0, (
+        "eval/run.py should be allowed to import other eval modules (just not sim2)"
+    )

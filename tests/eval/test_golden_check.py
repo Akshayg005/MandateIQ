@@ -34,6 +34,7 @@ def _classify_exact_match(raw: str) -> str:
         "ACCOUNT CLOSED": "ACCOUNT_CLOSED",
         "ISSUER DECLINE": "ISSUER_DECLINE",
         "BANK TIMEOUT": "BANK_TIMEOUT",
+        "payment_cancelled": "CUSTOMER_DECLINED",
         "UNKNOWN": "UNKNOWN",
     }
     return mapping.get(raw, "UNKNOWN")
@@ -382,3 +383,60 @@ def test_score_intent_all_high_correct():
     assert result.correct == 3
     assert result.total == 3
     assert result.band_accuracy == 1.0
+
+
+# --- R5: a false CUSTOMER_DECLINED is as unacceptable as a false ----------
+#     MANDATE_REVOKED, and for a strictly worse reason
+
+def test_score_declines_zero_tolerance_false_customer_declined():
+    """R5 (reports/gates.md): CUSTOMER_DECLINED is the WONT_PAY-dominant
+    class that makes the conformal off-ramp gate reachable at all. A FALSE
+    one therefore does not merely mis-label a row -- it pushes belief
+    toward the singleton {WONT_PAY} that fires an off-ramp offer at a
+    customer who was always going to pay. That is the precise harm root
+    CLAUDE.md's safety-design section exists to prevent, so it gets the
+    same zero-tolerance treatment a false MANDATE_REVOKED already has."""
+    rows = [
+        {"raw": "INSUFFICIENT FUNDS", "label": "INSUFFICIENT_FUNDS"},
+        {"raw": "BANK TIMEOUT", "label": "BANK_TIMEOUT"},
+        {"raw": "CARD EXPIRED", "label": "CARD_EXPIRED"},
+    ]
+
+    def offramping_classifier(raw: str) -> str:
+        if "INSUFFICIENT" in raw:
+            return "CUSTOMER_DECLINED"   # a paying customer, routed to the exit
+        return _classify_exact_match(raw)
+
+    result = score_declines(rows, offramping_classifier, {})
+
+    assert result.any_to_customer_declined_confusions == 1
+
+
+def test_score_declines_true_customer_declined_is_not_flagged():
+    """The counterpart: a correctly predicted CUSTOMER_DECLINED must not
+    count against the zero-tolerance check, or the class could never be
+    predicted at all."""
+    rows = [
+        {"raw": "payment_cancelled", "label": "CUSTOMER_DECLINED"},
+        {"raw": "CARD EXPIRED", "label": "CARD_EXPIRED"},
+    ]
+    result = score_declines(rows, _classify_exact_match, {})
+
+    assert result.any_to_customer_declined_confusions == 0
+
+
+def test_a_missed_customer_declined_is_not_zero_tolerance():
+    """Directional, exactly like the MANDATE_REVOKED check it mirrors: the
+    REVERSE error (a real CUSTOMER_DECLINED predicted as something else)
+    costs a retry slot, not a customer, and is reported through aggregate
+    accuracy rather than gated to zero. This project reports both error
+    costs and gates only the one a false positive cannot walk back."""
+    rows = [{"raw": "payment_cancelled", "label": "CUSTOMER_DECLINED"}]
+
+    def missing_classifier(raw: str) -> str:
+        return "UNKNOWN"
+
+    result = score_declines(rows, missing_classifier, {})
+
+    assert result.any_to_customer_declined_confusions == 0
+    assert result.accuracy == 0.0

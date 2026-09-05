@@ -46,8 +46,15 @@ PROTECTED_DIRS = ("src/model/", "src/policy/", "src/core/", "src/classify/")
 # the rule already held -- so `guard_invariants --all` reported "clean" while
 # the violation sat in the file that writes the report. A guard scoped to
 # where a rule is already obeyed is not a guard. (payments-domain review.)
+#
+# Added 2026-09-05 (R6): "src/api/". A directory in neither PROTECTED_DIRS
+# nor MONEY_DIRS gets NO float-money scanning at all -- precisely the
+# scoping hole this comment already records finding in eval/report.py and
+# fixing by widening this tuple. src/api/read.py SERVES money values, so
+# it was added at the same time the package was created rather than after
+# the same bug was found there a second time.
 MONEY_DIRS = PROTECTED_DIRS + ("eval/", "bench/", "scripts/", "src/execute/",
-                               "src/ledger/", "src/ingest/")
+                               "src/ledger/", "src/ingest/", "src/api/")
 LLM_IMPORT = re.compile(
     r"^\s*(?:import|from)\s+("
     r"anthropic|openai|cohere|litellm|vertexai"
@@ -108,6 +115,25 @@ FAULT_SEAM = re.compile(
     re.MULTILINE,
 )
 FAULT_SEAM_OK = ("src/execute/razorpay_client.py", "eval/chaos.py")
+
+# --- R1b: eval/run.py must never import eval.sim2 -----------------------
+# eval/sim2.py is a second, non-frozen simulator that feeds only
+# reports/model_defensibility.md's Phase B section (DECISIONS.md,
+# 2026-09-04, R0) -- it must never reach the three-bar headline
+# eval/run.py produces. Same regex shape as SRC_LLM_IMPORT above, and the
+# same limitation: direct textual `import`/`from` forms only. A relative
+# `from .sim2 import ...` (eval/ is a PEP-420 namespace package, so this
+# resolves), `importlib.import_module("eval.sim2")`, or a transitive import
+# via some other eval/ module all evade this regex -- stats-reviewer,
+# 2026-09-04 (DECISIONS.md, "R1b review pass"). Disclosed, not closed: the
+# same gap already exists for SRC_LLM_IMPORT above and nothing here makes
+# it worse.
+SIM2_IMPORT = re.compile(
+    r"^\s*(?:import|from)\s+eval\.sim2\b"
+    r"|^\s*from\s+eval\s+import\s+\(?\s*[^\n]*\bsim2\b",
+    re.MULTILINE,
+)
+EVAL_RUN_PY = "eval/run.py"
 
 SKIP = (".venv", "node_modules", ".git", "site\\node_modules", "site/node_modules",
         "dashboard/node_modules", "dashboard\\node_modules", "__pycache__")
@@ -181,6 +207,16 @@ def check(path: pathlib.Path) -> list[str]:
             "able to construct one. Allowed only in "
             f"{', '.join(FAULT_SEAM_OK)} and tests/."
         )
+
+    if rel.endswith(EVAL_RUN_PY):
+        m = SIM2_IMPORT.search(text)
+        if m:
+            problems.append(
+                "eval/run.py imports eval.sim2 (R1b, DECISIONS.md 2026-09-04). "
+                "sim2 is a non-frozen side-study simulator for "
+                "reports/model_defensibility.md only and must never feed the "
+                "three-bar evaluation headline."
+            )
 
     if rel.endswith(".py") and OFFRAMP_OK not in rel and "test" not in rel:
         if HARD_CANCEL.search(text):

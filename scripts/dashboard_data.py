@@ -81,7 +81,8 @@ def main(argv: list[str] | None = None) -> int:
         src = REPORTS / name
         if not src.exists():
             if required:
-                print(f"ERROR: {src} is missing -- run .\\run.ps1 eval first",
+                print(f"ERROR: {src} is missing -- run `.\\run.ps1 eval` "
+                      f"(Windows) or `./run.sh eval` (Linux, macOS) first",
                       file=sys.stderr)
                 return 1
             missing.append(name)
@@ -101,7 +102,7 @@ def main(argv: list[str] | None = None) -> int:
         "missing": missing,
     }
     (dest / "manifest.json").write_text(json.dumps(manifest, indent=1),
-                                        encoding="utf-8")
+                                        encoding="utf-8", newline="\n")
     print(f"  wrote   manifest.json (git {manifest['git_sha'][:12]}) -> {target}")
     return 0
 

@@ -53,6 +53,12 @@ Categories (strict, mutually exclusive):
   says "blocked" or "invalid" rather than "closed".
 - ISSUER_DECLINE: issuer-specific decline (not a known category)
 - BANK_TIMEOUT: bank did not respond in time
+- CUSTOMER_DECLINED: the CUSTOMER dismissed, rejected or refused to approve
+  ONE collect request / approval prompt. The customer is the actor, not the
+  bank, and exactly one attempt is affected -- the mandate itself is
+  untouched. Distinct from MANDATE_REVOKED (the whole mandate is gone) and
+  from ISSUER_DECLINE (the BANK refused). If the customer simply let the
+  prompt time out without responding, that is BANK_TIMEOUT, not this.
 - UNKNOWN: unclassifiable
 
 CRITICAL: Never collapse INSUFFICIENT_FUNDS and MANDATE_REVOKED. They are
@@ -66,10 +72,12 @@ its text names "mandate" (mandate is UPI AutoPay's ordinary product noun,
 so text about declining one approval prompt routinely mentions it). Only
 classify MANDATE_REVOKED when the text says the mandate/standing-instruction
 itself was revoked, cancelled, or withdrawn -- not when a single attempt was
-merely declined or not approved in time. When genuinely unsure which of
-these it is, prefer UNKNOWN over MANDATE_REVOKED: UNKNOWN costs a wasted
-retry slot, a false MANDATE_REVOKED stops retrying a mandate that may still
-be alive.
+merely declined or not approved in time. A single declined attempt is
+CUSTOMER_DECLINED. When genuinely unsure which of these it is, prefer
+UNKNOWN over either: UNKNOWN costs a wasted retry slot, a false
+MANDATE_REVOKED stops retrying a mandate that may still be alive, and a
+false CUSTOMER_DECLINED pushes a paying customer toward an off-ramp offer.
+Both of the latter two are errors this system cannot walk back.
 
 Bare or opaque codes with no descriptive text (a short numeric or
 alphanumeric code alone, e.g. "51", generic acquirer-referral text like "see

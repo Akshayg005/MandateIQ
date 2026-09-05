@@ -137,14 +137,14 @@ export function ResultsSection({
         <p className="sign-test-note">
           Deliberately collecting less this cycle to keep a customer paying for
           another year is the whole argument, not a bug. The full list of what
-          this engine cannot do — including the one feature that never fired —
-          is in the repository&rsquo;s README.
+          this engine cannot do — including the one feature that only works on
+          a made-up signal — is in the repository&rsquo;s README.
         </p>
       </div>
 
       {/* Caveats are not banished from this page -- see HowItWorks.tsx, which
           carries the off-ramp finding and opens each explanation on demand.
-          What is deliberately NOT repeated here is the full eight-item list:
+          What is deliberately NOT repeated here is the full eleven-item list:
           a reader at the results table wants the numbers explained, not a
           second copy of the README. The link above is the route to it. */}
     </section>

@@ -144,14 +144,21 @@ function Honesty({ r }: { r: Results }) {
         </li>
         <li>
           <strong>
-            The off-ramp never actually ran. It was chosen{" "}
-            {r.offers_fired_total} times, across every batch and every stress
-            test.
+            The off-ramp only runs because the test data was made to let it.
+            It was chosen {r.offers_fired_total} times across every batch and
+            every stress test, and {r.false_offramp_total} of those{" "}
+            {r.offramp_scored_total} went to someone who would have paid
+            anyway.
           </strong>{" "}
           Offering someone a graceful exit is the whole reason this project
-          exists, and the safety check in front of it is set so tightly that it
-          can never be satisfied by this data. So that path is untested, not
-          tested and found wanting. It is the biggest gap here.
+          exists. It used to be chosen zero times: the bank messages in the
+          simulation could not push the &ldquo;wants to leave&rdquo; estimate
+          high enough for the safety check to pass, at any setting. A new
+          message type fixed that — but the harness decides when to send it by
+          peeking at each customer&rsquo;s real reason for failing, which no
+          live system can do. So this path is now tested and imperfect rather
+          than untested, which is better, and it is still not evidence that a
+          real signal would work. It remains the biggest gap here.
         </li>
         <li>
           <strong>

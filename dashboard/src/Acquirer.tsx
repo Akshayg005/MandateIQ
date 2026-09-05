@@ -274,8 +274,14 @@ export default function Acquirer({ regimes }: { regimes: Regimes }) {
             The gate is calibrated once, on baseline, and reused under every
             regime — a regime breaks exchangeability by construction, so
             coverage is <em>measured</em> per cell rather than assumed.{" "}
-            <strong>It under-covers.</strong> The {"{WONT_PAY}"} singleton rate is
-            zero everywhere, which is why the off-ramp never fires.
+            <strong>It under-covers.</strong> The {"{WONT_PAY}"} singleton rate
+            is small but no longer zero — R5 gave the evaluation a decline
+            class that can move belief toward &ldquo;wants to leave&rdquo;, so
+            the off-ramp fires. That signal is <strong>fabricated</strong>:
+            the harness reads each customer&rsquo;s real hidden reason to
+            decide when to emit it, which no live system can do. Read the
+            column as &ldquo;the gate is wired and reachable&rdquo;, never as
+            evidence that a real feed carries this much information.
           </p>
           <p className="legend">
             <strong>Columns:</strong> the model returns a <ConformalSet />{" "}
@@ -283,7 +289,7 @@ export default function Acquirer({ regimes }: { regimes: Regimes }) {
             contained the truth · <em>singleton rate</em> is how often it shrank
             to a single explanation, and the {"{WONT_PAY}"} column is how often
             that single explanation was &ldquo;wants to leave&rdquo; — the only
-            case that can open an exit offer, and it is zero in every cell.
+            case that can open an exit offer.
           </p>
         </div>
       </section>

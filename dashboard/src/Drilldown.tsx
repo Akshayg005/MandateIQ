@@ -11,22 +11,35 @@
  *    "why this day" has no interesting answer yet, and the panel says so.
  *  - the binding constraint is null on 299 of 316 decisions -- most choices
  *    are genuine value comparisons, not forced ones.
- *  - the conformal set is often, but NOT always, all three causes. About a
- *    third of decisions are singletons. The {WONT_PAY} singleton -- the one
- *    that would open the off-ramp -- CAN appear here (R2, 2026-09-04): on a
- *    mandate whose `binding_constraint` reads OPTED_OUT, the belief was
- *    already collapsed to near-certain WONT_PAY by the time this decision
- *    ran, because the customer had already left. OFFER = 0 anyway: clause
- *    6(c) denies every action but STOP once opted_out is true, singleton or
- *    not -- so a WONT_PAY singleton next to an OPTED_OUT binding constraint
- *    is the retrospective record of a decision already made, never an
- *    off-ramp opportunity this run missed. The aggregate coverage/singleton
- *    RATE shown elsewhere (Acquirer view) excludes these retrospective
- *    queries entirely, which is why it can correctly read zero even though
- *    an individual mandate's drill-down can show this singleton. The set
- *    line renders the two causes that were EXCLUDED as struck-through, so
- *    an all-three set reads as "excluded nothing" rather than as a
- *    confident answer.
+ *  - the conformal set is often, but NOT always, all three causes. Roughly
+ *    a third of decisions are singletons. The {WONT_PAY} singleton -- the
+ *    one that opens the off-ramp -- appears in two quite different places,
+ *    and confusing them would misread the panel:
+ *
+ *      1. On a LIVE decision, where it actually fires OFFER (R5,
+ *         2026-09-05). This export runs under the same synthetic WONT_PAY
+ *         channel the published grid does -- a channel that reads the
+ *         simulator's privileged true cause, disclosed as fabricated in
+ *         reports/regimes.md and README's "What this can't do". This
+ *         comment previously said "OFFER = 0 anyway"; that was true before
+ *         R5 and is not true now, so it has been rewritten rather than
+ *         left standing.
+ *      2. On a RETROSPECTIVE post-opt-out re-solve (R2, 2026-09-04), where
+ *         belief was already collapsed to near-certain WONT_PAY because
+ *         the customer had left. OFFER cannot fire there: clause 6(c)
+ *         denies every action but STOP once opted_out is true, singleton
+ *         or not. A WONT_PAY singleton next to an OPTED_OUT binding
+ *         constraint is the record of a decision already made, never an
+ *         off-ramp opportunity missed.
+ *
+ *    The aggregate coverage/singleton RATE shown elsewhere (Acquirer view)
+ *    excludes the retrospective queries entirely, which is why it and an
+ *    individual drill-down can legitimately disagree. The set line renders
+ *    the two causes that were EXCLUDED as struck-through, so an all-three
+ *    set reads as "excluded nothing" rather than as a confident answer.
+ *  - an OFFER decision now carries the actual pause/downgrade/cancel menu,
+ *    rendered below the decision. The system offers; the customer decides
+ *    (invariant 6). Nothing here executes any of those steps.
  */
 import type { Cause, Decision, LedgerRow, MandateRecord } from "./data";
 import { BindingConstraint, ConformalSet, Slot } from "./glossary";
@@ -143,6 +156,22 @@ function DecisionBlock({ d }: { d: Decision }) {
         <dt>decision_sha256</dt>
         <dd className="dim">{d.decision_sha256}</dd>
       </dl>
+
+      {d.offer && (
+        <div className="offer">
+          <div className="dim">
+            {"the off-ramp offered, in order — the customer chooses; this system never cancels"}
+          </div>
+          <ol>
+            {d.offer.steps.map((s) => (
+              <li key={s.kind}>
+                <strong>{s.kind}</strong> — {s.description}
+              </li>
+            ))}
+          </ol>
+          <div className="dim">{`expires after day ${d.offer.expires_on_day}`}</div>
+        </div>
+      )}
 
       {d.action === "ATTEMPT" && d.outcome === null && (
         <p className="note">

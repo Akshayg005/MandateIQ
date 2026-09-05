@@ -53,6 +53,16 @@ export interface Results extends Bars {
   gate_kind: string;
   regimes_where_we_lose: string[];
   offers_fired_total: number;
+  /**
+   * R5. The off-ramp's own error costs, so the Merchant view reads the PAIR
+   * rather than a bare count. `offramp_scored_total` is the exact
+   * denominator `false_offramp_total` was measured against -- never
+   * `offers_fired_total`, which can differ if a post-terminal re-solve ever
+   * returns OFFER. Optional: an older results.json (pre-R5) has neither.
+   */
+  offramp_scored_total?: number;
+  false_offramp_total?: number;
+  true_offramp_total?: number;
   false_reauth_total: number;
   reauth_total: number;
   attempt_after_terminal_total: number;
@@ -130,7 +140,26 @@ export interface Decision {
   binding_constraint: string | null;
   solver_version: string;
   decision_sha256: string;
+  /**
+   * The actual pause -> downgrade -> cancel menu, present iff `action` is
+   * "OFFER" (R5). Before R5 src/policy/offramp.py had no caller anywhere,
+   * so a chosen OFFER produced no Offer object and this panel could only
+   * say that something was offered, never what. The order is load-bearing:
+   * least drastic and most reversible first, so a customer who only needed
+   * a pause is never shown "cancel" as the headline option.
+   */
+  offer: Offer | null;
   outcome: string | null;
+}
+
+export interface OffRampStep {
+  kind: "PAUSE" | "DOWNGRADE" | "CANCEL";
+  description: string;
+}
+
+export interface Offer {
+  expires_on_day: number;
+  steps: OffRampStep[];
 }
 
 /** A ledger row exactly as src/ledger/store.py read it back. */

@@ -152,3 +152,86 @@ def test_account_closed_dominant_cause_is_cant_pay_ever():
 
     assert cant_pay_ever > cant_pay_now
     assert cant_pay_ever > wont_pay
+
+
+# --- R5: the WONT_PAY-dominant row -----------------------------------------
+
+def test_customer_declined_is_wont_pay_dominant():
+    """R5 (reports/gates.md): before this row existed no DeclineClass had a
+    WONT_PAY prior above 0.45, and MANDATE_REVOKED tied WONT_PAY with
+    CANT_PAY_EVER at 0.45/0.45 -- a tie is absorbing under Bayes, so belief
+    could never reach the {WONT_PAY} singleton ConformalCauseGate fires on.
+    This is the row that makes the off-ramp lane REACHABLE at all."""
+    from src.classify.cause_map import prior
+
+    p = prior(DeclineClass.CUSTOMER_DECLINED)
+    assert p[Cause.WONT_PAY] > p[Cause.CANT_PAY_NOW]
+    assert p[Cause.WONT_PAY] > p[Cause.CANT_PAY_EVER]
+    assert p[Cause.WONT_PAY] > 0.45
+
+
+def test_customer_declined_is_not_near_degenerate():
+    """Dominant, but deliberately not near-degenerate: ONE observation must
+    not be able to slam belief into a singleton by itself. The off-ramp is
+    the one action a false positive cannot walk back."""
+    from src.classify.cause_map import prior
+
+    p = prior(DeclineClass.CUSTOMER_DECLINED)
+    assert p[Cause.WONT_PAY] < 0.90
+    assert all(v > 0.0 for v in p.values())
+
+
+def test_customer_declined_and_mandate_revoked_stay_distinct():
+    """Two different events -- one dismissed collect request vs a revoked
+    mandate -- must not carry the same cause distribution, or the taxonomy
+    split buys nothing downstream."""
+    from src.classify.cause_map import prior
+
+    assert prior(DeclineClass.CUSTOMER_DECLINED) != prior(DeclineClass.MANDATE_REVOKED)
+
+
+def test_prior_version_records_the_new_row():
+    """PRIOR_VERSION is stamped per-row in ingested_event.prior_version; a
+    changed table under an unchanged version makes a persisted belief
+    untraceable."""
+    from src.classify.cause_map import PRIOR_VERSION
+
+    assert PRIOR_VERSION == "v3"
+
+
+def test_a_raw_decline_string_maps_to_the_right_cause():
+    """`.claude/skills/new-failure-class` checklist item 6: "a test
+    asserting the RAW STRING maps to the right cause" -- end to end through
+    classify() and prior(), not just through the class in isolation, so a
+    taxonomy rule and a prior row that disagree cannot both pass their own
+    tests while the pair is broken."""
+    from src.classify.cause_map import prior
+    from src.classify.decline_taxonomy import classify
+
+    raw = "payment_cancelled: customer cancelled the UPI AutoPay mandate approval request"
+    dominant = max(prior(classify(raw, None)).items(), key=lambda kv: kv[1])[0]
+    assert dominant == Cause.WONT_PAY
+
+    # And the two neighbours it must never be confused with, same route.
+    revoked = "the customer has cancelled the mandate at their bank"
+    assert max(prior(classify(revoked, None)).items(),
+               key=lambda kv: kv[1])[0] == Cause.CANT_PAY_EVER
+    funds = "insufficient_funds: the account did not have enough funds"
+    assert max(prior(classify(funds, None)).items(),
+               key=lambda kv: kv[1])[0] == Cause.CANT_PAY_NOW
+
+
+def test_the_model_design_matrix_does_not_encode_declineclass_at_all():
+    """`.claude/skills/new-failure-class` checklist item 4 asks that
+    person_period one-hot encode the new class and that an unseen class map
+    to an explicit "unknown" bucket rather than silently becoming
+    all-zeros. Checked and NOT APPLICABLE here, pinned rather than assumed:
+    FEATURE_COLUMNS is ("const", "slot_3", "slot_4", "in_salary_window") --
+    the fitted hazard model never sees a DeclineClass in any form, so
+    adding an 8th class cannot create an all-zeros row. If that ever
+    changes, this test fails and item 4 becomes live work."""
+    from src.model.competing_risks import FEATURE_COLUMNS, WIDENED_FEATURE_COLUMNS
+
+    for col in tuple(FEATURE_COLUMNS) + tuple(WIDENED_FEATURE_COLUMNS):
+        assert "decline" not in col.lower()
+        assert not any(dc.value.lower() in col.lower() for dc in DeclineClass)

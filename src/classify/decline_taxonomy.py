@@ -1,4 +1,4 @@
-"""Issuer/gateway decline strings, normalised into a fixed 7-class taxonomy.
+"""Issuer/gateway decline strings, normalised into a fixed 8-class taxonomy.
 
 classify(code, text) never guesses: unrecognised input is DeclineClass.UNKNOWN,
 routed downstream to the B11 LLM normaliser rather than defaulted into some
@@ -30,17 +30,32 @@ research shape this file's design:
    "expir*" fragment to BOTH appear, never "expired" alone.
 
 3. `payment_cancelled` (the customer backed out of THIS attempt's approval
-   prompt) is deliberately left unclassified (-> UNKNOWN) rather than folded
-   into MANDATE_REVOKED: declining one collect request is not evidence the
-   whole mandate was revoked, and conflating the two would violate the one
-   hard invariant this file is tested against (INSUFFICIENT_FUNDS and
-   MANDATE_REVOKED, and by the same logic any WONT_PAY-flavoured signal,
-   must never collapse together). This needs an explicit guard, not just an
-   absent keyword: "mandate" is UPI AutoPay's ordinary product noun, so a
-   `payment_cancelled` event's own free text routinely names the mandate it
-   belongs to ("...cancelled the UPI AutoPay mandate approval request"),
-   which would otherwise satisfy the MANDATE_REVOKED check below by
-   accident -- found by payments-domain's B3 review.
+   prompt) must never be folded into MANDATE_REVOKED: declining one collect
+   request is not evidence the whole mandate was revoked, and conflating
+   the two would violate the one hard invariant this file is tested against
+   (INSUFFICIENT_FUNDS and MANDATE_REVOKED, and by the same logic any
+   WONT_PAY-flavoured signal, must never collapse together). This needs an
+   explicit guard, not just an absent keyword: "mandate" is UPI AutoPay's
+   ordinary product noun, so a `payment_cancelled` event's own free text
+   routinely names the mandate it belongs to ("...cancelled the UPI AutoPay
+   mandate approval request"), which would otherwise satisfy the
+   MANDATE_REVOKED check below by accident -- found by payments-domain's B3
+   review.
+
+   R5 (2026-09-05, v2): that guard is NARROWED, not deleted. Until R5 this
+   signal was left unclassified (-> UNKNOWN) purely because no class
+   covered it: a real WONT_PAY-flavoured event with nowhere to go. That
+   absence had a measured downstream cost -- no DeclineClass had a WONT_PAY
+   prior above 0.45, so `src/policy/belief.py`'s posterior could never reach
+   the `{WONT_PAY}` singleton `ConformalCauseGate` fires on, and the entire
+   off-ramp lane was structurally unreachable (reports/gates.md, R5).
+   `DeclineClass.CUSTOMER_DECLINED` now carries it. The guard still stands
+   in its original job -- `payment_cancelled` still cannot become
+   MANDATE_REVOKED -- it now routes the event to a class of its own instead
+   of to UNKNOWN. The CUSTOMER_DECLINED check is ordered BEFORE the
+   MANDATE_REVOKED one for exactly that reason, so the guard is expressed
+   as a positive classification rather than as a negative lookahead that
+   could silently stop applying.
 
 Known, disclosed gaps this file does NOT attempt to close (payments-domain's
 B3 review, coverage pre-conceded per PLAN_DETAIL.md): raw NPCI/NACH response
@@ -54,9 +69,11 @@ parameter already accepts arbitrary free text for that reason, this file
 just doesn't yet contain rules for that specific vocabulary. Also: a decline
 whose real cause is "amount exceeds the mandate ceiling" (clause 4(c)
 territory, not a decline-taxonomy concept) has no dedicated class among the
-7 -- it lands in ISSUER_DECLINE, the least-wrong available bucket, since
-DeclineClass's members are a B1 artifact and adding an 8th is out of scope
-here.
+8 -- it lands in ISSUER_DECLINE, the least-wrong available bucket. (This
+paragraph previously said "among the 7 ... adding an 8th is out of scope
+here". R5 did add an 8th, CUSTOMER_DECLINED, for a different signal
+entirely; the ceiling-exceeded gap is still open and still out of scope,
+so the sentence is corrected rather than deleted.)
 """
 from __future__ import annotations
 
@@ -68,7 +85,9 @@ from src.core.types import DeclineClass
 # grow all week" (new-failure-class skill), and an unversioned classifier
 # feeding a belief is the same gap B11's normaliser-versioning gate exists
 # to close, just for keyword rules instead of an LLM call.
-TAXONOMY_VERSION = "v1"
+# v2 (R5, 2026-09-05): `payment_cancelled` / "declined the collect request"
+# now classify as CUSTOMER_DECLINED instead of falling through to UNKNOWN.
+TAXONOMY_VERSION = "v2"
 
 
 def classify(code: str | None, text: str | None) -> DeclineClass:
@@ -82,12 +101,31 @@ def classify(code: str | None, text: str | None) -> DeclineClass:
     if not haystack.strip():
         return DeclineClass.UNKNOWN
 
-    # Highest-consequence, most specific check first -- see docstring
-    # finding 1. Guarded against "payment_cancelled" (docstring finding 3 /
-    # payments-domain B3 review): that code's own free text routinely names
-    # "mandate" as the ordinary UPI AutoPay product noun, which would
-    # otherwise satisfy this check for a per-attempt cancel, not a real
-    # mandate revocation.
+    # The customer dismissed THIS collect request -- checked FIRST, ahead of
+    # MANDATE_REVOKED, because it is the more specific reading of the same
+    # words and because ordering it here is what keeps docstring finding 3's
+    # guard alive as a positive classification rather than a negative
+    # lookahead (R5). Every phrase requires the CUSTOMER as the actor: bare
+    # "declined" is an ISSUER_DECLINE keyword further down and must stay
+    # one.
+    if any(kw in haystack for kw in (
+        "payment_cancelled",
+        "customer cancelled the collect", "customer declined the collect",
+        "declined the collect request", "cancelled the collect request",
+        "customer declined the mandate approval",
+        "customer did not approve", "customer rejected the collect",
+    )):
+        return DeclineClass.CUSTOMER_DECLINED
+
+    # Highest-consequence, most specific check second -- see docstring
+    # finding 1. The `payment_cancelled` exclusion below is retained
+    # (docstring finding 3 / payments-domain B3 review): that code's own
+    # free text routinely names "mandate" as the ordinary UPI AutoPay
+    # product noun, which would otherwise satisfy this check for a
+    # per-attempt cancel, not a real mandate revocation. Belt and braces
+    # with the CUSTOMER_DECLINED block above -- the guard that existed
+    # before a class existed to carry the signal is not removed just
+    # because a second mechanism now also covers it.
     if (
         "mandate" in haystack
         and ("revoked" in haystack or "cancelled" in haystack)

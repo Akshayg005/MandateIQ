@@ -55,7 +55,7 @@ from dataclasses import dataclass
 from typing import Mapping
 
 from src.classify.cause_map import PRIOR_VERSION, prior as _cause_map_prior
-from src.core.types import Cause, DeclineClass
+from src.core.types import Cause, DeclineClass, Outcome
 
 # Fixed positional order every tuple-shaped Belief quantity uses. An
 # ordering bug here would silently mislabel causes in every consumer.
@@ -217,6 +217,82 @@ def update(b: Belief, obs: DeclineClass, *, source_version: str) -> Belief:
     return Belief(probs=probs, provenance=provenance)
 
 
+def update_from_likelihood_ratio(
+    b: Belief, lr: Mapping[Cause, float], *, source_version: str
+) -> Belief:
+    """Bayes' rule on a likelihood ratio the CALLER declares: the posterior
+    is proportional to `b[c] * lr[c]`, renormalised. Identical arithmetic to
+    update(); the only difference is where the likelihood vector comes from.
+
+    **This module never invents a likelihood ratio.** update() derives one
+    from an observed DeclineClass by inverting cause_map.prior() through
+    REFERENCE_PRIOR -- a channel this codebase owns end to end. This
+    function exists for evidence that arrives from OUTSIDE that vocabulary,
+    where the mapping from observation to likelihood is the caller's
+    declared modelling choice and must be visible at the call site rather
+    than buried here.
+
+    R5, 2026-09-05 (reports/gates.md, "Post-B16 remediation gates"): the
+    motivating caller is the exit-intent channel. `src/llm/intent.py`
+    returns a float in [0, 1] from support-ticket text, and
+    `scripts/guard_invariants.py`'s SRC_LLM_IMPORT forbids `src/policy/`
+    from importing `src.llm` in any form -- so the score cannot arrive here
+    as an LLM call, and must not. It arrives as a plain declared ratio,
+    computed by `src/execute/intent_channel.py` (the layer already
+    permitted to touch both sides) at a DECLARED operating point. This
+    module stays free of LLM knowledge, Outcome knowledge and
+    DeclineClass knowledge alike -- the same separation that already keeps
+    the Outcome->distribution mapping in observe_terminal()'s callers
+    rather than in observe_terminal().
+
+    Only RATIOS matter: any factor common to all three causes cancels
+    inside Bayes' rule, exactly as likelihood()'s deliberate lack of
+    normalisation already relies on. So `lr` may be an unnormalised
+    likelihood vector, a genuine ratio against a reference cause, or a
+    calibrated P(evidence | cause) -- all three give the same posterior.
+
+    Validated on the same terms as init()/observe_terminal(): `lr` must
+    name every Cause exactly once and contain no negative or non-finite
+    entry, and at least one entry must be positive. An all-zero `lr` is
+    rejected here rather than allowed to raise the "leaves no support"
+    error below, because an all-zero ratio is a caller bug, not evidence
+    that contradicts the belief.
+
+    source_version is REQUIRED and keyword-only, the same discipline
+    update() and observe_terminal() apply, for the same reason: a belief
+    whose evidence channel cannot be named is not auditable (PLAN_DETAIL.md
+    B11 gate). Pass the channel's own version string -- never a taxonomy
+    version, since no taxonomy ran.
+    """
+    if set(lr.keys()) != set(Cause):
+        raise BeliefError(
+            f"lr must name every Cause exactly once; got keys "
+            f"{set(lr.keys())!r}, expected {set(Cause)!r}"
+        )
+    ratios = tuple(float(lr[c]) for c in CAUSE_ORDER)
+    if any(r < 0.0 or r != r or r in (float("inf"), float("-inf")) for r in ratios):
+        raise BeliefError(
+            f"lr must be finite and non-negative for every cause; got {ratios}"
+        )
+    if not any(r > 0.0 for r in ratios):
+        raise BeliefError(
+            f"lr is zero for every cause ({ratios}) -- that is a caller bug, "
+            "not evidence: no observation can rule out all three causes at once"
+        )
+    _validate_source_version(source_version)
+    unnorm = tuple(b.probs[i] * ratios[i] for i in range(len(CAUSE_ORDER)))
+    total = sum(unnorm)
+    if total <= 0.0:
+        raise BeliefError(
+            f"update_from_likelihood_ratio({b.probs}, {ratios}) leaves no "
+            "support: every cause this evidence is consistent with already "
+            "had zero prior mass"
+        )
+    probs = tuple(u / total for u in unnorm)
+    provenance = f"{_provenance()};source={source_version}"
+    return Belief(probs=probs, provenance=provenance)
+
+
 def observe_terminal(cause_probs: Mapping[Cause, float], *, source_version: str) -> Belief:
     """A Belief from a MEASURED posterior over the three causes, given an
     OBSERVED terminal outcome (DEAD or OPTED_OUT) -- conditioning on a
@@ -301,3 +377,65 @@ def quantised(b: Belief, step: float) -> tuple[int, int, int]:
     backward-induction memoisation keys on (PLAN_DETAIL.md:1022):
     `(quantised(b, 1e-6), r, ctx.signature())`."""
     return tuple(round(p / step) for p in b.probs)
+
+
+# --- observed-terminal-outcome measurements, for observe_terminal() callers -
+
+# R4, 2026-09-04 (reports/gates.md, "Post-B16 remediation gates"): relocated
+# here from eval/run.py, where these were first measured and used (R2,
+# 2026-09-04). `src/` must never import `eval/` (the same backwards-layering
+# rule R1b's eval/sim2.py design already established for its own
+# issuer/instrument constants, which live in src/model/competing_risks.py for
+# the identical reason) -- and R4's src/execute/cycle.py is the first
+# PRODUCTION caller of observe_terminal(), so a value only eval/ could see
+# would be unreachable from src/. eval/run.py now imports these from here
+# instead of defining its own copy; nothing about the values changed.
+#
+# The Outcome -> MEASURED posterior mapping for an OBSERVED terminal outcome
+# -- not a proxy decline class to Bayes-update on. Measured, not assumed: a
+# degenerate 1.0 (the first version of observe_terminal() itself) was checked
+# against eval/frozen/sim_config.yaml's own generative process (the `nominal`
+# arm) and found FALSE. Direct 200-seed simulation (`sim.attempt()` driven to
+# the first DEAD/OPTED_OUT outcome per mandate, ground truth read from
+# `m.initial_cause` -- the same privileged, score-only read
+# `false_reauth_count` already uses) measures:
+#
+#   P(CANT_PAY_EVER | DEAD)    = 6882 / 7654 = 0.8991   (n=7654)
+#   P(WONT_PAY | OPTED_OUT)    = 8617 / 9532 = 0.9040   (n=9532)
+#
+# -- roughly 10% of each terminal outcome has a DIFFERENT true cause: a
+# CANT_PAY_NOW or WONT_PAY mandate can still draw a DEAD event, since
+# `sim_config.yaml`'s `base_dead`/`base_optout` rates are LOW but never zero
+# for the "wrong" causes (e.g. CANT_PAY_NOW/WONT_PAY both carry
+# `base_dead: 0.02` against CANT_PAY_EVER's `0.55`). A degenerate 1.0 was
+# additionally IRREVERSIBLE -- see observe_terminal()'s own docstring above --
+# which these measured, non-zero-everywhere distributions are not.
+#
+# THIS IS A POINT-IN-TIME MEASUREMENT of eval/frozen/sim_config.yaml's own
+# generative process, not a value that re-derives itself. If those hazard
+# rates ever changed (they can't -- eval/frozen/ is immutable after the Day-1
+# freeze -- but a future reader should not assume this table stays correct by
+# construction), this table would go stale silently: no test currently
+# re-measures and compares against a live simulation on every run, only this
+# docstring explains the method. RECOVERED is deliberately absent from this
+# mapping -- the cycle succeeded, there is no cause left to decide, and no
+# caller should invoke observe_terminal()/with_terminal() for it.
+TERMINAL_OBSERVED_CAUSE_PROBS: dict[Outcome, dict[Cause, float]] = {
+    Outcome.DEAD: {
+        Cause.CANT_PAY_EVER: 0.8991, Cause.WONT_PAY: 0.0512, Cause.CANT_PAY_NOW: 0.0497,
+    },
+    Outcome.OPTED_OUT: {
+        Cause.WONT_PAY: 0.9040, Cause.CANT_PAY_NOW: 0.0684, Cause.CANT_PAY_EVER: 0.0276,
+    },
+}
+
+# Distinct from a taxonomy/normaliser source_version: this one stamps a
+# belief collapsed by observe_terminal() from an ACTUALLY OBSERVED terminal
+# Outcome -- a real ledger fact in production (the mandate's own terminal
+# lifecycle/execution state), not a decline string classified by
+# src/classify/ or src/llm/. Kept distinctly named so a reader grepping the
+# ledger for either string can tell which kind of evidence produced a given
+# belief (B11's "a belief that cannot be traced to a specific normaliser
+# version is not auditable", the same requirement applied to a different
+# evidence kind).
+TERMINAL_OBSERVATION_SOURCE_VERSION = "eval-observed-terminal-v1"

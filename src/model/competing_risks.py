@@ -158,6 +158,24 @@ _AMOUNT_BAND_CUT_3 = 1_062_500
 # same convention as slot 2 being the reference for slot_3/slot_4 below).
 _CATEGORY_LEVELS: tuple[str, ...] = ("insurance_premium", "mutual_fund", "credit_card_bill")
 
+# ISSUER_LEVELS / INSTRUMENT_LEVELS -- R1 Phase B (2026-09-04). Vocabulary
+# for eval/sim2.py's covariates: a second, non-frozen simulator whose DGP
+# actually varies outcomes by issuer, instrument type and mandate age,
+# because eval/frozen/simulator.py never generates any of the three (see
+# this file's own module docstring and src/model/features.py's UNSOURCED
+# dict). Defined here, not in eval/sim2.py, so there is exactly one source
+# of truth for the vocabulary this module's _design_matrix() validates
+# against -- eval/sim2.py imports these FROM here, the same direction every
+# eval/ module already depends on src/, never the reverse. First level of
+# each is the reference/omitted level, same convention as _CATEGORY_LEVELS
+# and slot 2 above. `issuer_gamma` (not the reference) is the one eval/sim2.py
+# gives an elevated dead-hazard, so its own name doubles up in the resulting
+# dummy column (`issuer_issuer_gamma` -- "issuer_" + the level's own full
+# name); left as-is rather than stripping the redundant prefix, since a
+# stripped name would silently diverge from the level string itself.
+ISSUER_LEVELS: tuple[str, ...] = ("issuer_alpha", "issuer_beta", "issuer_gamma", "issuer_delta")
+INSTRUMENT_LEVELS: tuple[str, ...] = ("upi_autopay", "debit_card", "credit_card")
+
 # _design_matrix() always computes whichever of these its `columns` argument
 # actually asks for; FEATURE_COLUMNS selects the four `fit()` uses by
 # DEFAULT -- see module docstring. WIDENED_FEATURE_COLUMNS is the R1
@@ -173,6 +191,25 @@ _ALL_DESIGN_COLUMNS: tuple[str, ...] = (
 WIDENED_FEATURE_COLUMNS: tuple[str, ...] = FEATURE_COLUMNS + (
     "amount_band_2", "amount_band_3", "amount_band_4",
     "category_insurance_premium", "category_mutual_fund", "category_credit_card_bill",
+)
+
+# SIM2_FEATURE_COLUMNS -- R1 Phase B (2026-09-04): the design used to fit
+# against eval/sim2.py's corpus, never against the real (frozen-simulator or
+# eval/corpus.py) one, since issuer_id/instrument_type/mandate_age_days do
+# not exist there. Deliberately NOT folded into `_ALL_DESIGN_COLUMNS` below
+# (unlike WIDENED_FEATURE_COLUMNS's amount and category groups): those were
+# sourceable from the real, already-assembled corpus frame, so growing the
+# default was safe. issuer_id/instrument_type/mandate_age_days are not
+# sourceable from any real frame this module is ever handed in production,
+# so making them part of the DEFAULT no-arg `_design_matrix()` call would
+# make that default unusable on real data. SIM2_FEATURE_COLUMNS is a third,
+# fully separate alternative -- pass it to fit()'s `feature_columns`
+# explicitly, exactly like WIDENED_FEATURE_COLUMNS.
+SIM2_FEATURE_COLUMNS: tuple[str, ...] = (
+    FEATURE_COLUMNS
+    + tuple(f"issuer_{level}" for level in ISSUER_LEVELS[1:])
+    + tuple(f"instrument_{level}" for level in INSTRUMENT_LEVELS[1:])
+    + ("mandate_age_years",)
 )
 
 
@@ -270,6 +307,47 @@ def _design_matrix(df: pd.DataFrame, *, columns: tuple[str, ...] = _ALL_DESIGN_C
             )
         for level in _CATEGORY_LEVELS:
             out[f"category_{level}"] = (category == level).astype(float)
+
+    # R1 Phase B (2026-09-04): issuer_id / instrument_type / mandate_age_days
+    # groups, requested only via SIM2_FEATURE_COLUMNS -- see that constant's
+    # own comment for why these are not part of _ALL_DESIGN_COLUMNS's
+    # default. Same loud-not-silent unknown-value discipline as the category
+    # group above (a stats-reviewer-found gap there, R1a): a typo'd issuer or
+    # instrument would otherwise silently score as the reference level.
+    issuer_dummy_cols = {f"issuer_{level}" for level in ISSUER_LEVELS[1:]}
+    if issuer_dummy_cols & needed:
+        if "issuer_id" not in df.columns:
+            raise ValueError("design matrix input is missing required column(s): ['issuer_id']")
+        issuer = df["issuer_id"].astype(str)
+        unknown = sorted(set(issuer.unique()) - set(ISSUER_LEVELS))
+        if unknown:
+            raise ValueError(
+                f"design matrix input has issuer_id value(s) outside the known "
+                f"vocabulary {sorted(ISSUER_LEVELS)}: {unknown} -- a typo'd issuer "
+                f"would otherwise silently score as the reference level"
+            )
+        for level in ISSUER_LEVELS[1:]:
+            out[f"issuer_{level}"] = (issuer == level).astype(float)
+
+    instrument_dummy_cols = {f"instrument_{level}" for level in INSTRUMENT_LEVELS[1:]}
+    if instrument_dummy_cols & needed:
+        if "instrument_type" not in df.columns:
+            raise ValueError("design matrix input is missing required column(s): ['instrument_type']")
+        instrument = df["instrument_type"].astype(str)
+        unknown = sorted(set(instrument.unique()) - set(INSTRUMENT_LEVELS))
+        if unknown:
+            raise ValueError(
+                f"design matrix input has instrument_type value(s) outside the known "
+                f"vocabulary {sorted(INSTRUMENT_LEVELS)}: {unknown} -- a typo'd "
+                f"instrument would otherwise silently score as the reference level"
+            )
+        for level in INSTRUMENT_LEVELS[1:]:
+            out[f"instrument_{level}"] = (instrument == level).astype(float)
+
+    if "mandate_age_years" in needed:
+        if "mandate_age_days" not in df.columns:
+            raise ValueError("design matrix input is missing required column(s): ['mandate_age_days']")
+        out["mandate_age_years"] = df["mandate_age_days"].astype(float) / 365.0
 
     return out[list(columns)]
 

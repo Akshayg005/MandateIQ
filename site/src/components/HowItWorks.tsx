@@ -14,9 +14,14 @@
  * present in the server-rendered HTML.
  *
  * The fourth card is a limit, not a step, and it is styled differently on
- * purpose. The off-ramp -- the reason this project exists -- never fires in
- * any published run, and a reader who discovers that in the README after
- * being told the site's version should not find the two disagreeing.
+ * purpose. Until R5 (2026-09-05) it said the off-ramp -- the reason this
+ * project exists -- never fired in any published run. It fires now, but only
+ * because the evaluation feeds it a FABRICATED signal that reads the
+ * simulator's own hidden answer, so the card still leads with the limit
+ * rather than the number. A reader who finds the README's version afterwards
+ * must not find the two disagreeing; that is the whole reason this card
+ * exists, and it is why the card was rewritten rather than deleted when the
+ * result changed.
  */
 import { Reveal } from './Reveal'
 import { ExplainMore } from './Explain'
@@ -140,19 +145,32 @@ export function HowItWorks({ id }: { id: string }) {
 
         <Reveal className="how-step how-step--caveat">
           <span className="how-step-n">!</span>
-          <h3>And the limit: that off-ramp never fired</h3>
+          <h3>And the limit: that off-ramp only fires on a made-up signal</h3>
           <p>
-            In every published run, the safety check above never opened. Not
-            once. So the feature this project exists for is untested — not
-            tested and found wanting.
+            Until recently the safety check above never opened. Not once, in
+            any published run. It opens now — but only because the evaluation
+            hands it a bank message it invented, using the hidden answer it is
+            supposed to be guessing. So the feature this project exists for is
+            tested-and-imperfect rather than untested, which is better; it is
+            still not evidence that a real signal would work.
           </p>
-          <ExplainMore label="Why not, and why say so here">
+          <ExplainMore label="What changed, what did not, and why say so here">
             <p>
-              It is arithmetic rather than a finding. The simulated bank
-              messages are too coarse to ever push the &ldquo;wants to
-              leave&rdquo; estimate high enough for the check to pass, at any
-              setting. So the exit path could not have fired regardless of how
-              well the rest works.
+              The simulated bank messages used to be too coarse to ever push
+              the &ldquo;wants to leave&rdquo; estimate high enough for the
+              check to pass, at any setting — arithmetic rather than a
+              finding. A new message type fixed that, and the evaluation now
+              emits it by peeking at each customer&rsquo;s real reason for
+              failing, which no live system can do.
+            </p>
+            <p>
+              So the honest reading is the shape of the curve, not the
+              headline. When that made-up signal is good, roughly one offer in
+              ten goes to someone who would have paid anyway. When it is no
+              better than a coin flip, that rises to between a third and three
+              quarters. The report publishes every point on that curve,
+              including the worthless ones, because a table showing only good
+              signals would prove nothing.
             </p>
             <p>
               It sits on this page because it is the single most important thing

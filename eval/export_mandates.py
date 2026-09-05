@@ -159,13 +159,45 @@ def _decision_record(index: int, d: run_mod.DecisionTrace) -> dict[str, Any]:
         "binding_constraint": plan.binding_constraint,
         "solver_version": plan.solver_version,
         "decision_sha256": plan.decision_sha256,
+        # R5: the actual pause/downgrade/cancel menu, present iff the
+        # decision was OFFER. src/policy/offramp.py was complete and tested
+        # from B8 but had no caller anywhere, so a chosen OFFER had never
+        # produced an Offer object and nothing downstream could show WHAT
+        # was offered -- only that something was. Exported as the ordered
+        # step list the customer would see, never as a single ultimatum
+        # (invariant 6: the system offers; the customer decides).
+        "offer": None if plan.offer is None else {
+            "expires_on_day": plan.offer.expires_on_day,
+            "steps": [
+                {"kind": s.kind, "description": s.description}
+                for s in plan.offer.steps
+            ],
+        },
         "outcome": d.outcome,
     }
 
 
+# R5, 2026-09-05: the drill-down must show the SAME configuration the
+# published grid was run under, or the dashboard and reports/regimes.json
+# describe two different experiments while looking like one. Before this,
+# build_records() ran with no channel while `eval.run`'s default is the
+# pre-registered operating point -- so every exported mandate would have
+# shown OFFER as structurally impossible next to a report saying it fires
+# 1292 times. Imported from eval.run rather than restated, for the same
+# reason eval/run.py imports the operating point from eval.offramp_channel.
+DEFAULT_CHANNEL_KIND = run_mod.DEFAULT_CHANNEL_KIND
+
+
+def _default_channel_spec() -> tuple[str, float, float]:
+    from eval.offramp_channel import OPERATING_POINT
+
+    return (DEFAULT_CHANNEL_KIND, OPERATING_POINT[0], OPERATING_POINT[1])
+
+
 def build_records(*, regime: str, arm: str, profile: Profile, seed: int,
                   cfg: dict | None = None, hazard=None, costs=None,
-                  gate=None, gate_kind: str | None = None) -> list[dict[str, Any]]:
+                  gate=None, gate_kind: str | None = None,
+                  channel_spec: tuple | None = ...) -> list[dict[str, Any]]:
     """Run one engine cell with tracing on and return one record per mandate.
 
     The decisions exported are THE decisions the scored run made, not a
@@ -173,10 +205,17 @@ def build_records(*, regime: str, arm: str, profile: Profile, seed: int,
     solve() outside that loop would be a second experiment that agrees today
     and drifts tomorrow.
 
+    `channel_spec` defaults (via the `...` sentinel, so `None` stays
+    meaningful as "no channel") to the SAME pre-registered operating point
+    `eval.run` publishes under -- see the comment above. Pass None to export
+    the pre-R5 configuration, in which OFFER is structurally unreachable.
+
     `ledger` comes back empty. It is filled only by replay_to_ledger(), from
     rows the executor actually wrote -- this module never synthesises a
     ledger row.
     """
+    if channel_spec is ...:
+        channel_spec = _default_channel_spec()
     if cfg is None:
         cfg = regimes_mod.config_for(regime, load_config())
     if hazard is None:
@@ -184,11 +223,15 @@ def build_records(*, regime: str, arm: str, profile: Profile, seed: int,
     if costs is None:
         costs = run_mod.load_costs()
     if gate is None:
-        gate, gate_kind, _ = run_mod.fit_gate(cfg)
+        # Calibrated under the SAME channel the cell will run under: the
+        # channel changes the belief distribution, so a gate fitted without
+        # it would be calibrated on a pool the cell never draws from.
+        gate, gate_kind, _ = run_mod.fit_gate(cfg, channel_spec=channel_spec)
 
     traces: dict[str, list[run_mod.DecisionTrace]] = {}
     run_mod.run_engine_cell(regime, arm, profile, cfg, seed, hazard, costs,
-                            gate, gate_kind or "conformal", traces=traces)
+                            gate, gate_kind or "conformal", traces=traces,
+                            channel=run_mod.make_channel(channel_spec, seed))
 
     # Same arm, same seed, same config -> the same batch, by construction.
     # Rebuilt rather than plumbed out of run_engine_cell so this module adds
@@ -533,7 +576,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "mandates": records,
     }
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    args.out.write_text(json.dumps(payload, indent=1), encoding="utf-8")
+    args.out.write_text(json.dumps(payload, indent=1), encoding="utf-8", newline="\n")
     print(f"wrote {args.out.name} "
           f"({len(records)} mandates, {ledger_rows} ledger rows)")
     return 0

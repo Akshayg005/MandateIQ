@@ -57,6 +57,151 @@ class LedgerRow:
     created_at: datetime
 
 
+@dataclass(frozen=True)
+class PlanRow:
+    """A row read back from `plan`, mirroring the table 1:1 -- the same
+    convention LedgerRow above follows for `ledger`.
+
+    R6, 2026-09-05 (reports/gates.md, "Post-B16 remediation gates"). Before
+    this, NOTHING in src/ read the `plan` table: src/execute/commit.py's
+    `_insert_plan_row` was the only code that touched it, and it only ever
+    wrote. Both /plan/{mandate_id} and /decision/{sha} are net-new SQL.
+
+    NOTE what is NOT here, because the table does not have it:
+    `chosen_action`. A plan's action is recoverable only by outer-joining
+    `committed_schedule` on `decision_sha256`, since commit()'s own gate
+    writes such a row for ATTEMPT and for nothing else. That derivation
+    belongs to the caller that needs it (src/api/read.py), not to this
+    row type, which mirrors the table honestly rather than inventing a
+    column. tests/execute/test_cycle.py::_non_attempt_plan_rows already
+    documented that workaround at R4; this reuses its reasoning.
+
+    `conformal_set` is returned VERBATIM -- the sorted comma-joined string
+    commit.py writes. Splitting it is a presentation decision (and `""`
+    must become `[]`, not `[""]`), made where the JSON is shaped.
+    """
+
+    decision_sha256: str
+    mandate_id: str
+    cycle_id: int
+    profile: str
+    belief_json: str
+    conformal_set: str
+    binding_constraint: str | None
+    solver_version: str
+    created_at: datetime
+
+
+_PLAN_COLUMNS = (
+    "decision_sha256", "mandate_id", "cycle_id", "profile", "belief_json",
+    "conformal_set", "binding_constraint", "solver_version", "created_at",
+)
+
+
+def _row_to_plan(row) -> PlanRow:
+    return PlanRow(**dict(zip(_PLAN_COLUMNS, row)))
+
+
+def find_plan(conn, decision_sha256: str) -> PlanRow | None:
+    """The plan a decision hash names, or None. `decision_sha256` is the
+    table's PRIMARY KEY, so this is exact -- there is no "most recent" to
+    disambiguate, unlike find_by_key() above."""
+    with conn.cursor() as cur:
+        cur.execute(
+            f"SELECT {', '.join(_PLAN_COLUMNS)} FROM plan WHERE decision_sha256 = %s",
+            (decision_sha256,),
+        )
+        row = cur.fetchone()
+    return _row_to_plan(row) if row else None
+
+
+def plans_for_mandate(conn, mandate_id: str) -> list[PlanRow]:
+    """Every plan written for `mandate_id`, oldest first.
+
+    Ordered by `created_at`, then by `decision_sha256` as a deterministic
+    tie-break: `plan.created_at` is a DB-clock `DEFAULT now()` with no
+    serial ordinal, and two rows written inside one transaction share an
+    identical timestamp -- exactly the ordering ambiguity R4's own
+    `_is_eligible()` docstring records declining to build on. A read
+    endpoint cannot decline, so it breaks the tie on a stable value
+    instead of returning an order that varies between identical calls.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            f"SELECT {', '.join(_PLAN_COLUMNS)} FROM plan WHERE mandate_id = %s "
+            "ORDER BY created_at ASC, decision_sha256 ASC",
+            (mandate_id,),
+        )
+        rows = cur.fetchall()
+    return [_row_to_plan(row) for row in rows]
+
+
+def committed_for_decision(conn, decision_sha256: str) -> dict | None:
+    """The `committed_schedule` row citing this decision, if any.
+
+    This is what makes a plan's `chosen_action` recoverable at all: only
+    ATTEMPT ever gets such a row (src/execute/commit.py's own gate), so
+    its presence IS the action. Returns a plain dict rather than a new
+    frozen dataclass -- the caller needs a handful of fields for a JSON
+    surface, and a full CommittedScheduleRow type with no other consumer
+    would be a convention invented for one call site.
+
+    **VOIDED ROWS ARE DELIBERATELY NOT FILTERED OUT.** `money-auditor`
+    (2026-09-05) proposed adding `AND voided_at IS NULL`, on the reasoning
+    that `committed_one_live_per_slot` -- the schema's own unique index --
+    establishes non-voided as the "live" convention. The convention is real
+    and the fix would be wrong here, which is why this paragraph exists
+    rather than the filter.
+
+    The question this function answers is "what did the allocator DECIDE",
+    not "what is currently scheduled". `commit()` writes a
+    committed_schedule row ONLY for ATTEMPT, and voiding is a LATER event
+    (src/execute/void.py, an overtaken-by-events reissue path) that cannot
+    retroactively change what was chosen. Filtering voided rows would
+    return None for a decision that provably WAS an ATTEMPT, and
+    src/api/read.py's `_derive_action()` would then report it as
+    NOT_ATTEMPT with candidates [REAUTH, STOP] -- a strictly false answer
+    where the current one is a true-but-incomplete one.
+
+    The real defect the review found is narrower and IS fixed: nothing said
+    the cited row was dead. The caller now surfaces `is_live` and says so
+    in its derivation message.
+
+    ORDER BY generation DESC picks the LIVE row when one exists:
+    `void.reissue()` inserts a replacement at generation+1 carrying the
+    SAME decision_sha256 (void.py's own INSERT), so a voided generation 0
+    and a live generation 1 can both cite one decision.
+    """
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT idempotency_key, attempt_index, amount_paise, scheduled_for, "
+            "committed_at, voided_at, void_reason "
+            "FROM committed_schedule WHERE decision_sha256 = %s "
+            "ORDER BY generation DESC, committed_at DESC LIMIT 1",
+            (decision_sha256,),
+        )
+        row = cur.fetchone()
+    if row is None:
+        return None
+    keys = ("idempotency_key", "attempt_index", "amount_paise", "scheduled_for",
+            "committed_at", "voided_at", "void_reason")
+    return dict(zip(keys, row))
+
+
+def ledger_for_decision(conn, decision_sha256: str) -> list[LedgerRow]:
+    """Every ledger row citing this decision, in insertion order. Empty for
+    a STOP/REAUTH/OFFER plan, which writes a `plan` row and no ledger row
+    -- absence of execution, not absence of the decision."""
+    with conn.cursor() as cur:
+        cur.execute(
+            f"SELECT {', '.join(_LEDGER_COLUMNS)} FROM ledger "
+            "WHERE decision_sha256 = %s ORDER BY ledger_id ASC",
+            (decision_sha256,),
+        )
+        rows = cur.fetchall()
+    return [_row_to_entry(row) for row in rows]
+
+
 _LEDGER_COLUMNS = (
     "ledger_id", "idempotency_key", "mandate_id", "cycle_id", "attempt_index",
     "action", "state", "amount_paise", "provider_ref", "outcome",

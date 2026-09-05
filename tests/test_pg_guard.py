@@ -65,7 +65,13 @@ class TestRequirePg:
         with pytest.raises(pytest.fail.Exception) as exc:
             require_pg(False, "boom", env={})
         message = str(exc.value)
+        # R7: BOTH runners, because a Linux reviewer told to run
+        # `.\run.ps1 up` has been handed a translation task, which is
+        # exactly what R7's gate forbids. Asserting both is what stops the
+        # POSIX half being dropped later without the suite noticing.
         assert "run.ps1 up" in message
+        assert "run.sh db-up" in message
+        assert "docker start mrdb" in message
         assert PG_SKIP_OPT_OUT in message
 
     def test_unreachable_postgres_skips_under_the_opt_out(self) -> None:

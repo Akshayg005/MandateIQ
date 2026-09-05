@@ -464,9 +464,9 @@ def _write_report(
         if _SECTION_BEGIN in existing and _SECTION_END in existing:
             pre = existing[: existing.index(_SECTION_BEGIN)]
             post = existing[existing.index(_SECTION_END) + len(_SECTION_END):]
-            OUT_MD.write_text(pre + new_section + post.lstrip("\n"), encoding="utf-8")
+            OUT_MD.write_text(pre + new_section + post.lstrip("\n"), encoding="utf-8", newline="\n")
             return
-        OUT_MD.write_text(existing.rstrip("\n") + "\n\n" + new_section, encoding="utf-8")
+        OUT_MD.write_text(existing.rstrip("\n") + "\n\n" + new_section, encoding="utf-8", newline="\n")
         return
 
     header = (
@@ -481,7 +481,7 @@ def _write_report(
         "`src/model/features.py`'s `UNSOURCED`). Neither phase feeds the "
         "three-bar headline in `reports/regimes.md`.\n\n"
     )
-    OUT_MD.write_text(header + new_section, encoding="utf-8")
+    OUT_MD.write_text(header + new_section, encoding="utf-8", newline="\n")
 
 
 if __name__ == "__main__":

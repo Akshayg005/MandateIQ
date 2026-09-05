@@ -1,0 +1,54 @@
+# R7 (reports/gates.md, "Post-B16 remediation gates"): make README's
+# byte-identity claim survive a cross-platform check.
+#
+# README says "two runs of the same seeds produce byte-identical output --
+# the artifact carries no wall-clock timing, precisely so that the claim can
+# be checked by hashing and not only by reading numbers." That was true on
+# one machine and false across two: every artifact writer called
+# `write_text(..., encoding="utf-8")` with no `newline=`, so Python's
+# universal-newline translation emitted CRLF on Windows and LF on Linux, and
+# there was no `.gitattributes` to normalise what git stored either. Same
+# seeds, same code, two different hashes.
+#
+# Two halves, and both are needed:
+#   1. every artifact writer now passes `newline="\n"` explicitly (eval/run.py,
+#      eval/report.py, eval/offramp_channel.py, eval/ltv_sensitivity.py,
+#      eval/export_mandates.py, eval/golden_check.py, eval/sim2.py,
+#      eval/design_matrix_comparison.py, scripts/checkpoint.py,
+#      scripts/dashboard_data.py, src/execute/shadow.py);
+#   2. this file, so git stores LF regardless of the checkout platform and a
+#      diff between a Windows and a Linux run is a diff in the NUMBERS.
+#
+# `* text=auto eol=lf` covers files git detects as text. The explicit rows
+# below are the ones the claim actually rests on, stated rather than left to
+# detection -- a JSON artifact misdetected as binary would silently opt out
+# of the guarantee this file exists to provide.
+* text=auto eol=lf
+
+*.py    text eol=lf
+*.md    text eol=lf
+*.json  text eol=lf
+*.jsonl text eol=lf
+*.yaml  text eol=lf
+*.yml   text eol=lf
+*.sql   text eol=lf
+*.sh    text eol=lf
+*.ts    text eol=lf
+*.tsx   text eol=lf
+*.css   text eol=lf
+*.html  text eol=lf
+*.txt   text eol=lf
+
+# PowerShell and cmd stay CRLF. These are Windows-only entry points; a
+# .cmd file with LF line endings is a real hazard (cmd.exe's parser has
+# historically mis-handled them), and nothing about the byte-identity claim
+# involves them.
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+
+# Binary, never normalised.
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff  binary
+*.woff2 binary

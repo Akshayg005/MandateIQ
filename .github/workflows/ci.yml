@@ -1,0 +1,122 @@
+# R7 (reports/gates.md, "Post-B16 remediation gates"): "a reviewer on Linux
+# or macOS can install, test, run the eval and read the report using commands
+# printed in the README, without translating anything."
+#
+# THIS FILE IS THAT GATE'S EVIDENCE. It converts the claim from an assertion
+# into a measurement that re-proves itself on every push. Before R7 this repo
+# had no CI anywhere and nothing in it had ever run on Linux -- so "it should
+# work" was the strongest thing anyone could say.
+#
+# It deliberately runs the SAME entry point a reviewer runs (`./run.sh ...`),
+# not a hand-written sequence of `python -m` invocations. A CI job that
+# bypasses the documented commands proves the code works and says nothing
+# about whether the documentation does, which is the half R7 is actually
+# about.
+#
+# `eval-quick` rather than the full `eval`: the full sweep is 1024 cells and
+# ~15 minutes, and what CI needs to prove is that the pipeline RUNS on Linux
+# end to end -- install, sweep, artifact, render -- not that the numbers are
+# reproduced on someone else's hardware. The published numbers come from a
+# full local run; this proves a reviewer could get there.
+name: ci
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  linux:
+    name: ubuntu-latest / python 3.13
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      # The suite FAILS without Postgres, deliberately (tests/conftest.py's
+      # require_pg) -- a green suite that skipped the ledger, executor and
+      # crash-recovery surface would mean nothing about the money path. So
+      # CI provides a real database rather than setting
+      # MANDATEIQ_ALLOW_PG_SKIP and calling it green.
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: dev
+          POSTGRES_DB: mandate_recovery
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://postgres:dev@localhost:5432/mandate_recovery
+      # Never set MANDATEIQ_ALLOW_PG_SKIP here. If Postgres is unavailable
+      # the job must go red; that is the whole point of the guard.
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: create the venv and install from requirements.txt
+        # NOT `pip install <hand-listed packages>`. setup.ps1 installs a
+        # hand-listed unpinned set and THEN overwrites requirements.txt from
+        # `pip freeze`, which left `pip install -r requirements.txt` an
+        # install path nothing in this repo documented or exercised. This
+        # step is what exercises it, on the pinned bytes, on Linux.
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/python -m pip install -r requirements.txt
+
+      - name: the shell scripts are executable and LF-terminated
+        # A CRLF run.sh dies with "set: pipefail<CR>: invalid option name"
+        # before running anything -- a failure mode that is invisible on
+        # Windows and total on Linux. Checked here as well as by
+        # tests/scripts/test_run_sh.py, because if this is broken the rest
+        # of the job cannot run at all and a clear message is worth more
+        # than a confusing one.
+        run: |
+          for f in run.sh setup.sh; do
+            if grep -qU $'\r' "$f"; then echo "$f has CRLF line endings" >&2; exit 1; fi
+          done
+          chmod +x run.sh setup.sh
+
+      - name: lint -- the invariant guards and the live-key scan
+        run: ./run.sh lint
+
+      - name: the full test suite, against the postgres service
+        run: ./run.sh test
+
+      - name: eval-quick -- the sweep runs end to end on linux
+        run: ./run.sh eval-quick
+
+      - name: report -- the artifact renders
+        # Depends on the step above having written reports/regimes.json: a
+        # fresh clone has none (.gitignore excludes reports/*.json), which
+        # is exactly the fresh-reviewer path this job is checking.
+        run: ./run.sh report
+
+      - name: byte-identity -- the same seeds twice produce the same bytes
+        # README claims two runs of the same seeds produce byte-identical
+        # output, "precisely so that the claim can be checked by hashing".
+        # Before R7 that was false across platforms (CRLF on Windows, LF on
+        # Linux) and unchecked on any. Checked here.
+        run: |
+          sha256sum reports/regimes.json > /tmp/first.sha
+          ./run.sh eval-quick
+          sha256sum -c /tmp/first.sha
+
+      - name: upload the artifacts a reviewer would read
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reports
+          path: |
+            reports/*.md
+            reports/*.json
+          if-no-files-found: warn

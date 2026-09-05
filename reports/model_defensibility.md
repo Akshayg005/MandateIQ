@@ -54,3 +54,64 @@ The amount-band cut points (`_AMOUNT_BAND_CUT_1/2/3` in `src/model/competing_ris
 
 This also means `amount_band_4` (>= Rs 10,625) is a wide catch-all spanning Rs 10,625-89,785, and it is CONFOUNDED with category by the AFA filter itself, not by chance: 25.8% of `subscription` mandates land in band 4 versus 36.6-37.3% of every elevated category. Neither issue changes the null result above (both covariates are non-causal under `nominal` regardless of exactly where a band boundary falls), but it means these six columns are NOT fit for a defensibility claim about amount independent of category on THIS corpus -- a real limitation to fix before Phase B's covariates, which are meant to carry actual signal, inherit the same band scheme.
 <!-- PHASE_A:END -->
+
+<!-- PHASE_B:BEGIN -->
+## Phase B: issuer, instrument type and mandate age on eval/sim2.py
+
+_Generated 2026-09-04 11:03 UTC by `python -m eval.sim2`. Corpus: 40 seeds, 8000 mandates, 12242 estimable person-period rows, from a SECOND, non-frozen simulator (`eval/sim2.py`) whose data-generating process actually varies dead-hazard by `issuer_id`/`instrument_type` and CANT_PAY_NOW's recovery hazard by `mandate_age_days` -- unlike `eval/frozen/simulator.py`, which never generates any of the three (`src/model/features.py`'s `UNSOURCED`). Guarded: `scripts/guard_invariants.py` denies `eval/run.py` importing this module, so nothing here can reach `reports/regimes.md`'s headline._
+
+**Scope decision, disclosed rather than discovered later**: `mandate_age_days` is a STATIC per-mandate generated covariate (drawn once, like `amount_paise` already is everywhere in this codebase), not real multi-cycle mandate history -- `cycle_id` stays `1` here too. Building genuine multi-cycle simulation is a materially bigger DGP than this gate asks for; a static, generated age covariate that the hazard genuinely depends on answers the gate's actual question (does a fitted, honest coefficient with a CI exist for mandate age) without overbuilding.
+
+`SIM2_FEATURE_COLUMNS` (`src/model/competing_risks.py`): const, slot_3, slot_4, in_salary_window, issuer_issuer_beta, issuer_issuer_gamma, issuer_issuer_delta, instrument_debit_card, instrument_credit_card, mandate_age_years.
+
+### Fitted coefficients, the six new columns (full-corpus fit, 95% CI)
+
+| Outcome | Column | Coef | SE | z | p | 95% CI | Excludes 0? |
+|---|---|---|---|---|---|---|---|
+| RECOVERED | `issuer_issuer_beta` | +0.0118 | 0.0601 | +0.20 | 0.845 | [-0.1060, +0.1296] | no |
+| RECOVERED | `issuer_issuer_gamma` | +0.1775 | 0.0633 | +2.80 | 0.005 | [+0.0534, +0.3016] | yes |
+| RECOVERED | `issuer_issuer_delta` | +0.0335 | 0.0605 | +0.55 | 0.580 | [-0.0852, +0.1521] | no |
+| RECOVERED | `instrument_debit_card` | -0.0579 | 0.0517 | -1.12 | 0.263 | [-0.1593, +0.0435] | no |
+| RECOVERED | `instrument_credit_card` | -0.0272 | 0.0621 | -0.44 | 0.662 | [-0.1488, +0.0945] | no |
+| RECOVERED | `mandate_age_years` | +0.2752 | 0.0386 | +7.12 | 0.000 | [+0.1995, +0.3509] | yes |
+| DEAD | `issuer_issuer_beta` | +0.0971 | 0.0764 | +1.27 | 0.204 | [-0.0527, +0.2469] | no |
+| DEAD | `issuer_issuer_gamma` | +0.6429 | 0.0747 | +8.61 | 0.000 | [+0.4965, +0.7893] | yes |
+| DEAD | `issuer_issuer_delta` | +0.0256 | 0.0781 | +0.33 | 0.743 | [-0.1275, +0.1787] | no |
+| DEAD | `instrument_debit_card` | -0.3167 | 0.0649 | -4.88 | 0.000 | [-0.4440, -0.1894] | yes |
+| DEAD | `instrument_credit_card` | -0.4331 | 0.0821 | -5.27 | 0.000 | [-0.5941, -0.2722] | yes |
+| DEAD | `mandate_age_years` | +0.1753 | 0.0473 | +3.70 | 0.000 | [+0.0826, +0.2681] | yes |
+| OPTED_OUT | `issuer_issuer_beta` | +0.0054 | 0.0791 | +0.07 | 0.945 | [-0.1497, +0.1605] | no |
+| OPTED_OUT | `issuer_issuer_gamma` | +0.0971 | 0.0843 | +1.15 | 0.249 | [-0.0680, +0.2622] | no |
+| OPTED_OUT | `issuer_issuer_delta` | +0.0545 | 0.0792 | +0.69 | 0.491 | [-0.1007, +0.2097] | no |
+| OPTED_OUT | `instrument_debit_card` | +0.0420 | 0.0676 | +0.62 | 0.535 | [-0.0906, +0.1745] | no |
+| OPTED_OUT | `instrument_credit_card` | +0.0849 | 0.0806 | +1.05 | 0.292 | [-0.0731, +0.2429] | no |
+| OPTED_OUT | `mandate_age_years` | +0.1698 | 0.0509 | +3.34 | 0.001 | [+0.0701, +0.2696] | yes |
+
+7/18 of these 18 coefficients have a 95% CI excluding zero -- the opposite of Phase A's result, as expected: this DGP was built specifically to make issuer/instrument/age carry real signal (see module docstring, `eval/sim2.py`), unlike the frozen corpus's amount and category, which the DGP never reads at all.
+
+**This is an in-sample, full-corpus descriptive fit, not a held-out evaluation** -- no train/test split. Appropriate for reading off a coefficient and its CI; not a generalisation claim, and not comparable to Phase A's held-out log-loss test.
+
+### Direct effects vs cause-marginal artifacts
+Each issuer/instrument column is coded into the DGP as a direct additive dead-hazard bonus (`_draw_outcome`, `eval/sim2.py`) -- i.e. a direct effect on the **DEAD** equation only. `mandate_age_years` is coded as a direct bonus to CANT_PAY_NOW's recovery hazard only -- a direct effect on the **RECOVERED** equation only. `fit()` pools every row into ONE multinomial logit with no `cause` covariate at all (production has no true-cause label, ever -- the same reason `reports/gates.md`'s B7 entry adds a `CauseConditionedHazard` Protocol instead of fitting per-cause models), so a column can show a nonzero coefficient in an outcome equation the DGP never coded it into -- a cause-marginal composition effect, not a directly-coded one.
+
+Of the 7 significant coefficients: **4 are direct** DGP effects (mandate_age_years→RECOVERED, issuer_issuer_gamma→DEAD, instrument_debit_card→DEAD, instrument_credit_card→DEAD); **3 are cause-marginal artifacts** (issuer_issuer_gamma→RECOVERED, mandate_age_years→DEAD, mandate_age_years→OPTED_OUT). Both artifacts were checked, not assumed: pooled cause-marginal log-odds computed analytically from the DGP's own cause_mix and age distribution move in the SAME direction as the fitted coefficients (mandate_age_years on DEAD/OPTED_OUT: analytic pooled slope +0.13/year vs fitted +0.18/+0.17; issuer_gamma on RECOVERED: analytic pooled log-odds shift +0.12 vs fitted +0.18) -- both are real, understood, cause-marginal-fitting artifacts, not fit noise or a DGP bug.
+
+### The fitted CIs do not cover the DGP's own coded values -- disclosed, not hidden
+For the DIRECT (column, outcome) pairs only, `eval/sim2.py`'s own coded additive dead-hazard logit is a natural reference point -- and the fitted, cause-marginal coefficient consistently falls short of it:
+
+| Column | Coded DGP logit | Fitted coef | 95% CI | Covers coded value? |
+|---|---|---|---|---|
+| `issuer_issuer_beta` (→DEAD) | +0.15 | +0.0971 | [-0.0527, +0.2469] | yes |
+| `issuer_issuer_gamma` (→DEAD) | +1.10 | +0.6429 | [+0.4965, +0.7893] | **no** |
+| `issuer_issuer_delta` (→DEAD) | +0.05 | +0.0256 | [-0.1275, +0.1787] | yes |
+| `instrument_debit_card` (→DEAD) | -1.00 | -0.3167 | [-0.4440, -0.1894] | **no** |
+| `instrument_credit_card` (→DEAD) | -1.10 | -0.4331 | [-0.5941, -0.2722] | **no** |
+| `mandate_age_years` (→RECOVERED) | +0.60 | +0.2752 | [+0.1995, +0.3509] | **no** |
+
+This is expected, not a fitting error: a cause-marginal coefficient answers a different question than the per-cause parameter coded into the DGP (the same distinction `src/model/competing_risks.py`'s own module docstring already draws for `slot3_x_in_salary_window`), and pooling across the cause mixture attenuates the coded effect rather than recovering it exactly. The table above is evidence that `_design_matrix()`'s issuer/instrument/age machinery detects the right SIGN and roughly the right ORDER OF MAGNITUDE, not that it recovers the generating parameter.
+
+### What this does and does not license concluding
+Every hazard number `eval/sim2.py` uses is an ILLUSTRATIVE synthetic parameter, chosen to make each covariate's effect measurable -- not a statistic from real issuer or instrument failure rates (same framing `eval/frozen/sim_config.yaml`'s own header states of itself). This table is evidence that `src/model/competing_risks.py`'s design-matrix machinery CAN fit and report a defensible, CI-bearing coefficient for these three covariate types when a corpus actually contains their effect -- not a claim about what issuer, instrument or age effects look like in real Razorpay data.
+
+**The least comfortable assumption in this corpus, stated rather than buried**: `initial_cause` is drawn independently of issuer, instrument and age here, so every artifact and every attenuation above comes from marginal-fitting alone, with zero confounding. Real issuer data would not have that independence (a bank whose customers are poorer plausibly has both more dead instruments AND more CANT_PAY_NOW mandates) -- under that correlation, attenuation like the table above does not merely shrink coefficients, it can flip their sign. This report demonstrates the fitting machinery works under the EASY case (independent covariates); it does not demonstrate it is safe under real-world confounding.
+<!-- PHASE_B:END -->

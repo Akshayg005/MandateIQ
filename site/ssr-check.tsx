@@ -118,10 +118,21 @@ for (const [label, html] of [
 // findings stay on the page, and the page explains them rather than dumping
 // them -- see HowItWorks.tsx, where each one opens on demand.
 //
-// The off-ramp never firing is the single most important thing about these
+// The off-ramp's limit is the single most important thing about these
 // results, so it is asserted PRESENT here rather than forbidden.
-need(how, "never fired", "how");
-need(how, "untested", "how");
+//
+// This used to require the literal "never fired" and "untested". R5
+// (2026-09-05) made the off-ramp reachable -- on a SYNTHETIC channel that
+// reads the simulator's own hidden answer -- so those two words became
+// false and the assertion had to move with the result. It moved to the
+// claim that actually still holds and still matters: the page must say the
+// signal is made up, and must not present the off-ramp as a working
+// feature. A check that is loosened whenever it fails is worthless, so
+// this one was made MORE specific, not less: three separate phrases, each
+// load-bearing.
+need(how, "made-up signal", "how");
+need(how, "hidden answer", "how");
+need(how, "coin flip", "how");
 need(how, "README", "how");
 // Every step must carry its plain-language explanation, not just a heading.
 need(how, "explain-more", "how");

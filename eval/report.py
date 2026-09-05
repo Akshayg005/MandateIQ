@@ -25,6 +25,7 @@ import collections
 import json
 import pathlib
 import sys
+from fractions import Fraction
 from typing import Any, Sequence
 
 from src.core import money
@@ -33,6 +34,15 @@ _REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 ARTIFACT = _REPO_ROOT / "reports" / "regimes.json"
 OUT_MD = _REPO_ROOT / "reports" / "regimes.md"
 FIG_DIR = _REPO_ROOT / "reports" / "figures"
+# R3: a separate artifact from `python -m eval.ltv_sensitivity`, read here
+# (not computed) the same way ARTIFACT is -- optional, since a tree that
+# has never run the LTV sweep must still render the rest of regimes.md.
+LTV_ARTIFACT = _REPO_ROOT / "reports" / "ltv_sensitivity.json"
+# R5: a separate artifact from `python -m eval.offramp_channel`, read here
+# (never computed) on exactly the same terms as LTV_ARTIFACT -- optional, so
+# a tree that has never run the channel sweep still renders the rest of
+# regimes.md.
+OFFRAMP_ARTIFACT = _REPO_ROOT / "reports" / "offramp_channel.json"
 
 # dataviz: categorical slots 1 and 2. Validated as a pair (light mode) --
 # CVD dE 24.7, normal-vision dE 33.6, both >= 3:1 on the surface.
@@ -68,7 +78,8 @@ def load(path: pathlib.Path = ARTIFACT) -> dict[str, Any]:
     if not path.exists():
         raise SystemExit(
             f"{path} not found -- run `python -m eval.run --all-regimes "
-            f"--both-profiles` first (or `.\\run.ps1 report`, which does both)."
+            f"--both-profiles` first (or `.\\run.ps1 eval` / `./run.sh eval`, "
+            f"which does both)."
         )
     return json.loads(path.read_text(encoding="utf-8"))
 
@@ -219,24 +230,29 @@ def _delta_table(data: dict[str, Any], profile: str) -> list[str]:
 
 
 def _coverage_table(data: dict[str, Any]) -> list[str]:
-    """Per-regime coverage of the off-ramp gate. Printed only where the real
-    conformal gate was live -- under FullSetGate there is no coverage claim to
-    make, and printing 1.000 would be true and completely misleading."""
+    """Coverage of the off-ramp gate, one row per (regime, arm, SEED).
+    Printed only where the real conformal gate was live -- under FullSetGate
+    there is no coverage claim to make, and printing 1.000 would be true and
+    completely misleading.
+
+    CORRECTED, R5 review pass, 2026-09-05 (stats-reviewer): this function's
+    own comment used to say "one row per (regime, arm) engine cell", which
+    was wrong -- `data["cells"]` holds every seed, and there is no seed
+    filter here, so 16 (regime, arm) pairs x 8 seeds always produced 128
+    rows under a heading that read as 16. The `seed` column below is the
+    fix; the render() call site's prose is corrected to match (see there
+    for why "any degradation here is a real result" was also wrong)."""
     rows = [
-        "| regime | arm | gate live | marginal coverage | per-class coverage "
+        "| regime | arm | seed | gate live | marginal coverage | per-class coverage "
         "(NOW / EVER / WONT) | mean set size | singleton rate | singleton "
         "{WONT_PAY} | OFFERs |",
-        "|---|---|---|---:|---:|---:|---:|---:|---:|",
+        "|---|---|---:|---|---:|---:|---:|---:|---:|---:|",
     ]
     for c in data["cells"]:
-        # One row per (regime, arm) engine cell under `strict`. The previous
-        # version keyed on regime alone and summed `n_offer` over BOTH
-        # profiles into a per-regime-strict row, which would have printed
-        # double the moment OFFER became non-zero.
         if c["policy"] != "engine" or c["profile"] != "strict":
             continue
         if c["gate_kind"] != "conformal":
-            rows.append(f"| {c['regime']} | {c['arm']} | {c['gate_kind']} | "
+            rows.append(f"| {c['regime']} | {c['arm']} | {c['seed']} | {c['gate_kind']} | "
                         f"n/a (stub gate) | n/a | n/a | n/a | n/a | {c['n_offer']} |")
             continue
         pc = c.get("coverage_per_class") or {}
@@ -246,7 +262,7 @@ def _coverage_table(data: dict[str, Any]) -> list[str]:
         )
         sing = c.get("singleton_rate")
         rows.append(
-            f"| {c['regime']} | {c['arm']} | conformal | "
+            f"| {c['regime']} | {c['arm']} | {c['seed']} | conformal | "
             f"{c['coverage_marginal']:.3f} (n={c['coverage_n']}) | {pcs} | "
             f"{c['mean_set_size']:.2f} / 3 | "
             f"{sing:.3f} | {c['singleton_wont_pay_rate']:.3f} | {c['n_offer']} |"
@@ -452,6 +468,318 @@ def render_figures(data: dict[str, Any]) -> list[pathlib.Path]:
     return written
 
 
+def _signed_rupees(paise: int) -> str:
+    """money.fmt() refuses negative paise (a ledger amount is never
+    negative) -- this is a DIFFERENCE, not a ledger entry, so it needs its
+    own sign-then-magnitude rendering rather than passing a negative value
+    into the money formatter."""
+    sign = "-" if paise < 0 else "+"
+    return f"{sign}{_rupees(abs(paise))}"
+
+
+def _ltv_slice_table(slice_data: dict[str, Any]) -> list[str]:
+    lines = [
+        f"**{slice_data['regime']}/{slice_data['arm']}/{slice_data['profile']}/"
+        f"seed={slice_data['seed']}** -- mean mandate amount "
+        f"{_rupees(round(slice_data['mean_amount_paise']))} ({slice_data['n_mandates']} mandates).",
+        "",
+    ]
+    if slice_data["crossings"]:
+        lines.append(
+            "| Bracket (LTV, paise) | Crossing LTV | As a ratio to mean amount |"
+        )
+        lines.append("|---|---|---|")
+        for c in slice_data["crossings"]:
+            # Prefer the EXACT Fraction strings over the float convenience
+            # fields stored alongside them -- both are in the artifact, but
+            # rendering from the float would round-trip through a lossy
+            # intermediate for no reason when the exact value is right
+            # there (money-auditor, 2026-09-04, R3 review).
+            crossing_exact = Fraction(c["crossing_ltv_paise_exact"])
+            ratio_exact = Fraction(c["ratio_to_mean_amount_exact"])
+            lines.append(
+                f"| [{c['bracket_low_paise']:,}, {c['bracket_high_paise']:,}] | "
+                f"{_rupees(round(crossing_exact))} | "
+                f"**{float(ratio_exact):.3f}** |"
+            )
+        lines.append("")
+        lines.append(
+            "Each crossing is a linear interpolation between two SWEPT-AND-"
+            "MEASURED grid points (`src.core.money.interpolate_crossing()`), "
+            "not a third measurement -- the allocator's decisions are "
+            "discrete, so the true curve is a step function and the crossing "
+            "is only as precise as the grid's own resolution in that bracket."
+        )
+    else:
+        lo, hi = slice_data["points"][0], slice_data["points"][-1]
+        lines.append(
+            f"**No crossing anywhere in the swept LTV range** "
+            f"({lo['ltv_paise']:,} to {hi['ltv_paise']:,} paise) -- "
+            f"engine.recovered_paise stays below ladder.recovered_paise at "
+            f"every point, from {_signed_rupees(lo['diff_paise'])} at LTV=0 "
+            f"to {_signed_rupees(hi['diff_paise'])} at the ceiling. "
+            f"`interpolate_crossing()` correctly refuses to compute a "
+            f"break-even here (no sign change exists to interpolate) rather "
+            f"than extrapolate one."
+        )
+    lines.append("")
+    return lines
+
+
+def _ltv_sensitivity(path: pathlib.Path = LTV_ARTIFACT) -> list[str]:
+    """R3. Reads reports/ltv_sensitivity.json (python -m eval.ltv_sensitivity)
+    -- computes nothing here, same discipline the rest of this file uses for
+    regimes.json. Renders a graceful placeholder if the sweep has never
+    been run, rather than crashing the whole report."""
+    if not path.exists():
+        return [
+            "Not yet generated -- run `python -m eval.ltv_sensitivity` "
+            "(writes `reports/ltv_sensitivity.json`; this section renders "
+            "from it on the next `python -m eval.report`).",
+            "",
+        ]
+    data = json.loads(path.read_text(encoding="utf-8"))
+    lines = [
+        f"_Generated {data['generated']} by `python -m eval.ltv_sensitivity`. "
+        f"Default `mandate_ltv_paise` (`config/policy_costs.yaml`): "
+        f"{_rupees(data['default_ltv_paise'])}. LTV grid: "
+        f"{len(data['ltv_grid_paise'])} points, "
+        f"{data['ltv_grid_paise'][0]:,} to {data['ltv_grid_paise'][-1]:,} paise._",
+        "",
+        "**Does raising the assumed mandate LTV ever make the engine recover "
+        "as much raw money as the incumbent ladder?** Two slices, both fixed "
+        "before this sweep's first run (see `eval/ltv_sensitivity.py`'s "
+        "module docstring for the exact, non-cherry-picked selection rule):",
+        "",
+        "### Headline -- the project's own canonical comparison slice",
+        "",
+    ]
+    lines += _ltv_slice_table(data["headline"])
+    lines += [
+        "### Worked example -- the first pre-existing engine-wins-on-money cell",
+        "",
+        "Not the headline claim: this cell is one of the 36/256 cells "
+        "`reports/gates.md`'s B13 entry already measured where the engine "
+        "beats the ladder on raw recovered money AT THE DEFAULT LTV. It "
+        "exists here to show `interpolate_crossing()` computing a real "
+        "break-even against genuine swept data, since the headline slice "
+        "has none to compute.",
+        "",
+    ]
+    lines += _ltv_slice_table(data["worked_example"])
+    return lines
+
+
+def _offramp_channel(path: pathlib.Path = OFFRAMP_ARTIFACT) -> list[str]:
+    """R5. Reads reports/offramp_channel.json (python -m eval.offramp_channel)
+    -- computes nothing here, the same discipline _ltv_sensitivity() and the
+    rest of this file already follow. Renders a graceful placeholder if the
+    sweep has never been run rather than crashing the whole report."""
+    if not path.exists():
+        return [
+            "Not yet generated -- run `python -m eval.offramp_channel` "
+            "(writes `reports/offramp_channel.json`; this section renders "
+            "from it on the next `python -m eval.report`).",
+            "",
+        ]
+    data = json.loads(path.read_text(encoding="utf-8"))
+    sl = data["slice"]
+    op = data["operating_point"]
+    lines = [
+        f"_Generated {data['generated']} by `python -m eval.offramp_channel`. "
+        f"Slice: `{sl['regime']}/{sl['arm']}/{sl['profile']}`, "
+        f"{len(sl['seeds'])} seeds. Operating point (PRE-REGISTERED in that "
+        f"module's docstring before its first run): tpr {op['tpr']:.2f} / "
+        f"fpr {op['fpr']:.2f}._",
+        "",
+        "> **Every channel below is SYNTHETIC.** `eval/frozen/simulator.py` "
+        "emits no decline strings and no support tickets, so this channel "
+        "fabricates them -- and it does so by reading the simulator's "
+        "**privileged true cause** and feeding the result into the DECISION "
+        "path. That is a stronger claim than the score-only privileged read "
+        "`false_reauth_count` already makes, which is why the channel's own "
+        "ROC is published in the same table as every number it produced. "
+        "Nothing here is evidence that a real `payment_cancelled` feed or a "
+        "real support-ticket feed carries this much information.",
+        "",
+        "R5's gate does not promise the off-ramp is *correct*, only that it "
+        "is **reachable and measured**. Untested-and-central is a weaker "
+        "position than tested-and-imperfect; this table buys the second one.",
+        "",
+    ]
+    for kind in data["channel_kinds"]:
+        pts = [pt for pt in data["points"] if pt["channel_kind"] == kind]
+        if not pts:
+            continue
+        lines += [f"### Channel `{kind}`", ""]
+        if kind == "decline":
+            lines += [
+                "A fabricated `DeclineClass.CUSTOMER_DECLINED` observation, "
+                "inverted through `src/classify/cause_map.py`'s independent "
+                "hand-authored table -- so the allocator's belief is "
+                "realistically MISCALIBRATED, never oracular.",
+                "",
+            ]
+        else:
+            lines += [
+                "A fabricated exit-intent score, mapped through "
+                "`src/execute/intent_channel.py`'s **declared** operating "
+                "point, which is independent of the sweep's own (tpr, fpr) "
+                "and therefore misspecified at every row but one. "
+                "`src/policy/` never imports `src.llm`; the score crosses "
+                "the boundary as a plain float. **This channel is measured "
+                "here and NOT folded into the published grid** -- a "
+                "fabricated support-ticket feed is a bigger fabrication than "
+                "a fabricated decline string.",
+                "",
+            ]
+        lines += [
+            "| tpr | fpr | realised AUC (95% CI) | n_offer | false off-ramp | "
+            "true off-ramp | **false rate** (95% CI) | recovered | vs ladder | "
+            "preserved | coverage |",
+            "|---|---|---|---|---|---|---|---|---|---|---|",
+        ]
+        for pt in pts:
+            roc = pt["channel_roc"]
+            auc = "-" if roc["auc"] is None else f"{roc['auc']:.3f}"
+            if roc["auc_ci"]:
+                auc += f" [{roc['auc_ci'][0]:.3f}, {roc['auc_ci'][1]:.3f}]"
+            if pt["false_offramp_rate"] is None:
+                rate = "-"
+            else:
+                rate = f"**{pt['false_offramp_rate']:.1%}**"
+                ci = pt.get("false_offramp_rate_ci")
+                if ci:
+                    # The interval is not decoration: n_offer is as low as 8
+                    # at the worst points, and the point estimate alone
+                    # would read as a result rather than as noise.
+                    rate += f"<br>[{ci[0]:.0%}, {ci[1]:.0%}]"
+            delta = pt["engine_recovered_paise"] - pt["ladder_recovered_paise"]
+            cov = ("-" if pt["coverage_marginal_mean"] is None
+                   else f"{pt['coverage_marginal_mean']:.3f}")
+            mark = " **<-**" if pt["is_operating_point"] else ""
+            lines.append(
+                f"| {pt['tpr']:.2f}{mark} | {pt['fpr']:.2f} | {auc} | "
+                f"{pt['n_offer']} | {pt['false_offramp_count']} | "
+                f"{pt['true_offramp_count']} | {rate} | "
+                f"{_rupees(pt['engine_recovered_paise'])} | "
+                f"{_signed_rupees(delta)} | {pt['engine_mandates_preserved']} | "
+                f"{cov} |"
+            )
+        lines.append("")
+        best = max(pts, key=lambda x: x["n_offer"])
+        fewest = min(pts, key=lambda x: x["n_offer"])
+        worst = min(pts, key=lambda x: (x["channel_roc"]["auc"] or 0.0))
+        worst_rate = worst["false_offramp_rate"]
+        lines += [
+            f"The ladder recovers {_rupees(pts[0]['ladder_recovered_paise'])} "
+            f"on this slice and preserves "
+            f"{pts[0]['ladder_mandates_preserved']} mandates, at every row -- "
+            f"it is channel-blind by construction (no belief, no gate), so it "
+            f"is run once per seed and reused rather than re-measured 8 times "
+            f"to produce the same number.",
+            "",
+            f"**Reading it.** The off-ramp fires "
+            f"{best['n_offer']} times at the point where it fires most and "
+            f"as few as {fewest['n_offer']} where it fires least -- but the "
+            f"COUNT is not the finding, because a channel that rarely fires "
+            f"and a channel that fires accurately look the same in it. The "
+            f"false-off-ramp RATE is "
+            f"what moves with channel quality, and it is "
+            + (f"{worst_rate:.1%} at the least informative channel measured "
+               f"(realised AUC {worst['channel_roc']['auc']:.3f})."
+               if worst_rate is not None else
+               "undefined at the least informative channel measured, because "
+               "no off-ramp fired there at all.")
+            + " That degradation is the point of sweeping quality: a table "
+              "showing only good channels would prove nothing.",
+            "",
+            "**The intervals are wide, and that is the honest reading.** "
+            "`n_offer` on this slice runs from single digits to about a "
+            "hundred, so a false-off-ramp rate printed alone would be a "
+            "number plus or minus tens of points presented as a result. "
+            "Wilson intervals (`bench/llm_vs_stats.py`'s own implementation, "
+            "imported rather than rewritten) are shown beside every rate; "
+            "they ignore the pooling of eight seeds, so read each width as a "
+            "FLOOR on the true uncertainty. What survives that is the SHAPE "
+            "of the curve, not any single cell.",
+            "",
+            "Marginal conformal coverage is re-measured after re-calibrating "
+            "the gate at each point -- the channel changes the belief "
+            "distribution, so it changes the calibration pool, and reusing a "
+            "pool drawn under a different channel would break exactly the "
+            "exchangeability split conformal's guarantee rests on.",
+            "",
+        ]
+
+    dep = data.get("dependence_sweep")
+    if dep:
+        lines += [
+            "### Within-mandate correlation, held fixed at zero above (R5 review pass)",
+            "",
+            "A 2026-09-05 review found the grid above sweeps channel "
+            "**discrimination** while holding the one dimension the firing "
+            "rule is actually sensitive to fixed at exactly zero: "
+            "`WontPayChannel.fires()` draws an independent coin flip every "
+            "call. `should_act()` needs roughly TWO coincident false firings "
+            "on the SAME mandate to open the off-ramp (one `CUSTOMER_DECLINED` "
+            "moves belief to ~0.62 WONT_PAY; the fitted gate's own singleton "
+            "boundary sits at 0.80-0.90), and two independent draws from one "
+            "customer's decline history is not a safe assumption -- a "
+            "customer who dismisses one collect request is plausibly more "
+            "likely to dismiss the next, for reasons that have nothing to do "
+            "with wanting to leave.",
+            "",
+            "This table holds the marginal `(tpr, fpr)` FIXED at the "
+            "pre-registered operating point and varies only "
+            "`habitual_fraction` -- the fraction of non-WONT_PAY mandates "
+            "that are \"habitual dismissers\" firing at an elevated rate, "
+            "vs. never. `1.00` (top row) is EXACTLY the operating-point row "
+            "of the main grid above, repeated so the two read as one "
+            "continuous measurement rather than an unexplained fourth "
+            "number.",
+            "",
+            "| habitual_fraction | n_offer | false off-ramp | rate (95% CI) | "
+            "fpr realised | repeat false-fire rate |",
+            "|---:|---:|---:|---|---:|---:|",
+        ]
+        for pt in dep["points"]:
+            ci = pt.get("false_offramp_rate_ci")
+            rate = (f"{pt['false_offramp_rate']:.1%} "
+                    f"[{ci[0]:.0%}, {ci[1]:.0%}]" if ci else "-")
+            rr = pt["repeat_false_fire"]
+            lines.append(
+                f"| {pt['habitual_fraction']:.2f}"
+                f"{' (= main grid)' if pt['habitual_fraction'] == 1.0 else ''} | "
+                f"{pt['n_offer']} | {pt['false_offramp_count']} | {rate} | "
+                f"{pt['channel_roc']['fpr_realised']:.3f} | "
+                f"{rr['rate']:.3f} (n={rr['n_non_wont_pay_mandates']}) |"
+            )
+        lo, hi = dep["points"][0], dep["points"][-1]
+        lines += [
+            "",
+            f"The realised fpr stays within "
+            f"{min(p['channel_roc']['fpr_realised'] for p in dep['points']):.3f}-"
+            f"{max(p['channel_roc']['fpr_realised'] for p in dep['points']):.3f} "
+            f"across every row -- the marginal genuinely holds fixed -- while "
+            f"the false-off-ramp rate moves from {lo['false_offramp_rate']:.1%} "
+            f"to {hi['false_offramp_rate']:.1%} and the repeat-false-fire rate "
+            f"from {lo['repeat_false_fire']['rate']:.3f} to "
+            f"{hi['repeat_false_fire']['rate']:.3f}. Same discrimination, same "
+            "published ROC point, more than double the false-off-ramp rate: "
+            "the main grid's operating-point row is not robust to an "
+            "assumption it holds fixed at zero.",
+            "",
+            "**Second-order synthetic, disclosed as such**: there is no real "
+            "decline-string corpus this project has access to that could "
+            "calibrate `habitual_fraction` itself. This table establishes "
+            "SENSITIVITY -- the rate is not robust to a fixed-at-zero "
+            "assumption -- not a corrected point estimate.",
+            "",
+        ]
+    return lines
+
+
 # --- assembly ----------------------------------------------------------------
 
 
@@ -466,12 +794,16 @@ def render(data: dict[str, Any], *, figures: bool) -> str:
         "and the rendering -- one command:",
         "",
         "```powershell",
-        ".\\run.ps1 eval",
+        ".\\run.ps1 eval          # Windows",
         "```",
         "",
-        "(`.\\run.ps1 report` re-renders the tables and figures from the "
-        "existing artifact without re-running the sweep. It cannot change a "
-        "number; only `eval` can.)",
+        "```sh",
+        "./run.sh eval           # Linux / macOS",
+        "```",
+        "",
+        "(`.\\run.ps1 report` / `./run.sh report` re-renders the tables and "
+        "figures from the existing artifact without re-running the sweep. It "
+        "cannot change a number; only `eval` can.)",
         "",
         f"Seed `{data['seed']}` · arms {data['arms']} · profiles {data['profiles']} · "
         f"off-ramp gate: **{gate}** {data['gate_diagnostics']}",
@@ -494,11 +826,25 @@ def render(data: dict[str, Any], *, figures: bool) -> str:
     lines += _delta_table(data, "strict")
     lines += ["", "## Compliance profiles", ""]
     lines += _profiles_note(data)
-    lines += ["", "## Off-ramp gate: coverage per regime", "",
+    lines += ["", "## LTV sensitivity", ""]
+    lines += _ltv_sensitivity()
+    lines += ["## Off-ramp reachability, and what it costs (R5)", ""]
+    lines += _offramp_channel()
+    lines += ["## Off-ramp gate: coverage per (regime, arm, seed)", "",
               "Coverage is *measured*, not assumed. The gate is calibrated "
-              "once on `baseline` and reused unchanged under every regime; a "
-              "regime breaks the exchangeability split conformal assumes, so "
-              "any degradation here is a real result.", ""]
+              "once on `baseline` and reused unchanged under every regime. "
+              "**Read seed-to-seed spread before regime-to-regime spread**: "
+              "a 2026-09-05 review measured the two as comparable in "
+              "magnitude on this table's own data (e.g. baseline/nominal "
+              "swings 0.873-0.917 across seeds alone), so a single row's "
+              "coverage moving is not, by itself, evidence that regime is "
+              "the cause. This corrects an earlier version of this sentence "
+              "(\"any degradation here is a real result\"), which the same "
+              "review found the table's own contents falsify. What the "
+              "gate's own R5 entry establishes independently -- that "
+              "coverage is measurably below the nominal target -- still "
+              "stands; only the attribution to REGIME specifically was "
+              "unsupported.", ""]
     lines += _coverage_table(data)
     lines += ["", "## Pre-registered regimes", "",
               "Written before any result was seen. `git log eval/regimes.py` "
@@ -513,6 +859,86 @@ def render(data: dict[str, Any], *, figures: bool) -> str:
         lines.append("")
 
     return "\n".join(lines) + "\n"
+
+
+def _finding_2(data, eng, conf, offers, sing_wont) -> str:
+    """Headline finding 2 -- the off-ramp lane.
+
+    Two texts, selected by what the artifact ACTUALLY contains, never by
+    hand. Before R5 this finding read "the off-ramp cannot fire in this
+    harness ... that is arithmetic, not measurement", which was true and is
+    now false; a report whose prose survives the fix it describes is worse
+    than one with no prose at all. The pre-R5 text is retained, not
+    deleted, because `--channel-kind off` still reproduces exactly that
+    configuration and must still be described correctly.
+    """
+    ch = data.get("wontpay_channel")
+    retro = sum(c.get("coverage_n_retrospective", 0) for c in conf)
+    if ch is None:
+        return (
+            f"2. **The off-ramp cannot fire in this configuration. `OFFER` = "
+            f"{offers} in all {len(eng)} engine cells -- and that is "
+            f"arithmetic, not measurement.** With R5's synthetic WONT_PAY "
+            f"channel switched OFF (`--channel-kind off`), the proxy decline "
+            f"alphabet has exactly two symbols (`INSUFFICIENT_FUNDS`, "
+            f"`CARD_EXPIRED`) and `cause_map` assigns `WONT_PAY` a prior of "
+            f"0.10 under **both**, so no observation this simulator can "
+            f"produce from ORDINARY Bayesian updating moves belief mass "
+            f"toward `WONT_PAY`, and the singleton `{{WONT_PAY}}` condition "
+            f"is unreachable from any LIVE, still-retryable decision, for "
+            f"any alpha, any seed, any regime -- confirmed on this run: "
+            f"{sum(sing_wont):.3f} (every live cell measures exactly 0). "
+            f"{retro:,} RETROSPECTIVE post-terminal queries are EXCLUDED "
+            f"from every coverage/singleton statistic here (see finding 3): "
+            f"a belief already collapsed by `belief.observe_terminal()` is "
+            f"not exchangeable with the live population the gate is "
+            f"calibrated on. **The off-ramp lane is untested, not tested and "
+            f"negative**, and `false off-ramp = 0` is not a safety result."
+        )
+
+    scored = sum(c.get("offramp_scored_count", 0) for c in eng)
+    false_n = sum(c.get("false_offramp_count", 0) for c in eng)
+    true_n = sum(c.get("true_offramp_count", 0) for c in eng)
+    rate = f"{false_n / scored:.1%}" if scored else "undefined (no OFFER scored)"
+    n_wp = sum(c.get("channel_n_wont_pay", 0) for c in eng)
+    pos_wp = sum(c.get("channel_positive_on_wont_pay", 0) for c in eng)
+    n_other = sum(c.get("channel_n_other", 0) for c in eng)
+    pos_other = sum(c.get("channel_positive_on_other", 0) for c in eng)
+    tpr_r = f"{pos_wp / n_wp:.3f}" if n_wp else "-"
+    fpr_r = f"{pos_other / n_other:.3f}" if n_other else "-"
+    return (
+        f"2. **The off-ramp now fires, and both of its error costs are real "
+        f"numbers instead of one number and a structural zero. `OFFER` = "
+        f"{offers} across {len(eng)} engine cells; of the {scored} scored "
+        f"against the exact counterfactual, {false_n} went to a mandate that "
+        f"WOULD have paid and {true_n} to one that would not -- a "
+        f"false-off-ramp rate of {rate}.** Before R5 this finding read "
+        f"\"the off-ramp cannot fire in this harness\", and it was correct: "
+        f"the proxy decline alphabet had two symbols and `cause_map` gave "
+        f"`WONT_PAY` a prior of 0.10 under both, so the singleton "
+        f"`{{WONT_PAY}}` the gate fires on was unreachable for any alpha, "
+        f"seed or regime. R5 added `CUSTOMER_DECLINED` (prior 0.70 toward "
+        f"`WONT_PAY`) and a **synthetic, quality-parameterised** channel "
+        f"that emits it. Live singleton-`{{WONT_PAY}}` rate on this run: "
+        f"{sum(sing_wont) / len(sing_wont) if sing_wont else 0:.4f} mean "
+        f"across cells, against exactly 0 before.\n\n"
+        f"    **This channel is SYNTHETIC and it reads privileged ground "
+        f"truth.** It is configured at tpr {ch['tpr']:.2f} / fpr "
+        f"{ch['fpr']:.2f} and REALISED tpr {tpr_r} / fpr {fpr_r} on this "
+        f"grid ({n_wp:,} WONT_PAY draws, {n_other:,} others). It reads each "
+        f"mandate's true latent cause -- which the policy itself must never "
+        f"see -- and feeds a fabricated observation into the DECISION path. "
+        f"That is a materially stronger claim than the score-only "
+        f"privileged read `false_reauth_count` already makes. It is not "
+        f"evidence that a real `payment_cancelled` feed carries this much "
+        f"information; the full quality curve, including deliberately "
+        f"worthless channels at AUC 0.5, is in \"Off-ramp reachability, and "
+        f"what it costs\" below. {retro:,} RETROSPECTIVE post-terminal gate "
+        f"queries remain EXCLUDED from every coverage/singleton statistic "
+        f"here (see finding 3). What R5 bought is a tested-and-imperfect "
+        f"off-ramp in place of an untested-and-central one -- not a good "
+        f"result, a checkable one."
+    )
 
 
 def _headline(data: dict[str, Any]) -> list[str]:
@@ -615,32 +1041,7 @@ def _headline(data: dict[str, Any]) -> list[str]:
         f"payment failed. B5 recorded this exact confound; B13's first draft "
         f"reproduced it by omitting the column.",
         "",
-        f"2. **The off-ramp cannot fire in this harness. `OFFER` = {offers} "
-        f"in all {len(eng)} engine cells -- and that is arithmetic, not "
-        f"measurement.** The proxy decline alphabet has exactly two symbols "
-        f"(`INSUFFICIENT_FUNDS`, `CARD_EXPIRED`) and `cause_map` assigns "
-        f"`WONT_PAY` a prior of 0.10 under **both**, so no observation this "
-        f"simulator can produce from ORDINARY Bayesian updating moves belief "
-        f"mass toward `WONT_PAY`, and the singleton `{{WONT_PAY}}` condition "
-        f"is unreachable from any LIVE, still-retryable decision, for any "
-        f"alpha, any seed, any regime -- confirmed on this run: "
-        f"{sum(sing_wont):.3f} (every live cell measures exactly 0). A "
-        f"same-day investigation (R2, finding 5) briefly made this claim "
-        f"look false: fixing the `OPTED_OUT` re-solve bug meant the gate was "
-        f"queried, for the first time, on a RETROSPECTIVE belief already "
-        f"collapsed to near-certain `WONT_PAY` by `belief.observe_terminal()` "
-        f"-- {sum(c.get('coverage_n_retrospective', 0) for c in conf):,} such "
-        f"queries this run, EXCLUDED from every coverage/singleton statistic "
-        f"here (see finding 3) because a hand-constructed, already-decided "
-        f"belief is not exchangeable with the live population the gate is "
-        f"calibrated on and answering that question would be close to "
-        f"tautological. `OFFER` still could not have fired there regardless "
-        f"-- clause 6(c) denies every action but `STOP` once a mandate has "
-        f"opted out -- but the MEASUREMENT is what needed fixing, not just "
-        f"the action. **The off-ramp lane is untested, not tested and "
-        f"negative**, and `retry_storm`'s pre-registered hypothesis about it "
-        f"is vacuous rather than falsified: the outcome was fixed before the "
-        f"regime ran. `false off-ramp = 0` is likewise not a safety result.",
+        _finding_2(data, eng, conf, offers, sing_wont),
         "",
     ]
     if cov:
@@ -809,6 +1210,15 @@ def _summary_payload(data: dict) -> dict:
         "gate_kind": data["gate_kind"],
         "regimes_where_we_lose": losing,
         "offers_fired_total": sum(c["n_offer"] for c in eng),
+        # R5: the off-ramp's own error costs, so downstream tooling
+        # (dashboard/, site/, scripts/checkpoint.py) reads the PAIR rather
+        # than a bare count. `offramp_scored_total` is the exact denominator
+        # `false_offramp_total` was measured against -- never `n_offer`,
+        # which can differ if a post-terminal re-solve ever returns OFFER.
+        "offramp_scored_total": sum(c.get("offramp_scored_count", 0) for c in eng),
+        "false_offramp_total": sum(c.get("false_offramp_count", 0) for c in eng),
+        "true_offramp_total": sum(c.get("true_offramp_count", 0) for c in eng),
+        "wontpay_channel": data.get("wontpay_channel"),
         "false_reauth_total": sum(c["false_reauth_count"] for c in eng),
         "reauth_total": sum(c["n_reauth"] for c in eng),
         "attempt_after_terminal_total": sum(c["n_attempt_after_terminal"] for c in eng),
@@ -841,7 +1251,8 @@ def _readme_table(data: dict) -> list[str]:
                 f"**{b['mandates_preserved']}** |")
 
     return [
-        f"*Auto-generated by `.\\run.ps1 eval`. Headline cell "
+        f"*Auto-generated by `.\\run.ps1 eval` (Windows) / `./run.sh eval` "
+        f"(Linux, macOS). Headline cell "
         f"`{s['headline_cell']}`, mean of {n_seeds} seeds. Full report: "
         f"[reports/regimes.md](reports/regimes.md).*",
         "",
@@ -879,11 +1290,7 @@ def _readme_table(data: dict) -> list[str]:
         f"is true, and because a reader who discovers it themselves should not "
         f"have to wonder what else was left out.",
         "",
-        f"**The off-ramp never fires** (`OFFER` = {s['offers_fired_total']} "
-        f"across every cell) — and that is arithmetic, not measurement: the "
-        f"proxy decline alphabet cannot move belief toward `WONT_PAY` at all. "
-        f"The off-ramp lane is untested, so the false-off-ramp column is not "
-        f"evidence of safety. Separately, {s['false_reauth_total']} of "
+        _readme_offramp_sentence(s) + f" Separately, {s['false_reauth_total']} of "
         f"{s['reauth_total']} REAUTHs went to mandates whose true cause is not "
         f"`CANT_PAY_EVER` — but {s['compliance_reauth_total']} of those are "
         f"the above-AFA-cliff compliance route (clause 8(a)/8(b), legally "
@@ -897,6 +1304,53 @@ def _readme_table(data: dict) -> list[str]:
         f"engine recovers less money than the ladder in these regimes. The "
         f"report's \"Where we lose\" section gives the reason for each.",
     ]
+
+
+def _readme_offramp_sentence(s: dict) -> str:
+    """The README's one-line off-ramp claim. Two texts, chosen by what the
+    artifact contains -- never edited by hand, because this block is
+    regenerated on every `eval.report` run and a hand-edit would be
+    overwritten silently. The `off` text is retained rather than deleted:
+    `--channel-kind off` still reproduces that configuration exactly."""
+    ch = s.get("wontpay_channel")
+    if ch is None:
+        return (
+            f"**The off-ramp never fires** (`OFFER` = {s['offers_fired_total']} "
+            f"across every cell) \u2014 and that is arithmetic, not measurement: "
+            f"the proxy decline alphabet cannot move belief toward `WONT_PAY` "
+            f"at all. The off-ramp lane is untested, so the false-off-ramp "
+            f"column is not evidence of safety."
+        )
+    scored = s.get("offramp_scored_total") or 0
+    false_n = s.get("false_offramp_total") or 0
+    rate = f"{false_n / scored:.1%}" if scored else "n/a"
+    # R5 review pass, 2026-09-05 (stats-reviewer): `eng` (and so every total
+    # above) sums BOTH compliance profiles, which are byte-identical on
+    # every field across all 128 (regime, arm, seed) triples -- this engine
+    # has no timing discrimination (see "Compliance profiles" below), so
+    # `strict` and `permissive` are the same 128 cells counted twice. The
+    # RATE is unaffected by doubling both terms, but a CI computed on the
+    # doubled n understates the true uncertainty -- computed here on the
+    # halved (distinct) sample rather than the inflated one.
+    from bench.llm_vs_stats import wilson_ci
+    ci_note = ""
+    if scored:
+        lo, hi = wilson_ci(false_n // 2, scored // 2)
+        ci_note = f" (95% CI {lo:.0%}\u2013{hi:.0%} on the distinct sample)"
+    return (
+        f"**The off-ramp fires, on a SYNTHETIC channel that reads privileged "
+        f"ground truth** (`OFFER` = {s['offers_fired_total']} across every "
+        f"cell; {false_n} of {scored} scored went to a mandate that would "
+        f"have paid \u2014 a {rate} false-off-ramp rate{ci_note}). The channel is "
+        f"configured at tpr {ch['tpr']:.2f} / fpr {ch['fpr']:.2f} and is "
+        f"disclosed as fabricated everywhere it appears; "
+        f"`reports/regimes.md` publishes its full quality curve (including "
+        f"a within-mandate-correlation sensitivity check the headline grid "
+        f"holds fixed at zero), and deliberately worthless channels at "
+        f"AUC 0.5, where the false rate is several times worse. This buys a "
+        f"tested-and-imperfect off-ramp in place of an untested-and-central "
+        f"one, not a good result."
+    )
 
 
 README_BEGIN = "<!-- RESULTS:BEGIN -->"
@@ -929,10 +1383,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     data = load(args.artifact)
-    args.out.write_text(render(data, figures=args.figures), encoding="utf-8")
+    args.out.write_text(render(data, figures=args.figures), encoding="utf-8", newline="\n")
 
     summary = _REPO_ROOT / "reports" / "results.json"
-    summary.write_text(json.dumps(_summary_payload(data), indent=2), encoding="utf-8")
+    # R7 review gap, found 2026-09-05 while regenerating this file: every
+    # other artifact writer in this project got `newline="\n"` in the
+    # cross-platform byte-identity fix; this one didn't, because the bulk
+    # regex that applied the fix matched exactly one write_text() call per
+    # file and this file has two. Same reasoning as the rest: without it,
+    # this JSON is CRLF on Windows and LF on Linux, breaking the same
+    # byte-identical claim for a smaller, more-read artifact.
+    summary.write_text(json.dumps(_summary_payload(data), indent=2),
+                       encoding="utf-8", newline="\n")
     if not args.no_readme:
         readme = _REPO_ROOT / "README.md"
         if not update_readme(data, readme):

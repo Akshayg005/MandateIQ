@@ -116,18 +116,24 @@ switch ($Task.ToLower()) {
 Mandate Recovery Engine -- tasks
 
   .\run.ps1 test              full test suite with coverage
-                               NEEDS POSTGRES -- 132 tests cover the ledger,
-                               executor and crash-recovery path and FAIL, not
-                               skip, without it. Start it with .\run.ps1 up.
+                               NEEDS POSTGRES -- ~150 tests cover the ledger,
+                               executor, read API and crash-recovery path and
+                               FAIL, not skip, without it. Start it with
+                               .\run.ps1 up.
                                MANDATEIQ_ALLOW_PG_SKIP=1 restores skipping.
   .\run.ps1 test-fast         unit tests only, skips chaos and slow/simulation
   .\run.ps1 lint              invariant guards across all tracked python
-  .\run.ps1 ci                test-fast + lint. Does NOT run eval -- eval.run
-                               is B13's file (PLAN_DETAIL.md:518) and has
-                               never existed; see DECISIONS.md, 2026-08-29
+  .\run.ps1 ci                test-fast + lint. Does NOT run eval: the full
+                               sweep is ~15 minutes, too slow for a
+                               frequent-run target. GitHub Actions runs
+                               eval-quick on every push instead (R7)
 
   .\run.ps1 eval              full eval, all regimes, both compliance profiles
   .\run.ps1 eval-quick        baseline regime, nominal arm, strict profile
+                               NOTE: writes the SAME reports\regimes.json
+                               a full `eval` does, so it overwrites one
+  .\run.ps1 offramp-channel   R5 -- off-ramp channel-quality sweep
+  .\run.ps1 ltv               R3 -- LTV sensitivity sweep
   .\run.ps1 golden            golden-set regression on the LLM layer (cached;
                                -NoCache forces a live call on every row)
   .\run.ps1 bench             LLM vs statistical core benchmark
@@ -141,13 +147,19 @@ Mandate Recovery Engine -- tasks
   .\run.ps1 down              stop everything `up` started
   .\run.ps1 state             print the session-start orientation block
   .\run.ps1 verify            full pre-flight: guards, keys, docker, hooks
-  .\run.ps1 serve             run the webhook ingest API (uvicorn, port 8000)
+  .\run.ps1 serve             the HTTP API (uvicorn, port 8000) -- the Razorpay
+                               webhook AND R6's three read endpoints:
+                               /ledger/{id}, /plan/{id}, /decision/{sha}
   .\run.ps1 dashboard         B14 -- export per-mandate artifact, stage, serve
   .\run.ps1 dashboard-build   stage + lint + production build of the dashboard
   .\run.ps1 site              B15 -- stage results.json, serve the landing page
   .\run.ps1 site-build        stage + lint + production build of the landing page
   .\run.ps1 coverage          decline_class / UNKNOWN-rate breakdown from ingested_event
   .\run.ps1 clean             remove caches
+
+  On Linux and macOS use ./run.sh instead -- same task names, same
+  arguments, except up / down / verify / freeze, which it declines rather
+  than approximating (see run.sh's own help for why).
 
 "@
     }
@@ -227,6 +239,13 @@ Mandate Recovery Engine -- tasks
     # issuer_outage, delayed_salary, stacking_spike, festival_season,
     # retry_storm (eval/regimes.py). This line predated that file.
     "eval-quick" { Invoke-Step "eval-quick" { & $Py -m eval.run --config eval/frozen/sim_config.yaml --regime baseline --arm nominal --profile strict --quiet } }
+    # R5/R3 side sweeps. Separate targets, never folded into `eval`: each
+    # writes its OWN artifact (reports/offramp_channel.json,
+    # reports/ltv_sensitivity.json) that eval/report.py reads if present and
+    # renders a placeholder for if absent, so the main sweep stays the
+    # ~15-minute thing it already is.
+    "offramp-channel" { Invoke-Step "offramp-channel" { & $Py -m eval.offramp_channel } }
+    "ltv"             { Invoke-Step "ltv"             { & $Py -m eval.ltv_sensitivity } }
     # NOTE: no "golden" case here. PowerShell's switch runs EVERY matching
     # branch unless a branch breaks, and a second "golden" case (the one that
     # honours -NoCache) lives further down. Having both meant `.\run.ps1

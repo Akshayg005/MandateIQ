@@ -443,9 +443,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     out = pathlib.Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.with_suffix(".md").write_text(
-        render_report(log, arm=args.arm, profile=profile, run_id=run_id), encoding="utf-8"
+        render_report(log, arm=args.arm, profile=profile, run_id=run_id),
+        encoding="utf-8", newline="\n",
     )
-    with out.with_suffix(".jsonl").open("w", encoding="utf-8") as fh:
+    with out.with_suffix(".jsonl").open("w", encoding="utf-8", newline="\n") as fh:
         for row in log.rows:
             fh.write(
                 _json.dumps(

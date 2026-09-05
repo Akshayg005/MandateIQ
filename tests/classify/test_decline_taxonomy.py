@@ -134,3 +134,69 @@ def test_payment_cancelled_naming_the_mandate_is_not_mandate_revoked():
         "The customer cancelled the UPI AutoPay mandate approval request.",
     )
     assert result != DeclineClass.MANDATE_REVOKED
+
+
+# --- R5: CUSTOMER_DECLINED, and the guard it narrows ------------------------
+#
+# R5 (reports/gates.md, "Post-B16 remediation gates") gives
+# `payment_cancelled` a class of its own. Before this, the signal fell
+# through to UNKNOWN: a real WONT_PAY-flavoured event with nowhere to go,
+# which is why no DeclineClass had a WONT_PAY prior above 0.45 and the
+# conformal off-ramp gate could never reach the {WONT_PAY} singleton it
+# fires on. The anti-conflation guard (docstring finding 3) is NARROWED,
+# never deleted -- it existed because no class covered this case.
+
+def test_payment_cancelled_is_customer_declined():
+    """The dedicated class for "the customer dismissed THIS collect
+    request" -- distinct from MANDATE_REVOKED (the whole mandate is gone)
+    and from UNKNOWN (no signal at all)."""
+    from src.classify.decline_taxonomy import classify
+
+    assert classify(
+        "payment_cancelled",
+        "The customer cancelled the UPI AutoPay mandate approval request.",
+    ) == DeclineClass.CUSTOMER_DECLINED
+
+
+def test_declining_the_collect_request_is_customer_declined():
+    """Free-text form, with no `payment_cancelled` code attached."""
+    from src.classify.decline_taxonomy import classify
+
+    assert classify(
+        None, "Customer declined the collect request on their UPI app.",
+    ) == DeclineClass.CUSTOMER_DECLINED
+
+
+def test_customer_declined_is_still_not_mandate_revoked():
+    """The load-bearing half of the narrowing: giving `payment_cancelled`
+    a home must not let it reach MANDATE_REVOKED. One dismissed collect
+    request is not a revoked mandate, and this project's own hard
+    invariant is that a WONT_PAY-flavoured signal never collapses into the
+    dead-instrument class."""
+    from src.classify.decline_taxonomy import classify
+
+    assert classify(
+        "payment_cancelled",
+        "The customer cancelled the UPI AutoPay mandate approval request.",
+    ) != DeclineClass.MANDATE_REVOKED
+
+
+def test_a_real_mandate_revocation_still_classifies_as_mandate_revoked():
+    """The other half: narrowing the guard must not swallow genuine
+    revocation language into the new class."""
+    from src.classify.decline_taxonomy import classify
+
+    assert classify(None, "mandate revoked by customer") == DeclineClass.MANDATE_REVOKED
+    assert classify(
+        None, "the customer has cancelled the mandate at their bank",
+    ) == DeclineClass.MANDATE_REVOKED
+
+
+def test_customer_declined_does_not_capture_an_issuer_decline():
+    """"declined" alone is an ISSUER_DECLINE keyword and must stay one --
+    the new class requires the CUSTOMER as the actor, not the bank."""
+    from src.classify.decline_taxonomy import classify
+
+    assert classify(
+        "payment_declined", "The payment was declined by the issuing bank.",
+    ) == DeclineClass.ISSUER_DECLINE

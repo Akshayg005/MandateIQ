@@ -167,13 +167,35 @@ def test_the_wont_pay_singleton_is_unreachable_via_live_inference(records):
     contract -- the provenance marker is what observe_terminal() actually
     guarantees.
 
-    This does not make the off-ramp actionable: `OFFER` requires
-    `permitted(Action.OFFER, ctx) == ALLOW`, and clause 6(c)'s pre-existing
-    rule denies EVERY action but STOP once `opted_out=True` -- so `OFFER`
-    stays uncalled regardless of what the conformal set says. That --
-    OFFER never CHOSEN -- is the assertion that actually carries the
-    dashboard's "off-ramp never fires" claim, and it is the one this test
-    still enforces unconditionally, below.
+    The post-terminal case does not make the off-ramp actionable: `OFFER`
+    requires `permitted(Action.OFFER, ctx) == ALLOW`, and clause 6(c)'s
+    pre-existing rule denies EVERY action but STOP once `opted_out=True`.
+
+    CORRECTED AGAIN, R5 (2026-09-05, same gate list). This test used to
+    assert two further things that are now FALSE, and its own failure
+    message named the reason in advance: "the off-ramp may now be
+    actionably reachable via inference, which is R5's job, not a silent
+    side effect of something else." R5 is that job. `CUSTOMER_DECLINED`
+    (prior 0.70 toward WONT_PAY) plus the synthetic channel in
+    `eval/allocator_sweep.py` make the `{WONT_PAY}` singleton reachable
+    from a LIVE, ordinarily-inferred belief, and `OFFER` is now chosen.
+
+    So the tripwire did its job -- it fired on exactly the change it was
+    watching for -- and what it asserts is rewritten to the claims that are
+    still true and still load-bearing, rather than deleted:
+
+      * the gate still produces singletons at a meaningful rate (the panel
+        copy depends on it);
+      * a LIVE {WONT_PAY} singleton must be accompanied by at least one
+        actual OFFER somewhere in the export. The singleton is a NECESSARY
+        condition for OFFER (`conformal.should_act`), so a run with the
+        singleton but no OFFER anywhere would mean the firing rule had
+        quietly stopped being wired to the action -- which is exactly the
+        failure the original assertion was protecting against, expressed
+        for a world where the singleton is reachable;
+      * an OFFER decision must carry a real `Offer` object (R5 wired
+        `construct_offer()`, which had no caller before), and must never be
+        recorded on an OPTED_OUT context, where clause 6(c) forbids it.
     """
     sets = [tuple(d["conformal_set"]) for r in records for d in r["decisions"]]
     singletons = [s for s in sets if len(s) == 1]
@@ -189,15 +211,29 @@ def test_the_wont_pay_singleton_is_unreachable_via_live_inference(records):
     ]
     assert live_decisions, "sanity check: every decision was post-terminal, which cannot be right"
     live_singletons = [tuple(d["conformal_set"]) for d in live_decisions if len(d["conformal_set"]) == 1]
-    assert ("WONT_PAY",) not in live_singletons, (
-        "the {WONT_PAY} singleton fired on a LIVE (ordinarily-inferred) belief "
-        "-- the off-ramp may now be actionably reachable via inference, which "
-        "is R5's job, not a silent side effect of something else"
-    )
 
-    # The claim that actually matters and must hold unconditionally,
-    # regardless of what the conformal set records: OFFER is never CHOSEN.
-    assert not any(d["action"] == "OFFER" for r in records for d in r["decisions"])
+    offers = [d for r in records for d in r["decisions"] if d["action"] == "OFFER"]
+    if ("WONT_PAY",) in live_singletons:
+        assert offers, (
+            "a LIVE {WONT_PAY} singleton is present but OFFER was never chosen "
+            "-- conformal.should_act() is a NECESSARY condition for OFFER, so "
+            "the firing rule has come unwired from the action it gates"
+        )
+
+    for d in offers:
+        assert d["offer"] is not None, (
+            "an OFFER decision with no Offer object -- src/policy/offramp.py "
+            "has come unwired again (R5 gave construct_offer() its first caller)"
+        )
+        assert [s["kind"] for s in d["offer"]["steps"]] == ["PAUSE", "DOWNGRADE", "CANCEL"], (
+            "the off-ramp order is the product decision: least drastic and most "
+            "reversible first, so a customer who only needed a pause is never "
+            "shown cancel as the headline option"
+        )
+        assert d["binding_constraint"] != "OPTED_OUT", (
+            "OFFER recorded on an opted-out context -- clause 6(c) denies every "
+            "action but STOP there"
+        )
 
 
 def test_exported_decisions_rehash_to_their_own_digest(records):

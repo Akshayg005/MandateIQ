@@ -5110,3 +5110,956 @@ pattern R1a's own review pass already established this session. None would
 have been caught by re-reading the diff, and the second (binding_constraint)
 in particular would have shipped a false ledger record on the actual money
 path's audit trail had it not been caught here.
+
+### 2026-09-04 · R1b · A second, non-frozen simulator, and a review pass that found the report's own explanation had the wrong sign
+
+**The gate** (`reports/gates.md`, R1b): `reports/model_defensibility.md`
+reports per-cause coefficients with confidence intervals for issuer,
+instrument type and mandate age, fit on a simulator that actually
+generates them; a guard asserts `eval/run.py` never imports that
+simulator. Pre-registered at R0 (this file, "R1" entry, 2026-09-04):
+`eval/sim2.py`, non-frozen, feeding only `reports/model_defensibility.md`,
+never the three-bar headline.
+
+**Built.** `eval/sim2.py`: `Sim2Mandate`/`Sim2Episode`, `Simulator2` (own
+local `_softmax`/`_logits_from_base_rates`/`_weighted_choice` -- not
+imported from `eval.frozen.simulator`, so the DGP mechanism stays fully
+independent; only `AttemptResult`, a plain data container, is reused),
+`generate_corpus()` (mirrors `eval/corpus.py`'s schedule-committed-before-
+any-attempt discipline), `build_sim2_features()`, and a pipeline that
+reuses `src.model.features.featurize()` UNMODIFIED (issuer/instrument/age
+are genuinely absent from the real pipeline and stay that way -- sim2
+supplies them itself, merged in before `assemble()`). `src/model/
+competing_risks.py` gained `ISSUER_LEVELS`/`INSTRUMENT_LEVELS` (single
+source of truth; `eval/sim2.py` imports FROM here, never the reverse),
+`SIM2_FEATURE_COLUMNS` (deliberately NOT folded into `_ALL_DESIGN_COLUMNS`'s
+default -- these covariates aren't sourceable from any real production
+frame, so growing the default would break a no-arg `_design_matrix(df)`
+call on real data), and three new column-groups with the same loud-not-
+silent unknown-value discipline the existing `category` group uses.
+`scripts/guard_invariants.py` gained a `SIM2_IMPORT` check scoped to
+`eval/run.py` only. 59 new tests (test-writer wrote the DGP/corpus/design-
+matrix/guard tests before the implementation existed; one bug found and
+fixed in that pass before implementing against it -- a `row_id.split(":")`
+that would have silently collapsed every mandate under one seed into a
+single group, since a namespaced mandate_id itself contains a colon,
+fixed to `rsplit(":", n=2)`; a 6-seed fit smoke test added afterward,
+asserting >=1 of 18 coefficients significant, as a regression guard
+against the DGP's effects ever being silently diluted below
+detectability).
+
+**MEASURED, full 40-seed `SIM2_SEEDS` corpus**: 8,000 mandates, 12,242
+estimable rows, 7/18 issuer/instrument/age coefficients significant at
+95% -- the mirror-image result to Phase A's honest null, as intended.
+
+**THE REVIEW PASS FOUND THE REPORT'S OWN NARRATIVE WAS WRONG, not just
+incomplete** (`stats-reviewer`, run against the full uncommitted diff
+before this gate was ticked). Three severe findings, each independently
+re-verified here (analytic pooled-log-odds computation, cross-checked
+against a live refit) before being acted on, not taken on the reviewer's
+word alone:
+
+1. **Wrong mechanism, right conclusion.** The first version of the report
+   explained `mandate_age_years`' significance on DEAD/OPTED_OUT (despite
+   being coded as a direct effect on CANT_PAY_NOW's RECOVERED hazard only)
+   by claiming raising the recovery share "mechanically lowers" the
+   DEAD/OPTED_OUT shares -- a mechanism that predicts a NEGATIVE
+   coefficient. The table three lines above it reports +0.175/+0.170.
+   Re-derived independently: MNLogit's reference category is
+   STILL_PENDING, so raising CANT_PAY_NOW's recovery drains the SURVIVOR
+   denominator faster than the dead numerator, and dead-vs-survive
+   log-odds mechanically RISE, not fall, for that pooled stratum.
+   Confirmed by direct analytic marginalisation over the DGP's own
+   `cause_mix` and age distribution: true pooled slope +0.13/year
+   (computed here: +0.132/year; stats-reviewer's independent figure:
+   +0.128-0.135/year) against the fitted +0.175/+0.170 -- same sign, same
+   order of magnitude, correct conclusion, previously wrong reasoning.
+2. **A second artifact, same shape, entirely unflagged.** `issuer_gamma`
+   is coded as a dead-hazard-only bonus (zero direct recovery effect,
+   per-cause) -- yet `issuer_gamma`->RECOVERED is also significant
+   (+0.1775, p=0.005), by the identical cause-marginal composition
+   mechanism as finding 1, and the original report's "7/18 coefficients
+   carry real signal" line counted it as an unqualified win rather than a
+   second artifact. Re-derived independently: pooled cause-marginal
+   log-odds(recover/survive) rises +0.115 from a dead-only bonus of 1.1
+   (matches stats-reviewer's independently-computed +0.1032 to the same
+   order of magnitude).
+3. **The fitted CIs do not cover the DGP's own coded values, and the
+   report never said so.** For the three DIRECT (column, outcome) pairs
+   (issuer_gamma->DEAD, both instrument dummies->DEAD), the fitted 95% CI
+   excludes the DGP's own coded additive logit in all three cases
+   (e.g. issuer_gamma: coded +1.10, fitted CI [+0.4965, +0.7893]) --
+   attenuated 1.7-3.2x by cause-marginal pooling. Not a fitting bug (the
+   same cause-specific-vs-cause-marginal distinction `src/model/
+   competing_risks.py`'s own docstring already draws for
+   `slot3_x_in_salary_window`), but the report's closing claim ("evidence
+   that the machinery CAN fit and report a defensible, CI-bearing
+   coefficient") read as parameter recovery to an unwarned reader.
+
+**FIXED, all three, in `eval/sim2.py`'s `_write_report`**: a new "Direct
+effects vs cause-marginal artifacts" section classifies every column by
+which single outcome equation the DGP codes it into (`_DIRECT_TARGET_
+OUTCOME`, computed structurally, not hand-counted per run) and states
+BOTH significant artifacts with the correct mechanism and the
+independently-verified analytic cross-check numbers above; a new "The
+fitted CIs do not cover the DGP's own coded values" section publishes the
+coded-vs-fitted table for all three direct pairs, computed live from
+`_DGP_CODED_LOGIT` (not hand-typed) so it cannot go stale on a rerun; a
+new sentence discloses the fit is full-corpus in-sample, no held-out
+split; and a new closing paragraph states the least-comfortable
+assumption directly: `initial_cause` is drawn independently of issuer/
+instrument/age in this corpus, so every artifact and every attenuation
+measured here comes from marginal-fitting alone with zero confounding --
+real, correlated covariate data would not just shrink these effects, it
+could flip their sign. Re-ran `python -m eval.sim2` after the fix:
+identical 18-row coefficient table (the fit itself was never wrong, only
+its explanation), Phase A's section confirmed still byte-identical.
+
+**A fourth, moderate finding: a dangling citation.** `eval/sim2.py`'s
+module-level comment cited "DECISIONS.md's R1b entry" for a ~7pp/~1.1pp-SE
+margin claim before any such entry existed -- three sites (the module
+docstring, and two test docstrings) cited a derivation that had never
+actually been written down, in a codebase whose own stated convention is
+no unattributed magic numbers. This entry is that derivation, now real:
+the true aggregate dead-rate gap, re-derived here by direct analytic
+marginalisation over `cause_mix` and the full `mandate_age_days`
+distribution (both causes and salary-window held exactly as the DGP
+tests hold them), is **+6.75pp** (issuer_gamma vs issuer_alpha) and
+**+6.42pp** (upi_autopay vs the debit/credit average) -- consistent with
+stats-reviewer's independently-computed +7.38pp/+6.70pp (methodology
+difference: age integrated over its full distribution here vs evaluated
+at its mean there; both land in the same ~6.4-7.8pp band and both clear
+the tests' 5pp floor with real margin once the seed count below is
+applied).
+
+**A fifth, moderate finding: two tests had almost no real margin.**
+`tests/eval/test_sim2.py`'s two hazard-difference tests originally
+aggregated 20 seeds (seeds 1000-1019) and asserted a >=5pp gap.
+stats-reviewer measured that window at +5.51pp (issuer) / +5.69pp
+(instrument) -- only ~0.26 SD above the 5pp floor against an empirical
+20-seed window-SD of ~1.93pp/1.36pp (30 disjoint windows), an empirically
+confirmed ~7-10% flake rate under any reseed, despite passing
+deterministically today. The docstring's claim of "wide statistical
+margin" was not true of the seed count actually used. FIXED: widened to
+150 seeds (empirically verified here: 1.57s runtime, measures +7.83pp/
++7.18pp -- ~2.5-2.9 SE above the 5pp floor by the same window-SD scaling,
+a real margin this time, checked by measurement rather than asserted).
+The unrelated 6-seed fit smoke test (`tests/eval/test_sim2_fit.py`) was
+NOT affected -- stats-reviewer separately confirmed `issuer_gamma`'s DEAD
+z-score stays significant (+2.68 to +4.97) across four disjoint 6-seed
+windows.
+
+**Disclosed, not fixed** (all LOW/LATENT severity, none blocking the
+gate): (a) the `SIM2_IMPORT` guard is direct-textual-import matching
+only -- a relative `from .sim2 import`, `importlib.import_module`, or a
+transitive re-export via another `eval/` module all evade it, same
+pre-existing limitation `SRC_LLM_IMPORT` already has; documented in the
+guard's own comment now. (b) `Sim2Episode` omits `eval.corpus.Episode`'s
+`schedule` field (added at B6 specifically to stop a `src/model/
+CLAUDE.md` rule-2 leak in `hazard_tensor()`'s `schedule=None` fallback);
+nothing calls `hazard_tensor()` on a sim2 episode today, so this is
+latent, not live -- `Sim2Episode`'s docstring now says a schedule field
+must be added back first if that ever changes. (c) `_generate_mandates()`'s
+`amounts`/`ceil_mult`/`ceilings` locals technically evade
+`guard_invariants.py`'s `FLOAT_MONEY`/`MONEY_DIVISION` regex (which
+matches on identifier prefixes, not types) the same way the frozen
+simulator's own identically-shaped code does -- no live bug (every value
+is integer-rounded before becoming `amount_paise`/`ceiling_paise`), a
+guard-coverage note only, now commented at the call site.
+
+Reviewed by `stats-reviewer` (full pass, all findings independently
+re-verified in this entry rather than taken on trust); censoring
+discipline, leakage, split integrity, dependency direction, and report
+idempotence all confirmed clean and are not re-litigated here. Full test
+suite: 1065 passed, 1 skipped, after all fixes. `guard_invariants --all`
+clean on 127 tracked files. Does not touch `eval/frozen/`.
+
+### 2026-09-04 · R3 · The LTV break-even sweep, and a headline slice with no crossing to find
+
+**The gate** (`reports/gates.md`, R3): `reports/regimes.md` names the LTV
+break-even ratio as a ratio to mean mandate amount, and every point on the
+sensitivity curve is reproducible by one command.
+
+**Discovered while investigating, before any code**: `src/core/money.py`'s
+`interpolate_crossing()` (exact-Fraction linear interpolation between two
+swept points where a sign change occurs) already existed, but a stale
+session handoff note claiming it was "tested" was checked and found FALSE
+-- zero references to it anywhere under `tests/`. Fixed before building on
+top of it: `tests/core/test_money.py` gained 10 new tests (exact
+midpoint, non-integral fraction, either endpoint exactly zero, sign-order
+invariance, both-same-sign and both-negative raise cases, and a
+realistic-scale exactness check at tens of millions of paise) before R3's
+own code was written.
+
+**Design, chosen after reading `eval/run.py` rather than assumed**: the
+original plan sketch (written at session start, before investigation)
+proposed adding an `--ltv-paise` sweep flag and an `ltv_paise` field to
+`eval/run.py`'s `CellResult`. Investigation found this unnecessary and
+riskier than the alternative: `eval/run.py`'s `run_engine_cell()` already
+takes `costs: PolicyCosts` as an explicit parameter, and `PolicyCosts` is a
+frozen dataclass -- `dataclasses.replace(costs, mandate_ltv_paise=ltv)` from
+OUTSIDE `eval/run.py` is sufficient to sweep LTV with zero changes to that
+file's ~800-line sweep loop or its `CellResult` schema. A new, separate
+module (`eval/ltv_sensitivity.py`) reuses `run_engine_cell()`/
+`run_ladder_cell()`/`fit_gate()` as-is, matching this session's own
+established pattern (`eval/sim2.py`, `eval/design_matrix_comparison.py`)
+of keeping a side-question's machinery out of the files everything else
+depends on.
+
+**Two slices, both fixed before the first sweep ran, never chosen after
+seeing a result** -- the selection rule is in `eval/ltv_sensitivity.py`'s
+own module docstring, restated here because it is the whole defence
+against the appearance of cherry-picking:
+1. **HEADLINE** -- baseline/nominal/strict/seed=0, the same "easy arm"
+   slice this project already treats as canonical everywhere else.
+2. **WORKED EXAMPLE** -- the first (regime, arm, profile, seed) cell, in
+   orderings that ALREADY EXIST in this codebase (`eval.regimes.REGIMES`'s
+   own dict insertion order -- `baseline, issuer_outage, delayed_salary,
+   stacking_spike, festival_season, retry_storm`, `eval.run.ALL_ARMS`,
+   `eval.run.ALL_PROFILES`, ascending seed from 0), where the engine
+   already recovers MORE than the ladder at the DEFAULT LTV -- one of the
+   36/256 such cells `reports/gates.md`'s B13 entry already measured to
+   exist. `baseline` (checked first) has no winning cell in any of its 18
+   arm/profile/seed combinations searched; `issuer_outage/nominal/strict/
+   seed=0` (the very next regime, first arm/profile/seed combination
+   checked within it) wins immediately. This was verified by hand before
+   being wired into `_find_worked_example_cell()`'s mechanical search --
+   the function's own selection is not tuned to reproduce this specific
+   answer, it is what the pre-existing ordering happens to find first.
+
+**MEASURED. Same 66-point LTV grid (0 to 100,000,000 paise) for both
+slices:**
+- **Headline: zero crossings.** `engine.recovered_paise` stays below
+  `ladder.recovered_paise` at every one of 66 points, from -Rs 1,50,470.99
+  at LTV=0 to -Rs 10,20,387.83 at LTV=100,000,000. `interpolate_crossing()`
+  correctly never fires (`ValueError`, caught and skipped) -- there is no
+  sign change to interpolate. This is itself the finding, not a null
+  result to route around: even at LTV=0 (the allocator's most permissive
+  setting), the engine already recovers ~Rs 1.5 lakh less than the ladder
+  on this 200-mandate batch, and the deficit only grows as LTV rises. The
+  gap here is STRUCTURAL (AFA-cliff routing to REAUTH, hazard-informed
+  STOP decisions that fire regardless of LTV) rather than an LTV trade-off
+  -- no achievable LTV value buys back the difference.
+- **Worked example (issuer_outage/nominal/strict/seed=0): two crossings,
+  non-monotonic.** diff is negative at LTV=0, positive by LTV=180,000 (the
+  configured default), negative again by LTV=500,000 -- a rise-then-fall
+  shape, not a single threshold. Crossings interpolated at LTV ~=119,269
+  paise (**ratio 0.090** to mean mandate amount) and ~=455,740 paise
+  (**ratio 0.343**). The current default LTV (ratio ~=0.135) sits inside
+  this window, consistent with the already-known fact that this cell wins
+  at the default.
+
+**Reviewed by `money-auditor` before ticking.** One real, fixed finding:
+`eval/report.py`'s rendering read the JSON artifact's FLOAT convenience
+fields (`crossing_ltv_paise`, `ratio_to_mean_amount`) rather than the
+EXACT `Fraction` strings stored alongside them
+(`crossing_ltv_paise_exact`, `ratio_to_mean_amount_exact`) -- both are
+written by `eval/ltv_sensitivity.py`, but only the float ones were being
+read at render time. No actual rendered digit was wrong (double-precision
+float has far more headroom than the 2-3 decimal places ever displayed),
+but it violated this project's own stated reason `interpolate_crossing()`
+returns a `Fraction` rather than a float in the first place. Fixed:
+`_ltv_slice_table()` now parses `Fraction(...)` from the exact string
+fields and renders from those. Every other check came back clean,
+independently verified rather than taken on trust: exact-Fraction
+arithmetic is complete before any float conversion in
+`eval/ltv_sensitivity.py` (the float fields are write-once, display-only,
+never read back into a computation); `_signed_rupees()` (a new helper --
+`money.fmt()` refuses negative paise, since a ledger amount is never
+negative, but an engine-minus-ladder difference can be) renders
+`paise=0` as `+₹0.00`, not `-₹0.00`; `dataclasses.replace()` on the frozen
+`PolicyCosts` cannot leak a mutated object across sweep iterations; this
+whole gate's code touches no `src/ledger/` or `src/execute/` import
+anywhere, so it is report-generation only, never a path real money could
+flow through; the worked-example's non-monotonic curve was checked against
+`src/policy/allocator.py`'s Q-function structure and found economically
+plausible (rising LTV first makes REAUTH relatively more attractive than
+ATTEMPT, then eventually dominates into STOP) rather than a symptom of an
+allocator bug the report is merely exposing.
+
+**Disclosed, not fixed**: the worked-example search
+(`_find_worked_example_cell()`) checks only seeds 0-2 per (regime, arm,
+profile), not the full 8-seed grid `reports/gates.md`'s B13 headline uses
+-- a real, stated scope narrowing (each candidate cell costs a real
+ladder+engine run), not a silent one; the function raises `RuntimeError`
+rather than silently widening the search if no winning cell turns up in
+that range, and a test (`test_find_worked_example_cell_raises_when_
+search_range_has_no_winner`) pins that it actually does. The LTV grid's
+50,000-paise linear step (0 to Rs 30,000) is coarse enough that a crossing
+bracket can straddle more than one of the allocator's true discrete
+decision-flip points -- `interpolate_crossing()`'s own docstring already
+says the result is "the break-even point between two SWEPT-AND-MEASURED
+cells, not a claim about what happens between them," and the report's own
+prose repeats this caveat next to every crossing table, but a finer grid
+in the two identified brackets was not run.
+
+Full test suite: 1086 passed (+21 new: 10 `interpolate_crossing`, 6
+`eval/ltv_sensitivity.py`, 5 `eval/report.py` LTV rendering), 1 skipped.
+`guard_invariants --all` clean. Does not touch `eval/frozen/`.
+
+### 2026-09-04 · R4 · The two-phase cycle orchestrator, and `observe_terminal()`'s first production caller
+
+**The gate** (`reports/gates.md`, R4): one command plans a cycle and a
+second executes what is due; a test drives read -> solve -> commit ->
+execute end to end against a live schema with the clock advanced 24h
+between the two phases.
+
+**Investigated and designed before any code, per this session's own
+discipline** (`R4_PLAN.md`, read in full before writing `cycle.py`): every
+piece this block needed already existed and was already gated --
+`commit()` (B9), `execute()` (B9), `solve()` (B8), `AllocationContext.
+with_terminal()` / `belief.observe_terminal()` (R2) -- and had **zero
+production callers**. R4 is orchestration, not new money logic: a new
+module, `src/execute/cycle.py`, with two entry points and one additive
+schema table.
+
+**Pre-registered** (`DECISIONS.md`, R0 entry): two entry points,
+`plan_cycle()` and `run_due()`, never a single combined pass --
+`committed_schedule`'s own CHECK (`scheduled_for >= committed_at +
+INTERVAL '24 hours'`, clause 6(a)) means a combined function would either
+violate that check or silently no-op the execute half on every real
+invocation.
+
+**New table, additive** (`src/ledger/schema.sql`): `mandate` (mandate_id,
+amount_paise, ceiling_paise, category), `CHECK (ceiling_paise >=
+amount_paise)` (clause 4(c)), `CHECK (amount_paise >= 0)`. No FK from
+`ledger`/`plan`/`committed_schedule` to it, deliberately: every existing
+B9/B10 test constructs an ad hoc `mandate_id` never registered here, and a
+hard FK would break dozens of already-certified tests for zero R4 benefit.
+This is a new, independent read source, not a rewrite of the existing
+schema's relationships.
+
+**Constants relocated, not reinvented**: `TERMINAL_OBSERVED_CAUSE_PROBS` /
+`TERMINAL_OBSERVATION_SOURCE_VERSION` moved from `eval/run.py` to
+`src/policy/belief.py` (their natural home -- `src/` must never import
+`eval/`, and `cycle.py` is the first `src/` caller of `observe_terminal()`
+that needs them). Values, derivation and the point-in-time-measurement
+caveat carried over unchanged; `eval/run.py` now aliases
+`belief_mod.TERMINAL_OBSERVED_CAUSE_PROBS` under its old name rather than
+defining a second copy that could drift. A new test
+(`test_eval_run_aliases_the_same_objects_belief_defines`) pins object
+IDENTITY, not just equal values, so a future edit to one cannot silently
+diverge from the other.
+
+**Three design decisions made during implementation, each disclosed rather
+than silently chosen:**
+
+1. **`_is_eligible()` checks only two of the three conditions R4_PLAN.md's
+   design sketch named** -- an in-flight (unresolved) commitment, and a
+   cycle already `RECOVERED`. The third, "a prior STOP/REAUTH/OFFER
+   decision already made this cycle," is deliberately NOT implemented as a
+   skip: re-solving such a mandate is provably idempotent (identical
+   durable state -> identical belief/ctx -> the same `decision_sha256` ->
+   `commit()`'s own `ON CONFLICT DO NOTHING` on the `plan` row, and no new
+   `committed_schedule` row since `chosen_action` is never `ATTEMPT`
+   there), so omitting it costs a redundant `solve()` call, not a
+   correctness gap. Adding it would need a race-free "latest plan row for
+   this cycle" read, and `plan.created_at` is DB-clock `DEFAULT now()`
+   with no serial ordinal to break a tie between two rows written in the
+   same transaction instant -- exactly the kind of flake risk this
+   project's own B9 history (a confirmed ~7-10% flake margin, found and
+   fixed there) says not to introduce without a real ordering guarantee.
+   Verified, not merely argued: `money-auditor`'s review independently
+   confirmed the idempotence claim by tracing `commit()`'s conflict
+   handling directly.
+2. **`_read_context()`'s `committed_days`/`plan_day` are only exact when
+   `cycle_start` is supplied.** `plan_cycle()` always supplies it (needed
+   by `solve()`'s day search: `earliest = max(ctx.plan_day + lead,
+   committed_days[-1] + 1)`). `run_due()` omits it -- its own `execute()`
+   call never reaches `solve()`, and `stopping_rules.permitted()` reads
+   neither field -- so its context gets an inert placeholder
+   (`committed_days=(1,)`, `plan_day=1`) rather than paying for a query
+   whose result nothing downstream would use.
+3. **`contacts_sent` tracks `ATTEMPT` contacts only**, reconstructed as
+   `1 + count(resolved ATTEMPT ledger rows)`. `REAUTH`/`OFFER` never
+   produce a ledger row (`commit()`'s own `chosen_action` gate writes only
+   a `plan` row for them), so they cannot be counted from durable state
+   today. Disclosed, not fixed: this cycle design ends planning at the
+   first `REAUTH`/`OFFER`/`STOP` anyway, so no contact-cap interaction is
+   missed in the flows R4 actually drives.
+
+**Also disclosed, not fixed, per R4_PLAN.md's own stated scope:** no fold
+over multiple `normalized_decline` rows for one mandate (only the latest
+is applied); no belief carried in memory across `plan_cycle()` calls
+(every call re-derives belief from durable state instead);
+`recover.py`'s crash-recovery pass is a separate, already-gated concern
+(B10) and is not exercised by R4's own test.
+
+**Tests** (`tests/execute/test_cycle.py`, 13 new; `tests/policy/
+test_belief.py`, +4 pinning the relocated constants): the gate's own
+required chain (`test_plan_cycle_then_run_due_end_to_end` -- seed a
+`mandate` row, `plan_cycle()` at a frozen clock, assert a `plan` row and a
+`committed_schedule` row with `scheduled_for >= T + 24h`, advance the
+frozen clock to that moment, `run_due()` with a fake client, assert
+`INTENT -> SENT -> RESULT` and that `charge()` was actually called); a
+second full pass proving `observe_terminal()`'s real caller
+(`test_plan_cycle_after_a_dead_resolution_uses_observe_terminal_and_reauths`
+-- `run_due()` resolves an attempt `DEAD` via a decline that
+`decline_taxonomy.classify()` maps to `MANDATE_REVOKED`, then a second
+`plan_cycle()` call is asserted to have produced no new
+`committed_schedule` row and exactly one non-`ATTEMPT` plan row -- found,
+since `plan` has no `chosen_action` column, by the absence of a matching
+`committed_schedule` row rather than by a column that does not exist --
+whose `belief_json` carries the measured ~0.8991 `CANT_PAY_EVER`
+posterior and `;observed=terminal` provenance, not a degenerate value);
+eligibility-skip tests for both in-flight and `RECOVERED` mandates;
+`_read_context()` unit tests (fresh mandate matches `eval/run.py`'s own
+`_initial_context` convention; one resolved attempt correctly advances
+`attempts_used`/`committed_days`/`contacts_sent`; the no-`cycle_start`
+placeholder path; `LookupError` on an unregistered mandate); `mandate`
+table `CHECK` constraint tests.
+
+**Reviewed by both `money-auditor` and `compliance-auditor` before
+ticking**, per R4_PLAN.md's own stated verification plan (this is the
+first code path that could move real money end to end via a real
+Postgres-backed cycle, and clause 6(a)'s 24h lead is the constraint this
+module exists to honour). Both returned clean: `money-auditor` verified
+the ledger-before-money-action ordering holds throughout (`cycle.py`
+itself writes no `ledger`/`committed_schedule` rows -- everything
+delegates to the already-gated `commit()`/`execute()`), idempotency keys
+stay derived from deterministic fields only, the NPCI attempt-cap
+reconstruction cannot be raced past `_is_eligible()`'s in-flight gate, and
+the missing `mandate` FK fails loudly (`LookupError`) rather than
+silently. `compliance-auditor` returned 10/10 VERIFIED (6(a), 6(c), 8(a),
+8(b), 4(c), the NPCI cap, no-cancellation, both profiles reachable,
+contact-frequency/quiet-hours, and every constant's clause citation),
+zero VIOLATED, zero NOT COVERED -- including confirming the one
+deliberate exception-handling choice (`plan_cycle()`'s loop has no
+try/except around `commit()`; a `CommitError`/`AllocatorError` aborts the
+remaining mandates in that call rather than being swallowed) is a
+disclosed "let it crash loudly" design consistent with `commit.py`'s own
+stated philosophy, not a silent gap.
+
+Full test suite: 1101 passed (+15 new), 1 skipped. `guard_invariants`
+clean on 127 tracked files (`--all`) plus the 6 new/changed files
+explicitly (`cycle.py`/`test_cycle.py` are untracked, so `--all` alone
+does not see them -- the same known limitation named at B9's gate entry).
+Does not touch `eval/frozen/`.
+
+---
+
+### 2026-09-05 · R5/R6/R7 · Three scope decisions, taken before any code
+
+`R5_R6_R7_PLAN.md` was written after R4 closed, following a full
+investigation of the off-ramp machinery, the HTTP surface and every
+cross-platform blocker in the repo. Three of its choices are scope
+decisions the human took **before** the plan was written, not findings
+this session produced; they are recorded here first, per this project's
+pre-registration discipline (the same reason `reports/gates.md`'s
+remediation gates were written before R1a ran).
+
+1. **R7 ships `run.sh`, mirroring `run.ps1`** — not "raw commands
+   documented prominently". `PLAN.md`'s R7 line left both open. A README
+   that tells a Linux reviewer to run six raw `python -m` invocations is
+   a *translation*, which is exactly what the gate forbids ("without
+   translating anything").
+2. **R7 is proven by GitHub Actions CI on `ubuntu-latest`, not asserted.**
+   The claim "a reviewer on Linux can install, test, run the eval and read
+   the report" is a measurement or it is nothing; there is no CI anywhere
+   in this repo today and nothing in it has ever run on Linux. Expect the
+   first runs to fail. Each failure is the finding.
+3. **R5's sweep runs the headline slice at every channel-quality point,
+   then ONE full grid at the selected operating point.** Sweeping the full
+   grid at every quality point is ~8x the full eval's wall clock for no
+   extra inferential content; sweeping only the headline slice would rest
+   the `n_offer > 0` claim on one regime/arm/profile. The operating point
+   is pre-registered in `eval/offramp_channel.py`'s module docstring before
+   the first run, so it cannot be chosen after seeing which point produced
+   the nicest number.
+
+**Also decided here, and constrained by R0's own pre-registration** (the
+2026-09-04 R0 entry's R5 paragraph, which already committed to opening
+*both* the decline-alphabet channel and the intent channel rather than
+picking one):
+
+4. **The synthetic channel reads the privileged true cause and feeds it
+   into the DECISION path.** This is a materially stronger claim than the
+   score-only privileged read `false_reauth_count` already makes, and it is
+   why the gate demands the channel's own ROC be published beside every
+   result. It carries its own provenance stamps —
+   `eval-wontpay-channel-v1` / `eval-intent-channel-v1`, never
+   `PROXY_SOURCE_VERSION` and never a taxonomy version — and is disclosed
+   as synthetic in the module docstring, the report section, the gate note
+   and README's "What this can't do".
+5. **`false_offramp_count` keeps its Day-1 meaning byte-for-byte.** The R2b
+   lesson: never redefine a pre-registered metric after seeing it. The
+   denominator and the true-positive counterpart are **added beside** it.
+
+
+---
+
+### 2026-09-05 · R5 · The off-ramp is reachable now, and the honest way to say so is to publish the channel's quality curve
+
+`n_offer` went from **0 in all 256 engine cells** to **1292**, and from
+unreachable-in-principle to reachable in all six regimes. The number is not
+the result. The result is that both error costs are now two measurements
+instead of one measurement and a structural zero, and that the false-off-ramp
+rate is visibly a function of a signal this project *fabricated*.
+
+**What was actually broken, re-derived rather than quoted.** The proxy
+decline alphabet had two symbols, and `cause_map` gave `WONT_PAY` the SAME
+prior (0.10) under both. Identical components mean the WONT_PAY likelihood
+ratio against the other causes is monotone non-increasing under repeated
+Bayes updates — so over *every* sequence reachable within the NPCI cap the
+maximum achievable `P(WONT_PAY)` is exactly 0.10. `ConformalCauseGate` fires
+only on the `{WONT_PAY}` singleton, so `OFFER` was arithmetically impossible.
+`tests/eval/test_wontpay_channel.py` re-derives that 0.10 by exhaustive
+enumeration rather than citing the number, because a constant nobody can
+re-check is not evidence.
+
+**Both channels shipped, per R0's pre-registration, and neither was quietly
+dropped.**
+
+*Channel A, the decline class.* `DeclineClass.CUSTOMER_DECLINED` is not
+invented for convenience: `decline_taxonomy.py`'s own docstring, finding 3,
+written after payments-domain's B3 review, already established that Razorpay's
+`payment_cancelled` — the customer dismissing ONE collect request — is not
+`MANDATE_REVOKED`, and actively guarded against the conflation. That signal
+fell through to `UNKNOWN`: a real WONT_PAY-flavoured event with nowhere to go.
+R5 gives it a home. The guard was **narrowed, not deleted** — `payment_cancelled`
+still cannot reach `MANDATE_REVOKED`, now by a positive classification ordered
+ahead of it rather than by a negative lookahead that could silently stop
+applying. Prior 0.70/0.20/0.10, dominant but deliberately not near-degenerate:
+one observation must not be able to slam belief into a singleton by itself,
+because the off-ramp is the one action a false positive cannot walk back.
+
+*Channel B, the intent channel.* `src/llm/intent.py` had existed since B11
+with 13 tests and exactly one consumer: the golden set. The blocker was real
+— `guard_invariants.py`'s `SRC_LLM_IMPORT` forbids `src/policy/` from
+importing `src.llm` in any form, correctly. So the score crosses as a plain
+float: `belief.update_from_likelihood_ratio()` is generic (no LLM knowledge,
+no `Outcome` knowledge, no `DeclineClass` knowledge — the caller declares the
+ratio), and `src/execute/intent_channel.py` does the mapping at a **declared**
+operating point. Declared, not fitted, and the reason is structural rather
+than lazy: `Cause` is latent and has no production label, ever (the same fact
+that forced B5's hazards to be cause-marginal), so a "fitted" operating point
+would be fitted against something other than the truth it claims to measure.
+
+**The uncomfortable part, stated plainly.** The eval channel reads
+`SimMandate.initial_cause` — the privileged latent truth — and feeds a
+fabricated observation into the **decision** path. That is materially stronger
+than the score-only privileged read `false_reauth_count` already makes, and it
+is why R5's gate demanded the channel's own ROC beside every number it
+produced. Three defences, all mechanical rather than promised: distinct
+provenance stamps that can never be mistaken for taxonomy output
+(`eval-wontpay-channel-v1`, `eval-intent-channel-v1`); a `"synthetic": true`
+flag and a disclosure string inside the artifact itself, so a renderer that
+drops the prose cannot drop the disclosure; and a quality sweep that
+deliberately includes channels carrying *no information at all*.
+
+**What the sweep found, and why the intent channel looking worse is correct.**
+At the oracle the decline channel's false-off-ramp rate is 10.4%; at realised
+AUC 0.498 it is 44.1%. The intent channel runs 9.3% → 75.0% over the same
+nominal grid — measurably worse at the same configured quality. That is not a
+bug in the adapter. The adapter's declared operating point (0.65/0.20) is
+INDEPENDENT of the sweep's `(tpr, fpr)`, so it is misspecified at every point
+but one, which is the realistic case and precisely what a fixed production
+calibration meeting a drifting real-world signal would do. A sweep where the
+adapter magically tracked the truth would have proven nothing.
+
+**Re-calibration was mandatory and is easy to forget.** The channel changes
+the belief distribution, therefore it changes `fit_gate()`'s calibration pool.
+The gate is refit at every sweep point and for the published grid, on a pool
+drawn under the same channel; reusing a pool drawn under a different one would
+break exactly the exchangeability the coverage guarantee rests on. Coverage
+moved (0.899–0.986 against the 0.95 target, still under-covering, per-class as
+low as 0.795 on `CANT_PAY_EVER`) and is re-reported rather than re-asserted.
+
+**Two gaps the gate text did not name, both closed.** `construct_offer()` had
+**no caller anywhere in `src/`** — a chosen `OFFER` had never produced an
+`Offer` object, while `offramp.py`'s own docstring claimed the opposite. Wired
+in, surfaced in the export's audit trail and the dashboard drill-down, and
+deliberately kept OUT of `decision_sha256`'s payload (verified byte-identical
+to `HEAD`'s payload block, with a literal digest pinned by test) so that no
+already-persisted hash moves. And `false_offramp_count` had **no denominator**
+— computed inside the `would_pay` branch, so an `OFFER` to a mandate that
+would not have paid was counted nowhere. Its Day-1 meaning is unchanged byte
+for byte (the R2b lesson: never redefine a pre-registered metric after seeing
+it); the denominator and the true-positive counterpart are added beside it.
+
+**A tripwire fired, and was honoured rather than silenced.**
+`test_the_wont_pay_singleton_is_unreachable_via_live_inference` failed on this
+change, and its own message had named the reason in advance: *"the off-ramp
+may now be actionably reachable via inference, which is R5's job, not a silent
+side effect of something else."* R5 is that job. It was rewritten to the
+claims that are still true and still load-bearing — a live `{WONT_PAY}`
+singleton must be accompanied by an actual `OFFER` (the singleton is a
+*necessary* condition, so singleton-without-offer would mean the firing rule
+had come unwired from the action); an `OFFER` must carry a real `Offer` in
+PAUSE→DOWNGRADE→CANCEL order; an `OFFER` must never sit on an `OPTED_OUT`
+context, clause 6(c). Two *other* checks turned out to be passing for the
+wrong reason and were made stricter, not looser: `dashboard/ssr-check.tsx`
+required the literal `"slot "` and had been matching `"no slot spent"` — the
+absence of a slot — rather than any chosen slot number, and only passed at all
+because the first ledger-bearing mandate happened to carry a slot-less
+decision; and `site/ssr-check.tsx` required the words "never fired", which R5
+made false.
+
+**Not done, and not claimed.** `src/llm/normalizer.py`'s prompt now names the
+new class, which changes `NORMALIZER_VERSION` (a content hash of prompt + tool
+schema + model) and therefore busts the golden cache **by design**. A live
+`golden` run costs ~56 calls against a quota this project has already lost a
+gate to (POSTMORTEM incident 8). It was not re-run, and no gate is claimed
+from it.
+
+---
+
+### 2026-09-05 · R6 · Three read endpoints, and the one field the schema cannot answer
+
+`src/api/`, not `src/ingest/`: ingest means events arriving from outside;
+these are reads going out — a different direction, a different failure mode (a
+read cannot lose a write), a different review surface. `src/ingest/app.py`'s
+docstring asserted no second router would ever be needed, and that sentence
+was **rewritten rather than left standing next to the code disproving it**.
+
+`src/api/` was added to `guard_invariants.py`'s `MONEY_DIRS` **at the same
+time the package was created**, not after the same bug was found there a
+second time. A directory in neither `PROTECTED_DIRS` nor `MONEY_DIRS` gets no
+float-money scanning at all — the exact scoping hole that file's own comment
+already records finding in `eval/report.py`.
+
+**The honest limit, which cost more thought than the endpoints.** `plan` has
+no `chosen_action` column. R5_R6_R7_PLAN.md's own test list asked for a
+non-ATTEMPT plan "whose `chosen_action` is derived as REAUTH/STOP" — and that
+is not derivable from this schema. Three rules ARE sound, and each is a proof
+rather than a likelihood: a `committed_schedule` row citing the decision means
+ATTEMPT (`commit()`'s own gate writes one for nothing else);
+`binding_constraint = OPTED_OUT` means STOP (clause 6(c) denies every other
+action, so no other action was legal); and a recorded conformal set that is
+not the `{WONT_PAY}` singleton **rules OFFER out** (`should_act()`'s
+requirement — a sound negative is worth reporting even where no sound positive
+exists). What survives all three is reported as `NOT_ATTEMPT` with a
+`chosen_action_candidates` superset. Naming one of REAUTH/STOP/OFFER would
+have been a guess printed as a record — the same failure mode R2's
+`_binding_constraint()` bug was, where a hard-forced decision was recorded as
+a free economic choice across thousands of rows. The real fix is a
+`chosen_action` column; that is a schema change with no migration path here,
+and it is named in the module docstring rather than left as a surprise.
+
+**Every populated test case is seeded by running the real R4 cycle**, never by
+hand-writing rows. An endpoint proven against invented fixtures proves it can
+read a shape someone imagined. It is also how the `conformal_set` encoding
+mismatch stayed honest — the DB stores a sorted comma-joined string, every
+JSON surface emits a list, and `"".split(",")` is `[""]`, a phantom
+one-element cause. An abstaining conformal predictor really can return the
+empty set, so that row shape is reachable, not hypothetical.
+
+**Verified live, not only by test**, per the plan's own verification section:
+`schema.sql` applied into a dedicated schema on the running Postgres, mandates
+driven through the real `plan_cycle()`/`run_due()`, uvicorn started, all three
+routes curl'd, all three 404s confirmed, and the webhook router confirmed
+still mounted. That exercise turned up a real finding, recorded under R7: this
+machine's dev database had drifted several tables and one column behind
+`schema.sql`, because `schema.sql` is only ever applied into throwaway test
+schemas and **there is no migration path**.
+
+---
+
+### 2026-09-05 · R7 · The byte-identity claim was false across platforms, and the invariants were never enforced by git hooks
+
+Two claims this repo had been making in print turned out not to survive
+contact with a second operating system. Both are corrected rather than
+quietly dropped, and the correction in each case was to fix the *claim* and
+then make it checkable — not to fix the claim by weakening it.
+
+**"Two runs of the same seeds produce byte-identical output."** True on one
+machine, false across two. Every artifact writer called
+`write_text(..., encoding="utf-8")` with no `newline=`, so Python's universal
+newline translation emitted CRLF on Windows and LF on Linux; there was no
+`.gitattributes` either. The claim was specifically engineered to be checkable
+by hashing (the artifact deliberately carries no wall-clock timing) and the
+one check worth making — across platforms — was the one it failed. Fixed in 17
+call sites plus a `.gitattributes`, and CI now re-runs `eval-quick` and
+compares the sha256 rather than taking it on trust.
+
+**"Enforced by git hooks."** `CLAUDE.md` and `README.md` both said so.
+`.git/hooks/` holds only the stock `*.sample` files and `core.hooksPath` is
+unset. They are **Claude Code** hooks in `.claude/settings.json`, which do not
+gate a commit made outside Claude Code. Corrected to say what is true — the
+guard runs as a `PostToolUse` hook, as `run.sh lint` / `.\run.ps1 lint`, and
+in CI, which is what actually gates a push. Deliberately NOT "fixed" by
+installing git hooks: that changes how contributors work, and is not a
+documentation fix.
+
+**`run.sh` mirrors `run.ps1`, and declines four actions out loud.** `up`/`down`
+(per-server console windows via `Start-Pane`, and `Win32_Process` parentage
+walking before `taskkill /T /F`) have no honest POSIX translation; `verify` is
+a Windows-desktop pre-flight with a live Razorpay probe; `freeze` is block B2
+only and already executed. A shipped-but-worse version of any of these would
+be more confusing than its absence. A test fails if either runner grows an
+action the other neither implements nor declines, so the subset stays a
+decision rather than an omission.
+
+**Two real bugs, both found by the tests rather than by reading.** `step()`'s
+first version put a bare `"$@"` before its return-code check: under `set -e`
+the script aborts at that line, so the exit code was correct but the `FAILED`
+banner never printed — a mirror that silently dropped run.ps1's own
+diagnostic. And `run.sh` was written with CRLF endings on this Windows
+checkout, where bash dies with `set: pipefail<CR>: invalid option name` before
+running anything: invisible on Windows, total on Linux. Both are now pinned by
+test, the second at byte level on the working-tree file, because
+`.gitattributes` pins only the stored form and it is the working-tree form
+that executes.
+
+**`setup.sh` installs from `requirements.txt`** — an install path nothing in
+this repo documented or exercised, because `setup.ps1` pip-installs a
+hand-listed unpinned set and *then* overwrites `requirements.txt` from
+`pip freeze`. That file also carried a UTF-8 BOM and CRLF (PS 5.1's
+`-Encoding utf8` always writes a BOM); both stripped, and `setup.ps1` changed
+to stop reintroducing them.
+
+**CI is the gate's evidence, and it has not reported yet.** The workflow runs
+the *documented commands* (`./run.sh lint`, `./run.sh test`, `./run.sh
+eval-quick`, `./run.sh report`) rather than a hand-written sequence of
+`python -m` invocations — a job that bypasses the documented commands proves
+the code works and says nothing about whether the documentation does, which is
+the half R7 is actually about. It lands in the same commit as everything
+above, so no run has happened. The plan pre-registered the expectation: expect
+the first runs to fail, and each failure is the finding.
+
+
+---
+
+### 2026-09-05 · R5/R6 review pass · What money-auditor and compliance-auditor found, and what changed
+
+Both reviews returned mostly VERIFIED / clean. Two real findings, both acted
+on; one proposed fix was independently checked and REJECTED in favour of a
+narrower one, logged here rather than applied blindly.
+
+**compliance-auditor (R5 + R6), 13 VERIFIED, 0 VIOLATED, 2 NOT COVERED.**
+Every regulatory clause checked clean: 6(a)'s 24h lead, 6(c)'s OPTED_OUT
+terminal state (confirmed structurally impossible for `OFFER` to reach an
+opted-out mandate — `permitted()` denies every action but STOP first), 8(a)/
+8(b)'s AFA cliff, 4(c)'s ceiling, the NPCI 4-attempt cap, invariant 6 (no
+Razorpay client import anywhere in `offramp.py`), both profiles reachable,
+`CUSTOMER_DECLINED`'s anti-conflation guard, and the synthetic channel's
+disclosure across every surface it publishes to. The two NOT COVERED items
+were both real and both about R6's new endpoints: **no authentication and
+no tenant scoping** on `/ledger`, `/plan`, `/decision`, and the consequence
+for this project's own clause 10(c) "acquirer dashboard" framing — the
+endpoints serve audit *content*, not audit *controls*. Neither was silently
+accepted nor silently fixed: an invented auth scheme nobody specified would
+be a worse answer than naming the gap for a test-mode-only project with no
+deployment. Disclosed in `src/api/read.py`'s module docstring (stated
+first, before anything else in the file), README's API section, and a new
+"What this can't do" item — and pinned by
+`test_the_module_discloses_that_it_has_no_authentication`, because a stated
+non-decision that stops being stated is just an oversight.
+
+**money-auditor (R6), one real finding.** `committed_for_decision()` did not
+filter `voided_at`, and the reviewer proposed adding
+`AND voided_at IS NULL`. **That fix would have been wrong, and was checked
+against `src/execute/void.py` before being rejected rather than applied on
+the reviewer's word** (this project's own stated discipline — see B10's
+DECISIONS.md entries for the same practice with `payments-domain`).
+`void.reissue()` inserts a REPLACEMENT `committed_schedule` row at
+`generation + 1` carrying the SAME `decision_sha256` as the voided one
+(`void.py`'s own INSERT). `commit()` writes a `committed_schedule` row
+**only** for `ATTEMPT`, so the row's existence — voided or not — is proof
+the decision WAS `ATTEMPT`; voiding is a later, overtaken-by-events act
+that cannot retroactively change what was decided. Filtering the row out
+would have made `_derive_action()` report `NOT_ATTEMPT` with candidates
+`[REAUTH, STOP]` for a decision provably known to be `ATTEMPT` — replacing
+a true-but-incomplete answer with a false one, which is a worse defect than
+the one being fixed. The actual gap was narrower: nothing told the caller
+the cited row was dead. Fixed by adding `is_live` to the `/plan` response's
+`committed` block and a note in `chosen_action_source` when the row is
+voided, with `store.committed_for_decision()`'s own docstring now recording
+why the filter was rejected so the same proposal doesn't get reapplied by a
+future reader without this context. Both the accepted fix and the rejected
+one are pinned by test
+(`test_a_voided_attempt_still_derives_as_attempt_and_says_it_is_dead`,
+`test_a_live_committed_row_is_flagged_live`).
+
+**stats-reviewer (R5).** See the R5 entry above and the standalone review
+recorded separately once it completed — the false-off-ramp rate's Wilson
+interval (`false_offramp_rate_ci`) was added in response to that pass,
+because `n_offer` runs as low as 8 at the least-informative sweep points
+and a bare point estimate there would read as three-decimal precision on a
+number that is plus or minus tens of points.
+
+
+---
+
+### 2026-09-05 · R5 stats-review pass · The conformal gate's coverage claim does not hold at the beliefs it is actually queried at, and three real statistical overclaims
+
+`stats-reviewer`'s first attempt hit a session rate limit before producing findings; the retry completed a full pass and returned nine findings, one CRITICAL. Every claim below was **independently re-derived**, not taken on the reviewer's word — this project's own standing discipline (see the R1a/R1b/R2 review passes) — and every number here was reproduced from a fresh run, not copied from the review.
+
+**CRITICAL, verified exactly. The gate's "95% coverage" is not doing the
+work its name implies.** `fit_gate()`'s calibration pool is 200 slot-1
+beliefs, each of which is `cause_map.prior(dc)` for one of a handful of
+`DeclineClass` values — so the LAC nonconformity score can only take a
+small number of distinct values per class. Reproduced exactly:
+
+```
+CANT_PAY_NOW   n=105  {0.20 x81, 0.80 x22, 0.85 x2}
+CANT_PAY_EVER  n= 48  {0.25 x27, 0.90 x21}
+WONT_PAY       n= 47  {0.30 x28, 0.90 x19}
+```
+
+Direct probe of the fitted gate's own `{WONT_PAY}`-singleton boundary
+across four `alpha` values spanning an 8x range (0.05, 0.20, 0.30, 0.40 —
+nominal coverage 95% down to 60%) found the boundary moves from
+`p(WONT_PAY) >= 0.90` (alpha 0.05) to `>= 0.80` (alpha 0.20/0.30/0.40) and
+then sits there — the gate behaves like a near-fixed threshold around
+0.80–0.90, not a knob that tracks the stated confidence level. Separately:
+the calibration pool's own maximum score is 0.90, while a real query
+sequence exceeds that within the four-attempt NPCI budget (three
+`CUSTOMER_DECLINED` observations already push belief past 0.997 — see
+`tests/eval/test_wontpay_channel.py`) — a **support mismatch**, not merely
+a small-sample one.
+
+This is not new to R5 — the under-coverage itself was disclosed before R5
+ever ran (finding 3, pre-existing, `reports/gates.md`) — but R5 is what
+makes it consequential: before R5 the singleton was unreachable at all, so
+a coverage failure in that lane was inert. It is not inert now. **Not
+fixed in this pass.** The real fix — calibrate on the query distribution
+across all four slots, from a held-out disjoint corpus, not one row per
+mandate at slot 1 — changes `fit_gate()` for every consumer in this
+project, not only R5's channel, and needs its own investigation rather
+than a patch inside a review response. Disclosed in `CLAUDE.md` (the "at
+95% coverage" line, corrected rather than left standing),
+`reports/gates.md`'s R5 entry, and `reports/regimes.md`.
+
+**Three statistical overclaims in the R5 gate text, all corrected after
+independent re-derivation, not the reviewer's assertion alone.**
+
+1. *"The intent channel is measurably worse than the decline channel."*
+   Re-derived via two-proportion z-tests on the artifact's own counts:
+   significant at 1 of 8 grid points (AUC-0.5 row, z=+2.01), REVERSES at
+   the oracle (z=-0.26), and the pooled difference is negligible (51/244 =
+   0.209 vs 96/467 = 0.206, z=+0.11; sign test across 7 non-tied points,
+   p=0.070). The design is also confounded on two axes the "misspecified
+   adapter" attribution ignored: `apply_intent_channel()` never fires on a
+   DEAD attempt (the terminal `break` at `eval/run.py` precedes it, unlike
+   the decline channel's draw), so the two channels observe different
+   numbers of decisions per mandate; and their per-observation likelihood
+   ratios differ in magnitude by construction. Corrected to state the
+   numerically-higher-but-not-significant finding plainly, without the
+   causal attribution.
+2. *"256 engine cells" / "1292 across 256."* `strict` and `permissive` are
+   **byte-identical on every field across all 128 (regime, arm, seed)
+   pairs** (verified: 0 differing cells) — the pre-existing, already-
+   disclosed consequence of this project having no timing discrimination
+   (`reports/regimes.md`, "Compliance profiles"). So the true sample is
+   **128 distinct engine cells, 646 distinct OFFERs, 100 distinct false
+   ones** — R5's own headline number doubled it without saying so. Same
+   rate either way (0.1548), but the apparent sample size was inflated
+   2x, and the Wilson interval computed on the doubled `n=1292` (13.6–
+   17.6%) is measurably narrower than the true one on `n=646`
+   (12.9–18.5%) — verified by direct computation on both.
+3. *The bare headline "15.5%."* Carried no interval at all in the gate
+   text (the per-point table already had one). Added: 15.5% (Wilson 95% CI
+   12.9–18.5% on the true n=646, not the doubled n=1292).
+
+**Two real, low-severity bugs, both fixed.**
+
+- `eval/offramp_channel.py`'s cluster-bootstrap CI grouped by bare
+  `mandate_id`, which the frozen simulator reuses every seed
+  (`"M0000".."M0199"`) — so an 8-seed aggregate clustered on 200 ids
+  instead of 1,600, silently merging draws from different seeds into one
+  bootstrap unit. Verified numerically harmless on today's data (the
+  channel's draws are conditionally independent given cause by
+  construction, so the CI width barely moved), but the bug was real and
+  latent: a channel with genuine seed-correlated structure would have had
+  that hidden by the collision. Fixed by namespacing `f"s{seed}:{mid}"`,
+  the same convention `_calib_group_id` (`eval/run.py`) already uses for
+  the identical reason.
+- A stale comment in `eval/run.py` claimed the channel "consumes exactly
+  one draw per decision point regardless of which branch is taken."
+  Verified false: `channel_decline_class()` returns early, without
+  drawing, on RECOVERED and OPTED_OUT (both map to `None` in
+  `_OUTCOME_TO_DECLINE_CLASS`). Behaviour was already correct — only the
+  comment was wrong — and is now accurate, including the DEAD case (a draw
+  IS consumed there but never reaches a belief, verified benign for the
+  ROC estimate because the draw stream is independent of the outcome
+  stream).
+
+**One vacuous test, fixed to a real regression floor, not the aspirational
+target.** `test_coverage_is_re_reported_after_recalibration` asserted
+`0.0 <= coverage_marginal_mean <= 1.0` — true for any probability, so a
+genuine calibration collapse would pass silently. The fix is **not**
+`>= 0.95`: this project's own stance on that number is measured-not-
+asserted (under-coverage is a disclosed finding, not a bug to gate on).
+Replaced with `> 0.75` — comfortably below every measured point (0.93–0.95
+on the test's own tiny grid) but well above where a real break would land.
+
+**One coverage-table mislabelling, pre-existing and not introduced by R5,
+fixed anyway because the review found it live.** `_coverage_table()`'s own
+comment claimed "one row per (regime, arm)"; the function has no seed
+filter, so it always produced 128 rows (16 pairs x 8 seeds) under a
+16-row-shaped heading. Fixed by adding the seed column outright rather than
+patching the comment to match a wrong shape. The render call site's prose
+("a regime breaks exchangeability... any degradation here is a real
+result") is also corrected: the same review measured within-regime,
+between-seed spread on `baseline/nominal` (0.873 vs 0.917) as comparable in
+magnitude to the between-regime spread the sentence attributed everything
+to.
+
+**One real, HIGH-value gap, closed with a new sweep dimension rather than
+only disclosed.** The published `QUALITY_GRID` sweeps channel
+*discrimination* (marginal tpr, fpr) while holding *within-mandate
+correlation* fixed at exactly zero — `WontPayChannel.fires()` draws an
+independent Bernoulli every call. But `should_act()` needs roughly two
+coincident false firings on ONE mandate to open the off-ramp (a single
+`CUSTOMER_DECLINED` moves belief to ~0.62 WONT_PAY; the fitted gate's own
+singleton boundary sits at 0.80–0.90), and two independent draws from a
+real customer's decline history is not a safe assumption — a customer who
+dismisses one collect request is plausibly more likely to dismiss the
+next, for reasons unrelated to wanting to leave.
+
+Added `WontPayChannel.habitual_fraction` (default `1.0`, which is
+EXACTLY today's iid draw — `_effective_fpr()` reduces to a constant `fpr`
+at that default, so not one already-published number moves) and a new
+`eval/offramp_channel.dependence_sweep()`, which holds the marginal
+`(tpr, fpr)` fixed at the pre-registered operating point and varies only
+`habitual_fraction` across `(1.0, 0.5, 0.3, 0.15)`. The two-point mixture
+construction (`min(1, fpr/h)` for a persistent-per-mandate-with-probability-h
+"habitual dismisser," else never) preserves `E[fire] = fpr` exactly for
+every `h >= fpr` — verified empirically on 4,000+ synthetic mandates,
+`fires_realised` stays within 2 points of the configured `fpr` at every
+grid point tested. Only the FALSE-positive side is touched; WONT_PAY's own
+`tpr` draw is untouched at every `habitual_fraction`, because the finding
+is specifically about false firings on a paying customer. Full 8-seed
+result, at the pre-registered operating point (tpr 0.60 / fpr 0.15):
+
+```
+habitual_fraction  n_offer  false  rate    (95% CI)        fpr_realised  repeat_false_fire_rate
+1.00 (= main grid)  48        6    12.5%   [5.9%, 24.7%]   0.136         0.023
+0.50                42        8    19.0%   [10.0%, 33.3%]  0.165         0.035
+0.30                46       13    28.3%   [17.3%, 42.5%]  0.165         0.057
+0.15                46       15    32.6%   [20.9%, 47.0%]  0.153         0.064
+```
+
+`fpr_realised` stays within 0.136–0.165 across all four rows — the
+marginal is genuinely held fixed, exactly as designed — while the
+false-off-ramp rate more than doubles (12.5% -> 32.6%) and the
+repeat-false-fire rate nearly triples (0.023 -> 0.064). The `1.00` row is
+identical in construction to the main grid's own operating-point row
+(pinned by
+`test_the_default_grid_point_matches_the_main_grids_operating_point_row`)
+and its counts match exactly. The full artifact is
+`reports/offramp_channel.json`'s `dependence_sweep` key, rendered in
+`reports/regimes.md`.
+
+Disclosed as a SECOND-ORDER synthetic assumption, not a correction: there
+is no real decline-string corpus this project has access to that could
+calibrate `habitual_fraction` itself, so this sweep establishes
+*sensitivity* (the false-off-ramp rate is not robust to an assumption the
+main grid holds fixed at zero), never a corrected point estimate.
+
+**One caveat re-surfaced rather than newly found.** `false_offramp_count`
+is scored against `_counterfactual_recovers()`'s grind-every-remaining-slot
+continuation, which `reports/regimes.md`'s own money-delta section already
+calls an upper bound. Since `false_offramp_count ⊆ missed_recovery_count`,
+the false-off-ramp RATE inherits that ceiling too — the R5 narrative
+restated the rate without carrying the caveat forward. Now does, wherever
+the 12.5%/15.5% headline numbers appear.
+
+Full test suite re-run after every fix in this pass; `guard_invariants`
+clean. New tests: `WontPayChannel.habitual_fraction`'s default-is-a-no-op
+property, marginal-preservation, correlation-concentration and
+WONT_PAY-side-untouched properties (`tests/eval/test_wontpay_channel.py`);
+`dependence_sweep()`'s structure, marginal-preservation-across-the-grid,
+and agreement with the main grid's own operating-point row
+(`tests/eval/test_offramp_channel.py`).

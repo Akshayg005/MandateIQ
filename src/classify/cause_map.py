@@ -48,7 +48,8 @@ from src.core.types import Cause, DeclineClass
 # Bumped by hand whenever the numbers below change meaningfully. Recorded
 # per-row in ingested_event.prior_version (see schema.sql) -- see
 # decline_taxonomy.TAXONOMY_VERSION's docstring for why this matters.
-PRIOR_VERSION = "v2"
+# v3 (R5, 2026-09-05): added the CUSTOMER_DECLINED row below.
+PRIOR_VERSION = "v3"
 
 _PRIORS: dict[DeclineClass, dict[Cause, float]] = {
     # Transient liquidity gap -- retry, timed to replenishment rhythm.
@@ -66,6 +67,29 @@ _PRIORS: dict[DeclineClass, dict[Cause, float]] = {
     # dead" and "customer chose to leave", never read as a liquidity gap.
     DeclineClass.MANDATE_REVOKED: {
         Cause.CANT_PAY_EVER: 0.45, Cause.WONT_PAY: 0.45, Cause.CANT_PAY_NOW: 0.10,
+    },
+    # R5 (reports/gates.md, "Post-B16 remediation gates"): the customer
+    # dismissed THIS collect request. The only WONT_PAY-dominant row in
+    # this table, and the reason the off-ramp lane is reachable at all --
+    # before it existed, no DeclineClass had a WONT_PAY prior above 0.45
+    # and MANDATE_REVOKED tied WONT_PAY with CANT_PAY_EVER at 0.45/0.45.
+    # A tie is absorbing under Bayes (the likelihood ratio between the two
+    # is exactly 1, at every observation, forever), so belief could never
+    # reach the {WONT_PAY} singleton ConformalCauseGate fires on --
+    # measured by exhaustive enumeration over every sequence reachable
+    # within the NPCI cap: max P(WONT_PAY) = 0.10.
+    #
+    # 0.70, deliberately NOT near-degenerate. Dominant enough that repeated
+    # observation can carry belief to a singleton; not so dominant that ONE
+    # observation slams it there by itself. The asymmetry cause_map's own
+    # docstring already names applies with full force here: mistaking
+    # CANT_PAY_NOW for WONT_PAY costs a customer we could have kept, and
+    # the off-ramp is the one action a false positive cannot walk back.
+    # 0.20 CANT_PAY_NOW rather than 0.10 for the same reason -- a customer
+    # who dismisses a prompt on a day they know the balance is short is a
+    # real and common case, and it is the safe direction to keep mass on.
+    DeclineClass.CUSTOMER_DECLINED: {
+        Cause.WONT_PAY: 0.70, Cause.CANT_PAY_NOW: 0.20, Cause.CANT_PAY_EVER: 0.10,
     },
     # Genuinely ambiguous -- a generic issuer/gateway decline carries little
     # cause information on its own. Skewed to the safe default rather than

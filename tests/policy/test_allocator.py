@@ -590,3 +590,84 @@ def test_belief_is_the_sole_constant_key_component_within_one_solve_call():
     quantised_keys = {k[0] for k in memo}
     assert quantised_keys == {quantised(b, 1e-6)}, \
         f"expected exactly one distinct quantised belief across the whole memo, got {quantised_keys}"
+
+
+# === R5: the OFFER actually carries an Offer, and the firing rule stays one ==
+
+def test_an_offer_plan_carries_a_constructed_offer():
+    """R5 (reports/gates.md). src/policy/offramp.py was complete and tested
+    but had NO CALLER anywhere: a chosen OFFER had never produced an actual
+    Offer object, while offramp.py's own docstring claimed "allocator.py
+    only calls construct_offer() once OFFER has already been chosen". That
+    sentence was false until this test existed."""
+
+    class _SingletonWontPayGate:
+        def pred_set(self, b) -> frozenset[Cause]:
+            return frozenset({Cause.WONT_PAY})
+
+    b = _belief(WONT_PAY=0.98, CANT_PAY_NOW=0.01, CANT_PAY_EVER=0.01)
+    plan = solve(b, _ctx(), hazard=_flat_hazard(0.1, 0.01, 0.1, 0.79),
+                 costs=_COSTS, gate=_SingletonWontPayGate())
+
+    assert plan.chosen_action == Action.OFFER
+    assert plan.offer is not None
+    assert [s.kind for s in plan.offer.steps] == ["PAUSE", "DOWNGRADE", "CANCEL"]
+    assert plan.offer.mandate_id == plan.mandate_id
+    assert plan.offer.cycle_id == plan.cycle_id
+    assert plan.offer.belief_json == plan.belief_json
+
+
+def test_a_non_offer_plan_carries_no_offer():
+    """The system OFFERS, and only when it decided to. A Plan that chose
+    ATTEMPT/REAUTH/STOP must not carry an off-ramp in its audit trail --
+    that would read as an offer having been made."""
+    plan = solve(_uniform_belief(), _ctx(),
+                 hazard=_flat_hazard(0.4, 0.45, 0.1, 0.05), costs=_COSTS)
+    assert plan.chosen_action != Action.OFFER
+    assert plan.offer is None
+
+
+def test_wiring_the_offer_did_not_change_any_existing_decision_hash():
+    """The Offer is an audit field, NOT part of decision_sha256's payload.
+    Every hash this project has already written to a ledger must stay
+    reproducible, so the digest covers the DECISION (action, belief,
+    conformal set, committed slots) and not the presentation artifact
+    derived from it. Pinned as a literal so a future payload edit fails
+    here rather than silently orphaning every persisted row."""
+    plan = solve(_uniform_belief(), _ctx(),
+                 hazard=_flat_hazard(0.4, 0.45, 0.1, 0.05), costs=_COSTS)
+    assert plan.decision_sha256 == (
+        "b370591e7b41fc2e823c46e38f028364db15d0762b6caecd86a0702147605978"
+    )
+
+
+def test_should_act_has_exactly_one_call_site_in_src():
+    """R5's non-negotiable: "the conformal singleton stays the only firing
+    rule". should_act() is the single definition of that rule, and
+    allocator.py's OFFER branch is its single consumer. A second call site
+    anywhere under src/ would mean a second way to fire the off-ramp, which
+    is exactly the drift this gate forbids -- so it fails the suite rather
+    than appearing quietly in a diff.
+
+    Parsed with `ast`, not grepped: a text search also matches the
+    definition itself and the four places this project's docstrings
+    correctly NAME the rule, so it would have to be loosened by hand every
+    time someone documented it -- and a check that gets loosened is the
+    "vacuous check" failure mode this project has already amended gates
+    over twice."""
+    import ast
+    import pathlib
+
+    sites = []
+    for path in sorted(pathlib.Path("src").rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            fn = node.func
+            name = fn.id if isinstance(fn, ast.Name) else getattr(fn, "attr", None)
+            if name == "should_act":
+                sites.append(f"{path.as_posix()}:{node.lineno}")
+
+    assert len(sites) == 1, sites
+    assert sites[0].startswith("src/policy/allocator.py:"), sites

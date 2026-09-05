@@ -113,8 +113,13 @@ def require_pg(reachable: bool, reason: str, env: Mapping[str, str] | None = Non
         "surface, which cannot run without a database. It fails rather than skips\n"
         "so that a green suite means the money path was actually tested.\n"
         "\n"
-        "  Fix:      .\\run.ps1 up      (or: docker start mrdb)\n"
-        f"  Opt out:  set {PG_SKIP_OPT_OUT}=1   -- restores the old skip, deliberately",
+        "  Fix (Windows):      .\\run.ps1 up\n"
+        "  Fix (Linux, macOS): ./run.sh db-up\n"
+        "  Either:             docker start mrdb\n"
+        f"  Opt out:            {PG_SKIP_OPT_OUT}=1 in the environment\n"
+        "                      (Windows: set MANDATEIQ_ALLOW_PG_SKIP=1;\n"
+        "                       POSIX:   export MANDATEIQ_ALLOW_PG_SKIP=1)\n"
+        "                      -- restores the old skip, deliberately",
         pytrace=False,
     )
 
