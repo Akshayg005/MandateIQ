@@ -2,7 +2,7 @@
 one row for each slot the mandate was actually at risk for, never a row for
 a slot it was not attempted, never a row after a terminal outcome. Schema,
 censoring semantics, and both worked examples are normative at
-PLAN_DETAIL.md section 2; this module implements that section exactly,
+the build spec section 2; this module implements that section exactly,
 against the corpus eval/corpus.py generates.
 
 Column ownership, so this file and src/model/features.py never duplicate
@@ -11,27 +11,27 @@ or silently drop a column between them: this module emits IDENTITY
 event_code, at_risk, censored, censor_reason, is_terminal, estimable)
 columns, plus the raw substrate features.featurize() needs (amount_paise,
 ceiling_paise, category, on_day) -- `on_day` is intentionally NOT part of
-PLAN_DETAIL.md section 2's schema and must not survive into featurize()'s
+the build spec section 2's schema and must not survive into featurize()'s
 output; it exists only so featurize() can derive in_salary_window,
 days_since_last_attempt, and committed_day_of_month without recomputing
 anything from the source episodes. Every other column in section 2's
 "Features" table (including prior_failures_this_cycle, which is only
 `slot - 1` but is listed there, not here) is features.py's to add.
 
-See src/model/CLAUDE.md rule 1 before touching anything below: a censored
+See src/model/DESIGN.md rule 1 before touching anything below: a censored
 episode is not a missing value, and the worked-example B round-trip test
 this module must pass exists specifically to catch the
-`y = (df.outcome == "RECOVERED")` anti-pattern (PLAN_DETAIL.md:685-689) one
+`y = (df.outcome == "RECOVERED")` anti-pattern (the build spec-689) one
 level up, at the frame itself, before any model ever sees it.
 
-`estimable` (added post-freeze-of-this-block, per stats-reviewer's B4
+`estimable` (added post-freeze-of-this-block, per the statistics review's B4
 finding -- DECISIONS.md, 2026-08-28): False on every slot-1 row, True
 everywhere else. Slot 1 is not a hazard observation -- every episode enters
 this system BECAUSE slot 1 already failed, so P(outcome=STILL_PENDING at
 slot 1) = 1 by construction, for every mandate, unconditionally. That is a
 structural zero, not a parameter to estimate: h_c(1) is identically 0 for
 every cause c, and CIF_c(1) = 0 / S(1) = 1 are the correct initial
-conditions for the CIF recursion at PLAN_DETAIL.md:700, starting cleanly at
+conditions for the CIF recursion at the build spec, starting cleanly at
 k=2. Fitting slot 1 into the same likelihood as slot 2-4 lets the MLE
 "explain" a deterministic outcome using whichever covariates happen to
 separate slot-1 rows from the rest -- measured concretely: a model fit with
@@ -70,7 +70,7 @@ def _as_censor_reason(x: object) -> CensorReason:
     return x if isinstance(x, CensorReason) else CensorReason(x)
 
 # Identity/index + outcome/censoring columns this module emits, in the
-# order PLAN_DETAIL.md section 2 lists them, plus the on_day carry-through
+# order the build spec section 2 lists them, plus the on_day carry-through
 # documented above. features.py's SPEC_COLUMNS/UNSOURCED bookkeeping is
 # deliberately a disjoint list from this one -- see that module's docstring.
 EMITTED_COLUMNS: tuple[str, ...] = (
@@ -83,7 +83,7 @@ EMITTED_COLUMNS: tuple[str, ...] = (
 
 class FrameError(ValueError):
     """Raised by validate() -- the frame is not a valid person-period shape.
-    Every malformed shape PLAN_DETAIL.md:692-695 names raises this, never a
+    Every malformed shape the build spec-695 names raises this, never a
     silent coercion or a dropped row."""
 
 
@@ -94,7 +94,7 @@ def build(episodes: Sequence[object]) -> pd.DataFrame:
 
     Slot 1 is synthesized, not read from `episode.attempts` -- the frozen
     Simulator never simulates slot 1 (it is the given, already-failed
-    original attempt; simulator.py:213), but PLAN_DETAIL.md's worked
+    original attempt; simulator.py:213), but the build spec's worked
     example A shows it as a real STILL_PENDING row, and every downstream
     hazard slot needs slot 1 in the at-risk set to condition on. It is
     terminal/censored only for the zero-attempt episode (an episode whose
@@ -174,7 +174,7 @@ def build(episodes: Sequence[object]) -> pd.DataFrame:
 
 def _apply_dtypes(df: pd.DataFrame) -> pd.DataFrame:
     """Coerce build()'s freshly-assembled columns to the dtypes
-    PLAN_DETAIL.md section 2 specifies.
+    the build spec section 2 specifies.
 
     `censor_reason` (a `str, Enum`) keeps its enum MEMBERS as the category
     values, so `df.censor_reason == CensorReason.BUDGET_EXHAUSTED` compares
@@ -222,7 +222,7 @@ def _apply_dtypes(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def validate(df: pd.DataFrame) -> None:
-    """Raise FrameError on any of the shapes PLAN_DETAIL.md:692-695 names:
+    """Raise FrameError on any of the shapes the build spec-695 names:
 
     - any row with at_risk == False
     - any (mandate_id, cycle_id) group whose slots are not exactly a

@@ -115,7 +115,7 @@ def terminal_labels(pp_df: pd.DataFrame, *, horizon: int = HORIZON) -> pd.DataFr
     src/model/conformal.py's design notes).
 
     The primary filter is `slot >= horizon`, not a specific censor_reason
-    (stats-reviewer, B6, DECISIONS.md 2026-08-28 finding 3): a STILL_PENDING
+    (the statistics review, B6, DECISIONS.md 2026-08-28 finding 3): a STILL_PENDING
     row at or past the horizon is the observed event itself regardless of
     WHY the episode then stopped. Today, `BUDGET_EXHAUSTED` is the only
     reason this corpus's generator ever stamps on such a row -- checked as

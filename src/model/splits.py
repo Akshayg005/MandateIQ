@@ -15,8 +15,8 @@ protocol.md's own "B2's baseline-ladder run is not subject to a split at
 all" paragraph already establishes for the ladder. See DECISIONS.md,
 2026-08-27, B4.
 
-FOUR-WAY split, not three -- changed from PLAN_DETAIL.md's literal
-`split(df, seed) -> (train, calib, test)` interface per stats-reviewer's B4
+FOUR-WAY split, not three -- changed from the build spec's literal
+`split(df, seed) -> (train, calib, test)` interface per the statistics review's B4
 finding (DECISIONS.md, 2026-08-28): `calib` was being asked to do two jobs
 -- fit isotonic calibration AND supply the conformal quantile -- and split
 conformal's validity requires the quantile's scores to be exchangeable with
@@ -24,7 +24,7 @@ the test-time score. Once isotonic has been fit on a row, that row's own
 score is no longer an honest out-of-sample residual for it, so a single
 shared `calib` silently narrows every conformal prediction set below its
 stated 95% coverage. Narrower sets are MORE likely to collapse to the
-singleton `{WONT_PAY}` that fires the off-ramp (root CLAUDE.md, "Safety
+singleton `{WONT_PAY}` that fires the off-ramp (root DESIGN.md, "Safety
 design") -- so the bug's failure mode is exactly the harm that gate exists
 to prevent, while a reliability diagram fit and read on the same rows would
 still look diagonal. `calib_iso` and `calib_conf` are disjoint mandate sets
@@ -84,7 +84,7 @@ def split(
     outcomes are dependent through shared-balance contention -- from
     straddling train/calib_conf and silently narrowing conformal's
     prediction sets below stated coverage (DECISIONS.md, 2026-08-28, B5
-    stats-reviewer finding 7).
+    the statistics review finding 7).
 
     Guarantees, all checked before returning (raising SplitIntegrityError,
     not asserting): the four group-key sets are pairwise disjoint; every
@@ -118,7 +118,7 @@ def split(
         # true for the documented construction pattern
         # (`df["household_id"].fillna(df["mandate_id"])`, which inherits
         # df's own index by construction) but not guaranteed for an
-        # arbitrary caller-supplied Series. Checked here (stats-reviewer,
+        # arbitrary caller-supplied Series. Checked here (the statistics review,
         # B6, DECISIONS.md 2026-08-28 finding 5) rather than trusted.
         if len(group_key) != len(df):
             raise SplitIntegrityError(

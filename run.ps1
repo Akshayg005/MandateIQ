@@ -6,7 +6,6 @@
 .EXAMPLE
   .\run.ps1 help
   .\run.ps1 test
-  .\run.ps1 checkpoint -Day B4
   .\run.ps1 chaos -Kills 50
 #>
 param(
@@ -142,10 +141,8 @@ Mandate Recovery Engine -- tasks
   .\run.ps1 report            re-render tables+figures from the last run
 
   .\run.ps1 freeze            BLOCK B2 ONLY -- commit and record the eval hash
-  .\run.ps1 checkpoint -Day B4  end of session -- regenerate STATE.md
   .\run.ps1 up                START EVERYTHING -- db, api, dashboard, site
   .\run.ps1 down              stop everything `up` started
-  .\run.ps1 state             print the session-start orientation block
   .\run.ps1 verify            full pre-flight: guards, keys, docker, hooks
   .\run.ps1 serve             the HTTP API (uvicorn, port 8000) -- the Razorpay
                                webhook AND R6's three read endpoints:
@@ -167,7 +164,7 @@ Mandate Recovery Engine -- tasks
     # Invoke-Step, NOT a bare call. A bare `& $Py ...` as the last statement
     # of a switch branch does NOT set this script's exit code: PowerShell
     # returns 0 and the failure vanishes. `.\run.ps1 test` therefore reported
-    # success on a RED suite, which made CLAUDE.md's own definition-of-done
+    # success on a RED suite, which made DESIGN.md's own definition-of-done
     # step 3 ("`.\run.ps1 test` passes before any commit") unfalsifiable.
     # Found 2026-08-31 in the B13 end-of-project pass and proven with a
     # minimal repro; same class as the 2026-08-29 vacuous-checks audit.
@@ -202,7 +199,7 @@ Mandate Recovery Engine -- tasks
 
     "ci" {
         # No eval step. eval-quick (below) calls eval.run, which is B13's
-        # file (PLAN_DETAIL.md:518) and has never existed -- not since B4,
+        # file (the build spec) and has never existed -- not since B4,
         # since the scaffold commit, 2026-08-25. Putting it in `ci` meant
         # this target could not pass from day one. Removed 2026-08-29;
         # DECISIONS.md has the full reasoning. Re-add once B13 lands.
@@ -213,7 +210,7 @@ Mandate Recovery Engine -- tasks
         # never block session end. No live API calls -- a file-existence
         # check against the current prompt-content-hash version, so it's
         # cheap enough to run every time. This is B11's actual answer to
-        # PLAN_DETAIL.md's "wired into the Stop hook": a full live run would
+        # the build spec's "wired into the pre-commit gate": a full live run would
         # cost ~5.5 minutes on the first checkpoint after any prompt edit,
         # which is what caching was built to avoid (DECISIONS.md, 2026-08-30
         # and 2026-08-31).
@@ -275,15 +272,6 @@ Mandate Recovery Engine -- tasks
         Write-Host "frozen at $hash" -ForegroundColor Green
     }
 
-    "checkpoint" {
-        # $TestFastFilter threaded through explicitly so checkpoint.py's
-        # own test count cannot silently diverge from what test-fast/ci
-        # actually run -- it previously hard-coded "not chaos" only,
-        # missing "and not slow" (DECISIONS.md, 2026-08-29).
-        if ($Day) { & $Py scripts\checkpoint.py $Day $TestFastFilter } else { & $Py scripts\checkpoint.py "" $TestFastFilter }
-    }
-
-    "state" { & $Py scripts\show_state.py }
 
     "verify" {
         # PS 5.1 turns native-exe stderr into a terminating NativeCommandError
@@ -404,7 +392,7 @@ print(c.order.create({'amount':100,'currency':'INR'})['id'])
             Invoke-Step "lint"  { npm run lint }
             Invoke-Step "build" { npm run build }
             # Proves the gate: real figures reach the rendered output, and
-            # PLAN.md's storyboard placeholders do not.
+            # the project plan's storyboard placeholders do not.
             Invoke-Step "render" { npm run render-check }
         } finally { Pop-Location }
     }

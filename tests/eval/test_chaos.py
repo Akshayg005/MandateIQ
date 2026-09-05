@@ -212,7 +212,7 @@ def test_fault_seam_puts_the_kill_in_the_unsafe_window(pg_schema):
 
 
 def test_report_refuses_to_pass_when_the_unsafe_window_was_never_reached(pg_schema):
-    """The gate's whole point (PLAN_DETAIL.md section 8.2, finding 2):
+    """The gate's whole point (the build spec section 8.2, finding 2):
     "zero double-charges" is an artifact of kill sampling unless something
     actually landed in the unsafe window. A report with no unsafe-window
     coverage must FAIL even though every counter reads zero."""
@@ -247,8 +247,8 @@ def test_full_run_meets_every_gate_clause(pg_schema):
     assert UNSAFE_WINDOW.value in rendered
 
 
-# --- 4. what the harness structurally cannot see (chaos-engineer review) -----
-# Found by the chaos-engineer pass over B10. The first of these describes a
+# --- 4. what the harness structurally cannot see (the chaos harness review) -----
+# Found by the chaos harness pass over B10. The first of these describes a
 # real double-charge that a per-receipt oracle -- the harness's own
 # ChaosClient.accepted, and a receipt-keyed idempotency check at the real
 # Razorpay -- can never see, because it spans two idempotency keys.

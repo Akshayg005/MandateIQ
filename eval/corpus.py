@@ -37,7 +37,7 @@ re-authorisation instead, a structurally different action
 (src.core.types.Action.REAUTH). **B8's allocator must apply this exact
 same afa_free_limit_paise() filter before ever consulting the hazard
 model**, not just this corpus, or the model will be asked to score mandates
-it was deliberately never shown (stats-reviewer, B4, finding 4 --
+it was deliberately never shown (the statistics review, B4, finding 4 --
 DECISIONS.md, 2026-08-28). eval/baseline_ladder.py does NOT apply this
 filter, and that is faithful to the incumbent it models: the real,
 documented Razorpay ladder has no AFA-aware routing either.
@@ -76,14 +76,14 @@ _ALL_DAY_BUCKETS: tuple[int, ...] = (0, 1)
 # sim_config.yaml's frozen seed (20260826) -- asserted below, not just
 # documented, so the disjointness the user asked to have confirmed is
 # actually machine-checked on every import of this module.
-# Widened from 10 to 40 seeds, 2026-08-28 (DECISIONS.md, B5 stats-reviewer
+# Widened from 10 to 40 seeds, 2026-08-28 (DECISIONS.md, B5 statistics review
 # finding 2): at 10 seeds (1,769 mandates, 3,016 estimable rows) the
 # held-out log-loss "full model beats intercept-only null" claim was
 # statistically indistinguishable from noise (paired t=-0.84, p=0.40) --
 # the corpus is simulated and free, and widening it to 40 seeds (~12,300
 # estimable rows) is what turns a real, DGP-matching effect into one the
 # held-out split can actually detect (t=-6.32, p<1e-9, verified by
-# stats-reviewer). Still disjoint from eval/frozen/sim_config.yaml's frozen
+# the statistics review). Still disjoint from eval/frozen/sim_config.yaml's frozen
 # seed, asserted below.
 TRAIN_SEEDS: tuple[int, ...] = tuple(range(90001, 90041))
 
@@ -142,13 +142,13 @@ class Episode:
     this repo's test suites -- which predate this field and have no reason
     to care about it -- keeps working unchanged.
 
-    Added at B6 (stats-reviewer finding 1, DECISIONS.md 2026-08-28): without
+    Added at B6 (the statistics review finding 1, DECISIONS.md 2026-08-28): without
     it, src/model/paths.hazard_tensor()'s schedule=None fallback imputes an
     un-attempted slot's in_salary_window from whether the episode SURVIVED
     to that slot -- which is a deterministic function of the very outcome
     being predicted (measured: ~100% of STILL_PENDING episodes have a real
     slot-3 row, ~36-43% of RECOVERED ones do). That is exactly
-    src/model/CLAUDE.md rule 2 ("no feature may encode the future"), and it
+    src/model/DESIGN.md rule 2 ("no feature may encode the future"), and it
     made the reported conformal coverage a number for a predictor that
     cannot exist at commit time. Carrying the real, pre-registered schedule
     here and threading it into hazard_tensor(schedule=...) removes the
@@ -192,7 +192,7 @@ def assert_legal(episode: "Episode") -> None:
     rather than merely true-by-code-review.
 
     THIS IS A TRAINING-DATA ARTIFACT, NOT CLAUSE 6(a) ENFORCEMENT. Flagged
-    explicitly by compliance-auditor's B4 review (DECISIONS.md, 2026-08-27)
+    explicitly by the compliance audit's B4 review (DECISIONS.md, 2026-08-27)
     because it is easy to mistake for the real thing once B9 exists: this
     corpus has no intraday clock, so "on_day >= 1" is the finest check it
     CAN express, and it says nothing about hours. The real >=24h lead must
@@ -243,7 +243,7 @@ def _draw_schedule(rng: np.random.Generator) -> tuple[int, int, int]:
     stays exactly reproducible regardless of how these day draws are
     implemented.
 
-    Two-component mixture, per stats-reviewer's B4 finding 3 (DECISIONS.md,
+    Two-component mixture, per the statistics review's B4 finding 3 (DECISIONS.md,
     2026-08-28): with probability COMPRESSED_FRAC, the whole three-attempt
     sequence is drawn as three distinct days within the first
     _COMPRESSED_MAX_DAY days -- the only way slot 3 or slot 4 can land
@@ -299,7 +299,7 @@ def generate(
     src/model/splits.py exists to guarantee.
 
     Refuses to return (raises ValueError) if any (cause, slot, day_bucket)
-    cell is completely empty -- per stats-reviewer's B4 finding 3, an empty
+    cell is completely empty -- per the statistics review's B4 finding 3, an empty
     cell means complete separation for whatever interaction term touches
     it, and that must be caught here, not discovered three blocks later as
     a non-estimable coefficient in B5. A merely-thin (non-zero but small)
@@ -383,7 +383,7 @@ def cell_counts(episodes: list["Episode"]) -> dict[tuple[str, int, int], int]:
 
     Initializes ALL 18 cells (3 causes x 3 slots x 2 buckets) to 0 before
     counting, rather than only creating a dict entry for a cell that
-    actually occurs. This was a real bug (stats-reviewer, B4 finding 3,
+    actually occurs. This was a real bug (the statistics review, B4 finding 3,
     DECISIONS.md, 2026-08-28): a cell with a true zero count never became a
     key under the old dict.get()-based accumulation, so thin_cells() --
     which only filters counts.items() -- could never report the single

@@ -92,7 +92,7 @@ conditional on a DEAD-type signal) because it is continuous rather than
 binary, so it cannot saturate the way "ever attempted" did -- every slot a
 mandate survives, or is correctly routed away from, changes the count. It
 is also already one of this project's own three headline bars (recovered,
-ATTEMPTS SPENT, mandates preserved -- root CLAUDE.md), so a policy that
+ATTEMPTS SPENT, mandates preserved -- root DESIGN.md), so a policy that
 scores well here is demonstrably practising the thesis, not just satisfying
 a bespoke eval statistic.
 

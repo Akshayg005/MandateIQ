@@ -1,5 +1,5 @@
 """INTENT-without-RESULT reconciliation, plus the UNCONFIRMED backoff loop.
-Run on every executor start (PLAN_DETAIL.md section 3, step 5 -- "for each
+Run on every executor start (the build spec section 3, step 5 -- "for each
 K with an INTENT row, no RESULT row, and an expired lease").
 
 Two passes, both run on every call:
@@ -47,8 +47,8 @@ Two passes, both run on every call:
      append-only, like everything else this layer writes.
 
 The slot stays consumed throughout every step here, including
-UNRESOLVED_FINAL: this project's constant refrain (root CLAUDE.md;
-PLAN_DETAIL.md section 1) is that a double-charge is worse than ten missed
+UNRESOLVED_FINAL: this project's constant refrain (root DESIGN.md;
+the build spec section 1) is that a double-charge is worse than ten missed
 recoveries, and refunding an unconfirmed slot to the NPCI budget before it
 is CONFIRMED clear is exactly the risk that refrain forbids -- as the
 reverted NEVER_SENT fast path above demonstrated by breaking it.
@@ -205,7 +205,7 @@ def reconcile(
     conn, client: RazorpayLike, *, max_unconfirmed_passes: int = DEFAULT_MAX_UNCONFIRMED_PASSES
 ) -> list[Result]:
     """Run both passes once. Safe to call repeatedly and often (e.g. on
-    every executor start, per PLAN_DETAIL.md section 3 step 5) -- a key
+    every executor start, per the build spec section 3 step 5) -- a key
     with nothing to resolve is simply absent from both scans, never
     re-processed."""
     results: list[Result] = []

@@ -7,7 +7,7 @@ from a live schema, covered by tests.
 === THESE ENDPOINTS HAVE NO AUTHENTICATION AND NO TENANT SCOPING =========
 
 Stated first because it is the most important thing about this module.
-`compliance-auditor` raised it (2026-09-05) and it is correct: anyone who
+The compliance audit raised it (2026-09-05) and it is correct: anyone who
 can reach the port and knows or guesses a `mandate_id` can read that
 mandate's debit amounts, the allocator's full decision rationale (belief,
 conformal set, binding constraint), its outcome and its decline reasons.
@@ -73,7 +73,7 @@ standing next to the router that disproves it.
    thousands of rows).
 
    The real fix is a `chosen_action` column on `plan`. That is a schema
-   change with no migration path in this repo (see R5_R6_R7_PLAN.md's R7
+   change with no migration path in this repo (see the R5-R7 plan's R7
    section: `schema.sql` is only ever applied into throwaway test schemas),
    so R6 does not make it. It is named here rather than left as a surprise.
 
@@ -180,7 +180,7 @@ def _derive_action(row: store.PlanRow, committed: dict | None) -> tuple[str, lis
             # (src/execute/void.py) that cannot change what was chosen --
             # but a reader seeing a committed slot and no other signal
             # would reasonably take it for a live commitment. Raised by
-            # money-auditor, 2026-09-05; see store.committed_for_decision()
+            # the money audit, 2026-09-05; see store.committed_for_decision()
             # for why the row is not simply filtered out instead.
             how += (". NOTE: that row is VOIDED and was never sent -- the "
                     "DECISION was still ATTEMPT, but nothing is scheduled")

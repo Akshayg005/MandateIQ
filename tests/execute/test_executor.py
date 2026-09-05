@@ -250,7 +250,7 @@ def test_stopping_rule_denial_aborts_independently_of_lifecycle(pg_schema):
 
 def test_execute_never_calls_the_provider_when_intent_already_exists(pg_schema):
     """0 rows from the INTENT insert -> jump straight to reflecting the
-    existing row, never to (3) -- PLAN_DETAIL.md section 3's own words."""
+    existing row, never to (3) -- the build spec section 3's own words."""
     attempt = _committed(pg_schema, decision_sha256="d-already-intent", committed_at=CYCLE_START)
     clock.set_frozen(attempt.scheduled_for - timedelta(hours=2))
 
@@ -274,7 +274,7 @@ def test_execute_never_calls_the_provider_when_intent_already_exists(pg_schema):
 # === step 2: lease loss ======================================================
 
 def test_execute_aborts_without_voiding_when_lease_is_already_held(pg_schema):
-    """A defensive path (PLAN_DETAIL.md section 3): by construction, we
+    """A defensive path (the build spec section 3): by construction, we
     just won the unique INTENT insert for this key, so another owner
     holding a live lease on it already is pathological -- but the
     protocol names it explicitly, so it is honoured. Must NOT void the
@@ -387,7 +387,7 @@ def test_execute_leaves_sent_and_holds_the_lease_on_ambiguous_failure(pg_schema)
 # === invariant 3, proven by call order, not by trusting function names ====
 
 def test_intent_row_is_committed_before_the_provider_is_ever_called(pg_schema):
-    """money-auditor's own standard: verify by reading the actual call
+    """the money audit's own standard: verify by reading the actual call
     order, not the function names. The fake client queries the ledger
     table itself, from inside charge(), before returning -- if execute()
     ever called it before the INTENT row was durably committed, this

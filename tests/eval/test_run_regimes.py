@@ -34,7 +34,7 @@ def test_gate_refuses_to_answer_without_a_bound_key():
     """The smoothing key MUST be a per-decision id. Deriving it from the
     belief -- the original implementation -- makes the tie-breaking draw a
     deterministic function of the score, which destroys the coverage
-    guarantee (stats-reviewer, 2026-08-31). An unbound gate must fail loudly
+    guarantee (the statistics review, 2026-08-31). An unbound gate must fail loudly
     rather than silently fall back to anything belief-derived."""
     gate, kind, _ = run_mod.fit_gate(load_config())
     b = Belief(probs=(0.1, 0.1, 0.8), provenance="test")
@@ -287,7 +287,7 @@ def test_every_cell_reports_all_three_bars(small_payload):
 
 def test_reference_policies_are_present_in_every_cell_group(small_payload):
     """The test that used to live here asserted the engine ALWAYS spends
-    fewer attempts than the ladder. payments-domain correctly called that
+    fewer attempts than the ladder. The payments-domain review correctly called that
     out: it pins the confound by test. Every metric in this report is
     monotonically decreasing in attempt count, so asserting the engine
     attempts less is asserting that it must appear to win -- the thing under
@@ -346,7 +346,7 @@ def test_coverage_is_scored_over_actual_gate_queries(small_payload):
 
 
 def test_money_is_integer_paise_everywhere(small_payload):
-    """CLAUDE.md invariant 2. A float that reached a money field would
+    """DESIGN.md invariant 2. A float that reached a money field would
     survive the JSON round-trip and silently poison the report."""
     for c in small_payload["cells"]:
         for f in ("recovered_paise", "missed_recovery_paise", "false_offramp_paise"):

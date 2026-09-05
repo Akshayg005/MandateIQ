@@ -9,7 +9,7 @@ import type { Narrative } from '../hooks/useReportData'
  *
  * EVERY COUNT COMES FROM `reports/results.json`. There are no constants for
  * how many mandates survive, because an earlier draft of this file carried
- * PLAN.md's storyboard placeholders ("ladder kills 14") as if they were
+ * The project plan's storyboard placeholders ("ladder kills 14") as if they were
  * results, and they were wrong by a factor of six -- the ladder loses 90.
  *
  * What the cubes assert, precisely: under the fixed ladder `ladderLost` of

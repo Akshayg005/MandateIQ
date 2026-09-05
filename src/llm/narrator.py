@@ -1,8 +1,8 @@
 """Batch-level root-cause narrative. Once per batch, never per transaction.
 Merchant-facing prose.
 
-Sonnet-tier model (not flash) for prose quality. Plain text, no tool.
-Runs a claims guard (CLAUDE.md invariant 6: the system OFFERS, never
+Full-tier model (not flash) for prose quality. Plain text, no tool.
+Runs a claims guard (DESIGN.md invariant 6: the system OFFERS, never
 cancels) before returning.
 """
 from __future__ import annotations
@@ -30,7 +30,7 @@ Use clear, concise language. This is merchant-facing, monthly digest material.
 
 _singleton_client: GeminiClient | None = None
 
-# Two-part guard, redesigned 2026-08-31 after payments-domain review found
+# Two-part guard, redesigned 2026-08-31 after the payments-domain review found
 # the original ("we/system" + "cancel" within 60 chars) anti-correlated with
 # truth: probed 8 legitimate off-ramp sentences and 9 real false-agency
 # claims -- it blocked 4/8 of the FIRST group (any passive voice, "our
@@ -68,7 +68,7 @@ _DANGER = re.compile(
 
 
 class NarratorClaimError(RuntimeError):
-    """The narrator asserted something CLAUDE.md invariant 6 forbids: that
+    """The narrator asserted something DESIGN.md invariant 6 forbids: that
     the system cancels a mandate. It only ever OFFERS an off-ramp; the
     customer decides. Raised rather than silently edited -- this is a
     once-per-batch, human-facing artifact; a human should see the failure
@@ -89,7 +89,7 @@ def _assert_no_forbidden_claims(text: str) -> None:
         return
     if _DANGER.search(text):
         raise NarratorClaimError(
-            "Narrator claimed the system cancelled a mandate (forbidden by CLAUDE.md invariant 6). "
+            "Narrator claimed the system cancelled a mandate (forbidden by DESIGN.md invariant 6). "
             "The system only OFFERS off-ramps; customers decide. Edit or regenerate."
         )
 

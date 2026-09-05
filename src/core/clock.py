@@ -1,6 +1,6 @@
 """The only source of "now" in the codebase. Must be freezable, because the
 24-hour commitment lag (RBI clause 6(a)) is untestable against a live clock.
-Nothing outside this module may call datetime.now() -- see src/core/CLAUDE.md.
+Nothing outside this module may call datetime.now() -- see src/core/DESIGN.md.
 """
 from __future__ import annotations
 

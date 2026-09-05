@@ -7,7 +7,7 @@
  *
  * In particular there is NO CURRENCY FORMATTING here, and there must never
  * be. `src/core/money.py` is the only place in this project allowed to render
- * a rupee figure (CLAUDE.md invariant 2), and `scripts/guard_invariants.py`
+ * a rupee figure (DESIGN.md invariant 2), and `scripts/guard_invariants.py`
  * cannot scan TypeScript -- so a `formatRupees()` written in this directory
  * would be the exact violation the guard was widened to catch in
  * eval/report.py, in a language where nothing would catch it. Every money

@@ -169,10 +169,10 @@ class Sim2Episode:
     That field exists to stop `src/model/paths.hazard_tensor()`'s
     `schedule=None` fallback from imputing an un-attempted slot's
     `in_salary_window` from whether the episode survived to it -- a
-    src/model/CLAUDE.md rule-2 leak (see `eval/corpus.py`'s own docstring).
+    src/model/DESIGN.md rule-2 leak (see `eval/corpus.py`'s own docstring).
     Nothing in `eval/sim2.py` calls `hazard_tensor()` today, so this is
     latent, not live -- but a `Sim2Episode` must never be passed there
-    without adding `schedule` back first (stats-reviewer, 2026-09-04,
+    without adding `schedule` back first (the statistics review, 2026-09-04,
     DECISIONS.md "R1b review pass")."""
 
     mandate: Sim2Mandate
@@ -509,7 +509,7 @@ _SECTION_END = "<!-- PHASE_B:END -->"
 # only, and only for CANT_PAY_NOW. Any OTHER outcome equation showing a
 # nonzero fitted coefficient for that column -- significant or not -- is a
 # cause-marginal composition effect (fit() has no `cause` covariate at all),
-# not something the DGP coded directly. Found by stats-reviewer, 2026-09-04
+# not something the DGP coded directly. Found by the statistics review, 2026-09-04
 # (DECISIONS.md, "R1b review pass"): the first version of this report
 # explained ONE such artifact (mandate_age_years on DEAD/OPTED_OUT) with the
 # WRONG mechanism (claimed a share-decrease that would predict a NEGATIVE

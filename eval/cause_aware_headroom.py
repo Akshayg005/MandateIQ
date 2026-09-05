@@ -4,7 +4,7 @@ handoff left open: does perfect cause-targeting (as opposed to `oracle_
 policy.run()`'s perfect *timing*) show a headroom gap over the fixed ladder
 on `attempts_spent` and `iatrogenic_failures`, on all three frozen arms --
 including `coupled`, which the timing-only oracle could not discriminate on
-(9/11/0 wins, mean/SE=-0.22 over a 20-seed sweep; see STATE.md/DECISIONS.md).
+(9/11/0 wins, mean/SE=-0.22 over a 20-seed sweep; see the status notes/DECISIONS.md).
 
 Money recovered and mandates-preserved are deliberately NOT reported here:
 a mandate whose true cause is offered an exit needs an offer-acceptance

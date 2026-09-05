@@ -81,7 +81,7 @@ class DeltaLog:
 
     def summary(self) -> str:
         """Single-line summary suitable for batch logs, no per-mandate
-        detail (root CLAUDE.md: batch output must not enter main context)."""
+        detail (root DESIGN.md: batch output must not enter main context)."""
         return (
             f"n_mandates={self.n_mandates} n_agree={self.n_agree} "
             f"n_diverge={self.n_diverge}"
@@ -627,7 +627,7 @@ def test_shadow_run_is_deterministic():
 def test_shadow_log_summary_returns_single_line_without_detail():
     """DeltaLog.summary() returns a single line containing the three
     counts, and no per-mandate detail. Batch output must stay out of the
-    main context (root CLAUDE.md)."""
+    main context (root DESIGN.md)."""
     batch = [
         _shadow_input(mandate_id="M-1"),
         _shadow_input(mandate_id="M-2"),
@@ -682,7 +682,7 @@ def test_shadow_run_respects_conformal_gate():
     # gate=None means solve() falls back to FullSetGate, so the prediction
     # set is ALL THREE causes -- not the empty set an earlier draft of this
     # test expected. The direction matters and is not cosmetic: the off-ramp
-    # fires only on the SINGLETON {WONT_PAY} (root CLAUDE.md, "Safety
+    # fires only on the SINGLETON {WONT_PAY} (root DESIGN.md, "Safety
     # design"), so the full set is the conservative default that can never
     # offer an exit, while an empty set would be a degenerate value no gate
     # is specified to return. Asserting frozenset() here would have pinned

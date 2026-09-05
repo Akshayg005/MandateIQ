@@ -1,7 +1,7 @@
 """Deterministic identifier derivation only. Must never depend on wall-clock
 time, process identity, or randomness -- the same attempt must derive the
 same key on any machine, in any process, after any number of crashes. See
-CLAUDE.md invariant 3 and PLAN_DETAIL.md §3.
+DESIGN.md invariant 3 and the build spec §3.
 """
 from __future__ import annotations
 

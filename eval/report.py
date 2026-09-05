@@ -56,7 +56,7 @@ C_MUTED = "#52514e"
 
 
 def _rupees(paise: int) -> str:
-    """CLAUDE.md: money helpers live in src/core/money.py, nothing else
+    """DESIGN.md: money helpers live in src/core/money.py, nothing else
     formats currency, and a float touching a money value is a bug. The first
     version of this function divided paise by one hundred in float and rendered
     Rs 20,22,513.53 as "2,022,514" -- a float division, in Western grouping,
@@ -64,7 +64,7 @@ def _rupees(paise: int) -> str:
     the guard's money checks ran only over PROTECTED_DIRS -- eval/ was not
     among them -- so the rule was being checked exactly where it already
     held. Fixed on both sides: this function delegates, and the guard now
-    scans MONEY_DIRS, which includes eval/. (payments-domain, 2026-08-31.)"""
+    scans MONEY_DIRS, which includes eval/. (the payments-domain review, 2026-08-31.)"""
     return money.fmt(paise)
 
 
@@ -235,7 +235,7 @@ def _coverage_table(data: dict[str, Any]) -> list[str]:
     there is no coverage claim to make, and printing 1.000 would be true and
     completely misleading.
 
-    CORRECTED, R5 review pass, 2026-09-05 (stats-reviewer): this function's
+    CORRECTED, R5 review pass, 2026-09-05 (the statistics review): this function's
     own comment used to say "one row per (regime, arm) engine cell", which
     was wrong -- `data["cells"]` holds every seed, and there is no seed
     filter here, so 16 (regime, arm) pairs x 8 seeds always produced 128
@@ -287,7 +287,7 @@ def _hypotheses(data: dict[str, Any]) -> list[str]:
 
 
 def _profiles_note(data: dict[str, Any]) -> list[str]:
-    """Did the compliance profile change anything at all? CLAUDE.md requires
+    """Did the compliance profile change anything at all? DESIGN.md requires
     both interpretations be evaluated; that is only meaningful if we say
     plainly when they came out identical."""
     pairs = collections.defaultdict(dict)
@@ -329,13 +329,13 @@ def _profiles_note(data: dict[str, Any]) -> list[str]:
         "with perfect timing discrimination would still produce byte-"
         "identical results under the two profiles.",
         "",
-        "CLAUDE.md requires that the strict/permissive ambiguity never be "
+        "DESIGN.md requires that the strict/permissive ambiguity never be "
         "hard-coded to one interpretation and that both be evaluated. That "
         "requirement is currently satisfied in form and empty in substance: "
         "the code branches on the profile and the branch cannot change any "
         "output. Modelling the 24h pre-notification lead as a real lead -- "
         "rather than as a one-day offset that the clamp swallows -- is the "
-        "fix, and it is not done. (payments-domain, 2026-08-31.)",
+        "fix, and it is not done. (the payments-domain review, 2026-08-31.)",
     ]
 
 
@@ -494,7 +494,7 @@ def _ltv_slice_table(slice_data: dict[str, Any]) -> list[str]:
             # fields stored alongside them -- both are in the artifact, but
             # rendering from the float would round-trip through a lossy
             # intermediate for no reason when the exact value is right
-            # there (money-auditor, 2026-09-04, R3 review).
+            # there (the money audit, 2026-09-04, R3 review).
             crossing_exact = Fraction(c["crossing_ltv_paise_exact"])
             ratio_exact = Fraction(c["ratio_to_mean_amount_exact"])
             lines.append(
@@ -1088,7 +1088,7 @@ def _headline(data: dict[str, Any]) -> list[str]:
         f"P(CANT_PAY_EVER | DEAD) = 0.8991, P(WONT_PAY | OPTED_OUT) = 0.9040, "
         f"both measured directly against `eval/frozen/sim_config.yaml`'s own "
         f"generative process, NOT the degenerate 100%-certain collapse an "
-        f"earlier same-day version of this fix assumed and stats-reviewer "
+        f"earlier same-day version of this fix assumed and the statistics review "
         f"then proved false and irreversible (`cause_map`'s priors contain "
         f"no zeros, so a belief collapsed to exactly 1.0 can never be moved "
         f"by any later evidence). The corrected, measured version changes no "
@@ -1139,10 +1139,10 @@ HEADLINE_ARM = "nominal"
 def _summary_payload(data: dict) -> dict:
     """reports/results.json -- the small, stable summary other tooling reads.
 
-    scripts/checkpoint.py has looked for this file since the scaffold commit
-    and printed "no eval run yet" into STATE.md for thirteen blocks because
+    The status tooling has looked for this file since the scaffold commit
+    and printed "no eval run yet" into the status notes for thirteen blocks because
     nothing ever wrote it; the run-eval skill lists writing it as step 2. The
-    shape below is the one checkpoint.py already parses.
+    shape below is the one that tooling already parses.
 
     The headline cell is baseline/nominal -- the frozen protocol's own
     reference point -- and the reference policies travel with it, because the
@@ -1211,7 +1211,7 @@ def _summary_payload(data: dict) -> dict:
         "regimes_where_we_lose": losing,
         "offers_fired_total": sum(c["n_offer"] for c in eng),
         # R5: the off-ramp's own error costs, so downstream tooling
-        # (dashboard/, site/, scripts/checkpoint.py) reads the PAIR rather
+        # (dashboard/, site/) reads the PAIR rather
         # than a bare count. `offramp_scored_total` is the exact denominator
         # `false_offramp_total` was measured against -- never `n_offer`,
         # which can differ if a post-terminal re-solve ever returns OFFER.
@@ -1324,7 +1324,7 @@ def _readme_offramp_sentence(s: dict) -> str:
     scored = s.get("offramp_scored_total") or 0
     false_n = s.get("false_offramp_total") or 0
     rate = f"{false_n / scored:.1%}" if scored else "n/a"
-    # R5 review pass, 2026-09-05 (stats-reviewer): `eng` (and so every total
+    # R5 review pass, 2026-09-05 (the statistics review): `eng` (and so every total
     # above) sums BOTH compliance profiles, which are byte-identical on
     # every field across all 128 (regime, arm, seed) triples -- this engine
     # has no timing discrimination (see "Compliance profiles" below), so

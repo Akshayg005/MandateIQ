@@ -199,7 +199,7 @@ def test_valid_signature_and_realistic_payment_failed_body_is_accepted(client, p
     assert decline_class == "INSUFFICIENT_FUNDS"
     assert provider_ref == "pay_TESTvalid-sig-1"
 
-    # Versioned, per payments-domain's B3 review -- a classification with
+    # Versioned, per the payments-domain review's B3 review -- a classification with
     # no record of which ruleset produced it can't be reproduced later.
     from src.classify.cause_map import PRIOR_VERSION
     from src.classify.decline_taxonomy import TAXONOMY_VERSION

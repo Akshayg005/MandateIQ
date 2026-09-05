@@ -134,7 +134,7 @@ class GeminiClient:
     ) -> dict:
         """tool_config.mode="ANY" + allowed_function_names=[tool_name] is what
         makes a free-text response structurally impossible -- this is the
-        mechanism CLAUDE.md's "malformed JSON is structurally impossible"
+        mechanism DESIGN.md's "malformed JSON is structurally impossible"
         claim rests on, verified against the live API before adoption
         (DECISIONS.md, 2026-08-30): both adopted models returned a clean
         functionCall with empty stray text on every probed call.

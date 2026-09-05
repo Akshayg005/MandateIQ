@@ -1,7 +1,7 @@
 """The off-ramp gate as an interface -- ConformalGate Protocol plus a safe
 stub default, FullSetGate.
 
-Design spec (PLAN_DETAIL.md section 8.1, decision 3): the off-ramp ships
+Design spec (the build spec section 8.1, decision 3): the off-ramp ships
 behind a protocol-typed gate so B8 does not depend on B6's real conformal
 predictor landing first. FullSetGate returns the full three-cause set for
 every belief, which under this project's firing rule -- offer only on the
@@ -87,7 +87,7 @@ class ConformalCauseGate:
     inclusion decision for the one class that can fire the off-ramp was
     literally a hash of a constant string, with no data dependence, and the
     reported coverage was one draw from a range spanning 0.105 to 0.980
-    (stats-reviewer, 2026-08-31; DECISIONS.md).
+    (the statistics review, 2026-08-31; DECISIONS.md).
 
     So the key is now supplied by the caller via `bind()`, as
     `conformal.SplitConformal.pred_set()` documents ("a stable per-row id,

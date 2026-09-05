@@ -44,7 +44,7 @@ counts as miscoverage in coverage_report(), never as "no data" or a
 silent fallback to some default label.
 
 No LLM client import here, and no import of this project's latent-cause
-enum either -- see src/model/CLAUDE.md and this module's own test suite,
+enum either -- see src/model/DESIGN.md and this module's own test suite,
 which greps the source for both.
 """
 from __future__ import annotations
@@ -131,7 +131,7 @@ def _p_value(s: float, pool: np.ndarray, *, smoothed: bool, u: float) -> float:
     grows as the pool shrinks and ties get heavier -- exactly this
     project's regime (Mondrian pools as small as the ceil(1/alpha)-1=19
     floor, and this model's ~6-atom hazard vocabulary), where it measured
-    up to +4.35 points of excess coverage (stats-reviewer, DECISIONS.md,
+    up to +4.35 points of excess coverage (the statistics review, DECISIONS.md,
     2026-08-28 B6). Unsmoothed is the special case u=1, which reduces to
     the standard conservative non-randomized rule and is unaffected by
     this fix (weighting doesn't matter when it's always 1)."""

@@ -111,7 +111,7 @@ def test_reconcile_resolves_a_dangling_intent_when_the_provider_confirms_it(pg_s
 
 
 def test_reconcile_resolves_a_dangling_sent_row_the_same_way(pg_schema):
-    """A crash after SENT (the actual crash window PLAN_DETAIL.md section 3
+    """A crash after SENT (the actual crash window the build spec section 3
     names) must be discoverable exactly like a crash after INTENT alone."""
     attempt = _committed(pg_schema, decision_sha256="d-recover-sent", committed_at=CYCLE_START)
     _make_dangling(pg_schema, attempt, state="SENT")

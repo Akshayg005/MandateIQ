@@ -204,7 +204,7 @@ class TestIssuerDeadHazardDifference:
         SEED COUNT, DERIVED NOT GUESSED (DECISIONS.md, 2026-09-04, R1b review
         pass): the true aggregate gap is ~6.7-7.8pp (analytic marginalisation
         over the DGP's own cause_mix/age distribution, cross-checked by direct
-        simulation). stats-reviewer found the ORIGINAL 20-seed window
+        simulation). The statistics review found the ORIGINAL 20-seed window
         (seeds 1000-1019) measured only +5.51pp -- just 0.26 SD above the 5pp
         floor, an empirically confirmed ~7% flake rate across 30 disjoint
         20-seed windows. 150 seeds pushes the standard error low enough (from

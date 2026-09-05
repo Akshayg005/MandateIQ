@@ -1,7 +1,7 @@
 """src/policy/constraints.py -- regulatory constants and validation functions.
 
 Design spec: Every constant and function here must cite its RBI clause, as per
-root CLAUDE.md's "no unattributed magic numbers" rule. This module is the sole
+root DESIGN.md's "no unattributed magic numbers" rule. This module is the sole
 source of truth for:
 
 - AFA-free limits per clause 8(a) [base] and 8(b) [elevated for specific

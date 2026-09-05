@@ -1,5 +1,5 @@
 -- Append-only ledger + committed schedule + lease + plan + mandate lifecycle.
--- Postgres 16. See PLAN_DETAIL.md §3 for the write-ordering protocol and the
+-- Postgres 16. See the build spec §3 for the write-ordering protocol and the
 -- idempotency-key derivation this schema exists to support.
 --
 -- `ledger` has no UPDATE path, by construction: every column that needs to
@@ -145,10 +145,10 @@ CREATE TABLE ingested_event (
   cause_prior        TEXT,                 -- JSON dict[Cause,float] from cause_map.prior()
   -- Which version of decline_taxonomy.classify() / cause_map.prior() wrote
   -- decline_class / cause_prior on THIS row. "the taxonomy will grow all
-  -- week" (.claude/skills/new-failure-class/SKILL.md) -- without this, a
+  -- week" (docs/new-failure-class.md) -- without this, a
   -- future re-read of an old row can't tell which ruleset judged it,
   -- mirroring the exact reason B11's normaliser output must be versioned
-  -- before it can touch a belief (PLAN_DETAIL.md B11 gate). Nullable: not
+  -- before it can touch a belief (the build spec B11 gate). Nullable: not
   -- every future writer of this table need touch classification at all.
   taxonomy_version   TEXT,
   prior_version      TEXT,
@@ -178,7 +178,7 @@ CREATE INDEX ingested_event_mandate ON ingested_event (mandate_id, received_at D
 -- overwriting it would destroy the UNKNOWN rate as a reported metric
 -- (decline_taxonomy.py: "a reported metric, not a swallowed one").
 --
--- This is the durable form of PLAN_DETAIL.md's B11 gate clause 3:
+-- This is the durable form of the build spec's B11 gate clause 3:
 -- "normaliser output is versioned in the ledger before it can touch a
 -- belief" -- src/policy/belief.update()'s required source_version
 -- parameter is what a caller must read back FROM this table before a
@@ -187,7 +187,7 @@ CREATE INDEX ingested_event_mandate ON ingested_event (mandate_id, received_at D
 -- rather than only consumed and discarded by normalizer.py's UNKNOWN
 -- override. A verdict a merchant can dispute needs to show WHY, not just
 -- what -- "MANDATE_REVOKED, model X, prompt-hash Y" with no confidence is
--- not disputable (payments-domain review, 2026-08-31). NORMALIZE_TOOL
+-- not disputable (the payments-domain review, 2026-08-31). NORMALIZE_TOOL
 -- requires confidence on every call, so NOT NULL rather than nullable.
 CREATE TABLE normalized_decline (
   event_id           TEXT        NOT NULL REFERENCES ingested_event (event_id),
@@ -208,7 +208,7 @@ CREATE INDEX normalized_decline_event ON normalized_decline (event_id, created_a
 -- and records what it WOULD have done beside what the fixed T+1/T+2/T+3
 -- ladder would have done. No money moves, no provider is called, and no row
 -- in `ledger` or `committed_schedule` is ever written by this path. That
--- separation is the entire point -- PLAN_DETAIL.md section 6 calls B12 a
+-- separation is the entire point -- the build spec section 6 calls B12 a
 -- "read-only observer of the B8 policy" -- so this is a distinct table
 -- rather than a flag on `ledger`. A nullable `is_shadow` column on the real
 -- ledger would put unexecuted decisions one forgotten WHERE clause away
@@ -265,7 +265,7 @@ CREATE INDEX shadow_ledger_run ON shadow_ledger (run_id, divergence);
 -- simulator.py) has no durable Postgres equivalent, since the eval harness
 -- never persists anything.
 --
--- No cycle_id column: a mandate has many cycles over its life (R4_PLAN.md);
+-- No cycle_id column: a mandate has many cycles over its life (R4_the project plan);
 -- cycle_id is a parameter of each planning pass, exactly the way
 -- plan/ledger/committed_schedule already key on (mandate_id, cycle_id) pairs
 -- rather than storing cycle_id as a property of the mandate itself.

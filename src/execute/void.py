@@ -1,7 +1,7 @@
 """Void-and-reissue for a committed_schedule row overtaken by events.
 
 THE SENT-ROW RULE, a deliberate reinterpretation of the letter of
-PLAN_DETAIL.md's B9 file table -- logged in DECISIONS.md, 2026-08-30, B9.
+the build spec's B9 file table -- logged in DECISIONS.md, 2026-08-30, B9.
 The file table's own words are "must not void a key that already has an
 INTENT row"; read literally, that is impossible to satisfy at the same
 time as section 3's write-ordering protocol, whose step 2a is the late
@@ -28,7 +28,7 @@ reissue() takes the ORIGINAL row's key, not a caller-held ScheduledAttempt
 object, and re-reads committed_schedule fresh -- a caller's in-memory copy
 could be stale (voided by a concurrent process since it was read), and
 this module follows the same "trust the DB, not a belief about it"
-discipline PLAN_DETAIL.md's late-read principle applies everywhere else.
+discipline the build spec's late-read principle applies everywhere else.
 """
 from __future__ import annotations
 
@@ -99,7 +99,7 @@ def reissue(
 
     A reissue does NOT spend a new NPCI slot: the attempt budget
     (src.policy.constraints.MAX_ATTEMPTS) counts distinct attempt_index
-    values, never distinct keys (root CLAUDE.md; PLAN_DETAIL.md section 3)
+    values, never distinct keys (root DESIGN.md; the build spec section 3)
     -- attempt_index is copied unchanged from the original.
 
     Raises VoidError if no row exists for `original_key`, or if it is not

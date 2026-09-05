@@ -563,7 +563,7 @@ def test_static_cause_belief_is_overconfident_relative_to_cause_persistence():
 
 def test_quantised_is_stable_and_collapses_near_identical_beliefs():
     """quantised(b, step) returns a tuple of ints. This is the property B8's
-    backward-induction memoisation actually depends on (PLAN_DETAIL.md:1022,
+    backward-induction memoisation actually depends on (the build spec,
     memoisation key is `(quantised(b, 1e-6), r, ctx.signature())`) -- so this
     test constructs real belief pairs, not just a self-consistency check:
 
@@ -659,7 +659,7 @@ def test_provenance_names_both_versions():
     both the normalizer that produced the decline classification AND the
     reference-prior convention in effect when the belief was created.
 
-    Per PLAN_DETAIL.md §8.1 (B11 gate): 'normaliser output is versioned in
+    Per the build spec §8.1 (B11 gate): 'normaliser output is versioned in
     the ledger before it can touch a belief ... A belief that cannot be
     traced to a specific normaliser version is not auditable.'"""
     from src.policy.belief import init, REFERENCE_PRIOR, REFERENCE_PRIOR_VERSION
@@ -682,7 +682,7 @@ def test_provenance_names_both_versions():
 # === Module-level invariants =================================================
 
 def test_belief_module_performs_no_io():
-    """Per PLAN_DETAIL.md's B7 table, belief.py must NOT contain any I/O:
+    """Per the build spec's B7 table, belief.py must NOT contain any I/O:
     no open(), psycopg, requests, import os, or datetime.now. It is a pure
     statistical computation layer."""
     from pathlib import Path
@@ -723,7 +723,7 @@ def test_as_dict_returns_cause_dict():
 #
 # CORRECTED, same session, before R2's gate was ticked: observe_terminal()'s
 # first version took (b, cause, *, source_version) and always returned a
-# DEGENERATE (1.0/0/0) posterior. stats-reviewer/payments-domain found that
+# DEGENERATE (1.0/0/0) posterior. The statistics review/the payments-domain review found that
 # claim false against eval/frozen/sim_config.yaml's own generative process
 # (P(CANT_PAY_EVER|DEAD) measures ~0.90, not 1.0) and additionally
 # irreversible (cause_map._PRIORS has no zeros, so update() on an exact

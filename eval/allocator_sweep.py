@@ -3,13 +3,13 @@ margin (eval/gate_criteria.py) across seeds 0-19, both compliance profiles,
 nominal arm -- matching tests/eval/test_gate_criteria.py's own convention
 (`Simulator("nominal", seed=seed)`, AFA-eligible mandates only).
 
-This is NOT eval/run.py -- that is B13's file (PLAN_DETAIL.md section 1,
+This is NOT eval/run.py -- that is B13's file (the build spec section 1,
 B13 entry) and has never existed; .\\run.ps1's own `ci` comment explains
 why it must stay that way until B13. This script is scoped to exactly what
 B8's gate needs: a summary table, printed once, never a per-mandate log --
-batch output must never enter the main Claude Code context (root
-CLAUDE.md, "Keeping the window usable within a session"). Run via the
-`eval-runner` subagent, per that same section.
+batch output must never enter an interactive review context (root
+DESIGN.md, "Keeping the window usable within a session"). Run via the
+batch runner described in that same section.
 
 === The outcome -> DeclineClass proxy, and why it exists ===================
 
@@ -184,7 +184,7 @@ class WontPayChannel:
     fpr: float
     rng: random.Random
 
-    # R5 REVIEW PASS, 2026-09-05 (stats-reviewer, HIGH). The published grid
+    # R5 REVIEW PASS, 2026-09-05 (the statistics review, HIGH). The published grid
     # sweeps the MARGINAL (tpr, fpr) while `fires()` draws an independent
     # Bernoulli each call -- holding fixed, at exactly zero, the one axis
     # the singleton firing rule is actually sensitive to. A single
@@ -643,7 +643,7 @@ def _run_one_mandate(m, sim: Simulator, profile: Profile, hazard, costs: PolicyC
             # But the ATTEMPT sequence ending is not the same as the
             # DECISION sequence ending. A dead instrument is precisely
             # when re-authorisation is the correct next action -- the
-            # CANT_PAY_EVER -> REAUTH row of root CLAUDE.md's own table --
+            # CANT_PAY_EVER -> REAUTH row of root DESIGN.md's own table --
             # and this harness previously just `break`-ed, never asking
             # the allocator what to do next and so never recording the
             # one action that lane exists to produce. Ask once more, with

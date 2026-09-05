@@ -5,7 +5,7 @@ never run.
 With Docker down, every Postgres-backed test skipped: ledger, executor,
 lease, void, recover, commit, webhook, dedupe, chaos -- the entire
 idempotency and crash-recovery surface -- and `pytest` still exited 0.
-CLAUDE.md's definition-of-done step 3 ("`.\run.ps1 test` passes before any
+DESIGN.md's definition-of-done step 3 ("`.\run.ps1 test` passes before any
 commit") was therefore satisfiable without exercising any of it. That is the
 same class of defect as the Invoke-Step bug in POSTMORTEM: a check that
 passes by not checking.

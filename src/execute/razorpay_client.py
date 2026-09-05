@@ -12,7 +12,7 @@
                    same discipline scripts/idempotency_spike.py already
                    established) and, eventually, production wiring.
 
-Must never be imported from src/model/ or src/policy/ -- CLAUDE.md
+Must never be imported from src/model/ or src/policy/ -- DESIGN.md
 invariant 1 (no LLM there) is unrelated to this specific rule, but the
 dependency-edge discipline is the same: the decision core must not know
 this module exists.
@@ -81,7 +81,7 @@ src/execute/executor.py's INTENT-row-first, lease-before-send ordering;
 recovery here is by ASKING, never by resending.
 
 RazorpayClientError vs RazorpayDeclined -- the distinction executor.py's
-money-safety logic actually depends on, per money-auditor's own checklist
+money-safety logic actually depends on, per the money audit's own checklist
 ("every Razorpay call has a defined behaviour on timeout, on 5xx, and on a
 response that arrives after the client gave up"). The SDK exposes distinct
 exception classes (razorpay.errors.BadRequestError, GatewayError,
@@ -212,13 +212,13 @@ class RazorpayClient:
             key_secret if key_secret is not None else os.environ.get("RAZORPAY_KEY_SECRET", "")
         )
         # Defense in depth alongside guard_invariants.py's repo-wide
-        # rzp_live_ text scan (CLAUDE.md invariant 5) -- this is the one
+        # rzp_live_ text scan (DESIGN.md invariant 5) -- this is the one
         # place a live key would actually be USED, not merely present in a
         # file, so it gets its own runtime assertion.
         if not key_id.startswith("rzp_test_"):
             raise RazorpayClientError(
                 f"RAZORPAY_KEY_ID is not a test-mode key: {key_id[:12]!r}... "
-                "-- this project is test-mode only (CLAUDE.md invariant 5)"
+                "-- this project is test-mode only (DESIGN.md invariant 5)"
             )
         self._client = razorpay.Client(auth=(key_id, key_secret))
 

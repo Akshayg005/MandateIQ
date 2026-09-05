@@ -5,7 +5,7 @@ requires a pre-transaction notification >=24h before "every debit", but
 whether a *reattempt* within the same mandate cycle needs its own fresh
 notification, or is covered by the cycle's original one, is genuinely
 unresolved in the text. This project ships both readings and evaluates
-under both, per root CLAUDE.md: "Never hard-code one interpretation."
+under both, per root DESIGN.md: "Never hard-code one interpretation."
 
   strict     -- every slot (1, 2, 3, 4) needs its own fresh notification.
   permissive -- the cycle's original notification (slot 1) covers its
@@ -16,7 +16,7 @@ is imported, never redefined here -- it is already the identity stored in
 the `ledger.profile` and `committed_schedule.profile` TEXT columns, and a
 second enum would silently diverge from persisted rows.
 
-No module-level default profile is declared. The compliance-auditor's
+No module-level default profile is declared. The compliance audit's
 check #8 is "Neither interpretation is hard-coded"; the runtime default
 arrives from .env's COMPLIANCE_PROFILE at the edge, not from this layer.
 

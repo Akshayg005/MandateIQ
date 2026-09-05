@@ -14,7 +14,7 @@
 #   1. every artifact writer now passes `newline="\n"` explicitly (eval/run.py,
 #      eval/report.py, eval/offramp_channel.py, eval/ltv_sensitivity.py,
 #      eval/export_mandates.py, eval/golden_check.py, eval/sim2.py,
-#      eval/design_matrix_comparison.py, scripts/checkpoint.py,
+#      eval/design_matrix_comparison.py,
 #      scripts/dashboard_data.py, src/execute/shadow.py);
 #   2. this file, so git stores LF regardless of the checkout platform and a
 #      diff between a Windows and a Linux run is a diff in the NUMBERS.

@@ -7,7 +7,7 @@ import { AdditiveBlending, MathUtils, type Mesh, type MeshBasicMaterial } from '
  *
  * WHAT THIS IS AND IS NOT. It is the attempt budget, which is a structural
  * constant of the problem: NPCI allows 1 original debit plus 3 retries, four
- * ever, per mandate (see CLAUDE.md). Four is not a figure read from a report
+ * ever, per mandate (see DESIGN.md). Four is not a figure read from a report
  * and it is not a per-mandate claim about what either policy did -- it is the
  * shape of the box both policies are playing inside, which is the thing the
  * page keeps asserting in prose and never showed.

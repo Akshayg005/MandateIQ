@@ -171,8 +171,8 @@ def test_requires_fresh_notification_rejects_slot_outside_the_npci_range():
 # === module-level default guard ==============================================
 
 def test_profiles_module_declares_no_default_profile():
-    """Root CLAUDE.md requires 'Never hard-code one interpretation'. The
-    compliance-auditor's check #8 is 'Neither interpretation is hard-coded'.
+    """Root DESIGN.md requires 'Never hard-code one interpretation'. The
+    the compliance audit's check #8 is 'Neither interpretation is hard-coded'.
     This test scans src/policy/profiles.py's SOURCE TEXT for module-level
     assignments that might define a DEFAULT, DEFAULT_PROFILE, or a bare
     assignment like `= Profile.strict`. The runtime default arrives from

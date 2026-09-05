@@ -52,8 +52,8 @@ reimplementation of the old algorithm, not merely asserted to be.
 
 **A fix that introduced a cross-generation double charge, reverted the same
 day** (Incident 5, B10). Recovering NPCI slots burned by never-sent attempts
-was approved, built, cleared by `money-auditor` **twice** and by
-`compliance-auditor` — then found to double-charge. Its proof ("no SENT row
+was approved, built, cleared by the money audit **twice** and by
+The compliance audit — then found to double-charge. Its proof ("no SENT row
 means no call was issued") is true of one process's own state and false
 about a concurrent one: a worker stalled past its lease TTL is alive, not
 dead, and is indistinguishable from a crash in durable state. Recovery

@@ -23,17 +23,16 @@ protect lifetime value. That is the thesis, not a bug.
 
 ## Non-negotiable invariants
 
-These are enforced by **Claude Code hooks** declared in
-`.claude/settings.json`, not by trust -- a `PostToolUse` hook runs
-`scripts/guard_invariants.py` on every Edit/Write and exits non-zero on a
-violation. They are NOT git hooks: `.git/hooks/` holds only the stock
-`*.sample` files and `core.hooksPath` is unset, so nothing blocks a commit
-made outside Claude Code. (This paragraph said "git hooks" until R7,
+These are enforced by `scripts/guard_invariants.py`, not by trust -- it runs
+over the whole tree via `.un.ps1 lint` / `./run.sh lint`, and on every push
+in CI, exiting non-zero on a violation. It is also wired as a local editor
+write-guard during development. It is NOT a git hook: `.git/hooks/` holds
+only the stock `*.sample` files and `core.hooksPath` is unset, so nothing
+blocks a commit made locally. (This paragraph claimed git hooks until R7,
 2026-09-05, which is a stronger claim than the repo can support. Corrected
 rather than made true: installing git hooks nobody asked for is a change to
-how contributors work, not a documentation fix. `run.sh lint` /
-`.\run.ps1 lint` and CI run the same guard, and CI is what actually gates
-a push.)
+how contributors work, not a documentation fix. CI is what actually gates a
+push.)
 If you find yourself wanting to violate one, stop and raise it instead.
 
 1. **`src/model/`, `src/policy/` and `src/core/` may NEVER import `google.genai`,
@@ -152,50 +151,39 @@ Therefore:
 - Time helpers live in `src/core/clock.py`. Nothing else calls `datetime.now()` —
   tests must be able to freeze the clock.
 
-## Context discipline across sessions
+## Working discipline
 
-Claude Code starts every session with no memory of the last one. The window
-does not carry over, and a bigger window would not help — the reset is the
-problem, not the size. State therefore lives in files, not in conversation.
+The goal is narrow and easy to drift away from. Two habits keep it honest.
 
-**Every session begins with `/orient`** — read `STATE.md`, answer its six
-drift-check questions, restate today's gate. Do not reconstruct the goal
-from source files; that is how this becomes a generic dunning tool by day
-eight.
+**Decisions live in files, not in memory.** Anything that changes what the
+system does -- a threshold, a clause reading, a scope cut -- gets written
+down at the moment it is made, with its reasoning, not reconstructed later.
 
-**Every session ends with `/checkpoint`** — regenerate `STATE.md`, tick
-gates honestly, write the handoff.
+**Do not reconstruct the goal from the source.** The code will happily
+support a generic dunning tool; the thesis above is what makes it something
+else. Re-read this file before adding a feature.
 
 | File | Role | Read when |
 |---|---|---|
-| `STATE.md` | Current position + drift check. Under 180 lines | Every session, first |
-| `SESSIONS.md` | Append-only history, one line per session | Only when tracing how something happened |
-| `PLAN.md` | The 12-day schedule and gates | Every session, today's day only |
-| `PLAN_DETAIL.md` | File-by-file plan from the Opus planning session | Today's day only |
 | `DECISIONS.md` | Where a model was used and where it wasn't | When making or revisiting a design choice |
 | `POSTMORTEM.md` | What broke during the build | When something breaks |
+| `WHAT_BROKE.md` | The short version of the same | For the highlights |
+| `reports/gates.md` | Every acceptance gate and its evidence | When checking a claim |
 
-**Keeping the window usable within a session:**
+**Keeping the evidence trail usable:**
 
-- Delegate anything log-heavy to the `eval-runner` subagent. Batch output
-  must never enter the main context — that is the single largest lever.
-- Never paste a CSV or a full test log. Write a script that prints a summary.
-- Use read-only review subagents (`stats-reviewer`, `money-auditor`,
-  `payments-domain`, `compliance-auditor`) so exploration burns their context,
-  not yours.
-- `/clear` between days. **Never `/compact` mid-task** — compaction silently
-  drops invariants, and you will not notice which ones.
+- Batch output belongs in a file, never pasted into a review thread --
+  write a script that prints a summary instead.
+- Never paste a CSV or a full test log into a discussion.
 - If you find yourself re-explaining a constraint, it belongs in a
-  `CLAUDE.md` — the root one, or the directory-local one.
-- **Never spawn the general-purpose subagent.** It has no scoped
-  instructions, so it reads broadly to work out what it is doing, and that
-  reading is billed. Use a named subagent from `.claude/agents/`, or do the
-  work in the main session.
+  `DESIGN.md` -- the root one, or the directory-local one.
 
 ## Definition of done for any module
 
-1. Tests written before implementation (use the `test-writer` subagent)
+1. Tests written before implementation
 2. `python scripts\guard_invariants.py --all` exits 0
-3. `.\run.ps1 test` passes
-4. If it touches money or the ledger: reviewed by the `money-auditor` subagent
-5. If it touches a regulatory constraint: reviewed by `compliance-auditor`
+3. `.un.ps1 test` passes
+4. If it touches money or the ledger: a dedicated review pass over the diff,
+   covering amounts, idempotency and ledger ordering
+5. If it touches a regulatory constraint: a review pass against the clause
+   table above, clause by clause

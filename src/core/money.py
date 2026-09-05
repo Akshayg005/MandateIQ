@@ -1,5 +1,5 @@
 """Integer-paise arithmetic. The only module allowed to format currency for
-display (CLAUDE.md, src/core/CLAUDE.md). No float ever leaves this module.
+display (DESIGN.md, src/core/DESIGN.md). No float ever leaves this module.
 """
 from __future__ import annotations
 

@@ -102,7 +102,7 @@ def test_render_prompt_does_not_leak_forbidden_columns(bench_module):
     not merely declared."""
     row = {
         # Every allowed column -- render_prompt now RAISES on a missing
-        # PROMPT_FIELD (stats-reviewer, 2026-08-31), so a partial row would
+        # PROMPT_FIELD (the statistics review, 2026-08-31), so a partial row would
         # test incompleteness rather than leakage.
         "slot": 3,
         "in_salary_window": 1,
@@ -222,7 +222,7 @@ def test_p95_raises_on_empty_list(bench_module):
 
 
 def test_cost_per_1k_paise_returns_integer(bench_module):
-    """cost_per_1k_paise returns an int (root CLAUDE.md invariant 2: all
+    """cost_per_1k_paise returns an int (root DESIGN.md invariant 2: all
     money is integer paise -- a float touching a money value is a bug)."""
     result = bench_module.cost_per_1k_paise(
         prompt_tokens=100,
@@ -240,7 +240,7 @@ def test_cost_per_1k_paise_returns_integer(bench_module):
 def test_cost_per_1k_paise_requires_an_explicit_fx_rate(bench_module):
     """usd_inr_paise is required, not defaulted. Gemini is priced in USD and
     this repo reports paise; a default would mean an exchange rate invented
-    inside the benchmark and silently baked into a published table. PLAN.md:
+    inside the benchmark and silently baked into a published table. The project plan:
     "Never fabricate a number." The caller must state the rate it used, so
     the table can cite it."""
     with pytest.raises(TypeError):
@@ -530,7 +530,7 @@ def test_backoff_retries_a_429_and_excludes_the_wait_from_latency(bench_module, 
     )
 
 
-# --- Guards for the stats-reviewer findings (2026-08-31) ---------------------
+# --- Guards for the statistics review findings (2026-08-31) ---------------------
 
 
 def test_render_prompt_raises_on_a_missing_allowlist_field(bench_module):
@@ -777,7 +777,7 @@ def test_a_shrunk_plan_spends_its_whole_budget_on_repeats(bench_module):
 
 
 def test_shrinking_keeps_both_temperatures(bench_module):
-    """PLAN_DETAIL.md forbids running the LLM at temperature 0 only, and the
+    """the build spec forbids running the LLM at temperature 0 only, and the
     sharpest finding available is that variance at t=0.0 is NOT zero. Buying
     repeats by dropping a temperature would spend the arm's whole point."""
     temps = (0.0, 1.0)

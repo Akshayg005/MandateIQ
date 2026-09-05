@@ -3,7 +3,7 @@
 The one property that matters here is the one run.ps1 had to learn the hard
 way: **a task must exit NON-ZERO when the thing it ran failed.** run.ps1's
 `Invoke-Step` exists because a bare call as a switch branch's last statement
-returned 0 on a red test suite, which made CLAUDE.md's own definition-of-done
+returned 0 on a red test suite, which made DESIGN.md's own definition-of-done
 step 3 ("`.\\run.ps1 test` passes before any commit") unfalsifiable for
 several blocks (run.ps1:157-165; reports/gates.md:597-600). A second runner
 that quietly reproduced that bug would make the same claim unfalsifiable on

@@ -8,7 +8,7 @@
  * output, not hard-coded". `tsc` proves the props type-check and `vite build`
  * proves it bundles; neither can tell a figure read from results.json apart
  * from a number typed into a component -- and a previous draft of this page
- * did exactly that, carrying PLAN.md's storyboard placeholders ("ladder kills
+ * did exactly that, carrying the project plan's storyboard placeholders ("ladder kills
  * 14") into shipped copy, wrong by a factor of six.
  *
  * So this check works from both ends: it asserts the REAL figures appear, and
@@ -165,7 +165,7 @@ need(counters, "NPCI", "counters");
 need(results, "Razorpay", "results");
 
 // --- the placeholders must NOT ----------------------------------------------
-// PLAN.md's storyboard numbers, written months before B13 produced a result.
+// the project plan's storyboard numbers, written months before B13 produced a result.
 // If any of these reappears, someone has typed a number into a component.
 for (const [label, html] of [
   ["counters", counters],

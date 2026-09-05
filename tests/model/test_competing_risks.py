@@ -108,7 +108,7 @@ def _simple_estimable_frame() -> tuple[pd.DataFrame, pd.DataFrame]:
         for in_window in [False, True]:
             for outcome_cycle in range(25):
                 mandate_id = f"M_est_{idx:04d}"
-                # CAUTION, found by stats-reviewer (not anticipated up
+                # CAUTION, found by the statistics review (not anticipated up
                 # front): `idx % 4` here -- the first version of this fix --
                 # is a PERFECT bijection with `outcome_cycle % 4` (the
                 # outcome assignment below), because 25 (this loop's own
@@ -154,7 +154,7 @@ def _simple_estimable_frame() -> tuple[pd.DataFrame, pd.DataFrame]:
 
                 # ceiling_paise must be >= amount_paise (clause 4(c),
                 # eval/corpus.py's assert_legal()) -- found by
-                # stats-reviewer: _mandate()'s own default (100_000) is
+                # the statistics review: _mandate()'s own default (100_000) is
                 # below 3 of the 4 _AMOUNT_BAND_SAMPLES values, which would
                 # otherwise construct a clause-4(c)-illegal mandate.
                 mandate = _mandate(
@@ -1043,7 +1043,7 @@ def test_design_matrix_category_dummies_credit_card_bill():
 
 def test_design_matrix_raises_on_unrecognized_category():
     """An unrecognized category value must raise, not silently score as the
-    reference level. CORRECTED by stats-reviewer, 2026-09-04: an earlier
+    reference level. CORRECTED by the statistics review, 2026-09-04: an earlier
     version of this test asserted the OPPOSITE (silent tolerance) as the
     intended contract; review found that a typo'd category -- or None/NaN,
     which `.astype(str)` turns into the literal string "None"/"nan" -- would
@@ -1232,7 +1232,7 @@ def test_fit_with_widened_feature_columns_succeeds():
     CONVERGED -- not merely returned without raising. statsmodels reports a
     ConvergenceWarning (not an exception) on a near-singular design, so a
     test asserting only "did not raise" would still pass against a garbage
-    fit; found by stats-reviewer, who showed a nearby stride choice in this
+    fit; found by the statistics review, who showed a nearby stride choice in this
     same fixture produces exactly that (silently-passing, non-converged)
     failure mode. This assertion is what makes a FUTURE fixture regression
     fail loudly instead of silently."""
@@ -1250,7 +1250,7 @@ def test_fit_with_widened_feature_columns_succeeds():
 
 
 def test_simple_estimable_frame_amount_band_is_not_a_bijection_with_outcome():
-    """Regression test for the exact bug stats-reviewer found: an earlier
+    """Regression test for the exact bug the statistics review found: an earlier
     version of _simple_estimable_frame() derived amount_paise from `idx % 4`,
     which -- because this fixture's own inner loop runs range(25) and
     25 = 4*6+1 -- made the amount band a PERFECT bijection with
@@ -1275,7 +1275,7 @@ def test_simple_estimable_frame_amount_band_is_not_a_bijection_with_outcome():
         assert n_outcomes > 1, (
             f"amount_paise={amount_paise} co-occurs with only one "
             f"event_code -- this is the exact perfect-separation bug "
-            f"stats-reviewer found; every amount value must see multiple "
+            f"the statistics review found; every amount value must see multiple "
             f"outcomes in this fixture"
         )
     for category, group in estimable.groupby("category", observed=True):

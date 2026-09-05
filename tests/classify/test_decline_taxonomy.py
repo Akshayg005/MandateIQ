@@ -43,7 +43,7 @@ DECLINE_TABLE = [
     (None, None, DeclineClass.UNKNOWN),
     ("", "", DeclineClass.UNKNOWN),
     # --- text-only (code=None) real Razorpay description strings ----------
-    # payments-domain's B3 review demonstrated that with code stripped, the
+    # the payments-domain review's B3 review demonstrated that with code stripped, the
     # ORIGINAL keyword lists (built mostly from underscored error_reason
     # tokens) collapsed every one of these to UNKNOWN, because the real
     # human-readable description often doesn't contain the enum token at
@@ -118,7 +118,7 @@ def test_insufficient_funds_and_mandate_revoked_are_never_the_same_class():
     assert revoked == DeclineClass.MANDATE_REVOKED
 
 
-# --- cross-field contamination (found by payments-domain's B3 review) ------
+# --- cross-field contamination (found by the payments-domain review's B3 review) ------
 
 def test_payment_cancelled_naming_the_mandate_is_not_mandate_revoked():
     """A per-attempt cancel (customer backed out of THIS collect request)

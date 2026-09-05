@@ -1,6 +1,6 @@
 """DeclineClass -> prior probability distribution over the three latent
 causes. Doubles as the P(e|c) likelihood term the allocator's belief update
-will consume (PLAN_DETAIL.md Sec 4: `update(b,e)[c] ~ b[c]*P(e|c)`, comment
+will consume (the build spec Sec 4: `update(b,e)[c] ~ b[c]*P(e|c)`, comment
 "P(e|c) from cause_map.prior()") -- exact under Bayes' rule only given a
 flat prior over causes, an explicit, disclosed simplification appropriate
 for a hand-authored starting point.
@@ -12,7 +12,7 @@ belongs entirely to them now. This narrows an earlier, broader version of
 this paragraph ("B5/B6 supersede this with fitted hazards; nothing
 downstream of B5 should still be reading this file") that was written
 specifically about that outcome-hazard role and, read literally, forbade
-every downstream read -- which turned out to contradict PLAN_DETAIL.md
+every downstream read -- which turned out to contradict the build spec
 section 4:999's own comment above naming `cause_map.prior()` as the belief
 update's likelihood source. src/policy/belief.py reads `prior()` at B7,
 explicitly, to invert it into a cause-conditioned likelihood -- that is the
@@ -29,12 +29,12 @@ These numbers are a provisional, hand-authored starting point (payments-
 domain's review is expected to push on them), not a fitted estimate.
 
 UNKNOWN and ISSUER_DECLINE are skewed toward CANT_PAY_NOW, not uniform,
-per .claude/skills/new-failure-class/SKILL.md's explicit policy for a
+per docs/new-failure-class.md's explicit policy for a
 genuinely ambiguous class: "map it to CANT_PAY_NOW (the safe default: we
 retry rather than offer an exit)". This corrects an earlier version of this
 file that gave both classes exactly/near-uniform mass, following a
 different (also-defensible-sounding, but wrong for THIS project) instinct
-that "no signal" should mean "no opinion" -- found by payments-domain's B3
+that "no signal" should mean "no opinion" -- found by the payments-domain review's B3
 review, which pointed out the three causes are not symmetric in
 consequence: CANT_PAY_NOW costs a retry slot (cheap, reversible), WONT_PAY
 routes toward an off-ramp offer (not reversible in the same way), so

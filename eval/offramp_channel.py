@@ -195,7 +195,7 @@ def _repeat_rate(log: list[tuple[str, bool, bool]]) -> dict[str, Any]:
     """Among mandates whose TRUE cause is NOT WONT_PAY, how often did the
     channel fire on that mandate TWO OR MORE times?
 
-    This is the number stats-reviewer's HIGH finding (2026-09-05) argues
+    This is the number the statistics review's HIGH finding (2026-09-05) argues
     the main quality grid never measures: it holds within-mandate
     dependence fixed at zero (`fires()` draws an independent Bernoulli each
     call), while the singleton off-ramp rule needs roughly two coincident
@@ -250,7 +250,7 @@ def _point(kind: str, tpr: float, fpr: float, *, base_cfg, costs, hazard,
             hazard=hazard, costs=costs, gate=gate, gate_kind=gate_kind,
             channel=channel,
         ))
-        # R5 review pass, 2026-09-05 (stats-reviewer): namespaced by seed,
+        # R5 review pass, 2026-09-05 (the statistics review): namespaced by seed,
         # not the bare mandate_id `channel.log` stores. The frozen
         # simulator reuses "M0000".."M0199" every seed, so 8 seeds'
         # unqualified logs concatenate into 200 clusters instead of 1,600 --
@@ -335,7 +335,7 @@ def _point(kind: str, tpr: float, fpr: float, *, base_cfg, costs, hazard,
     }
 
 
-# R5 REVIEW PASS, 2026-09-05 (stats-reviewer, HIGH; see WontPayChannel's
+# R5 REVIEW PASS, 2026-09-05 (the statistics review, HIGH; see WontPayChannel's
 # own docstring for the mechanism). At the pre-registered operating point's
 # fpr (0.15), all four values are >= fpr, so `_effective_fpr()`'s marginal
 # guarantee holds EXACTLY at every row -- `repeat_false_fire`'s rate is the

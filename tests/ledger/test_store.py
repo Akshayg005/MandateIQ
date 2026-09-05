@@ -18,7 +18,7 @@ implementer):
   state='INTENT' already exists (mirrors "ON CONFLICT DO NOTHING -> 0 rows
   -> this attempt already exists"), and returns the new integer ledger_id
   otherwise. This directly implements the write-ordering protocol's dedup
-  step, and is the one CLAUDE.md-relevant behaviour in this file: the same
+  step, and is the one DESIGN.md-relevant behaviour in this file: the same
   INTENT must never insert twice, or a retried write could double-charge.
 - `latest_state` raises LookupError for a mandate with no mandate_lifecycle
   rows at all -- every real mandate has at least a CREATED row, so silently

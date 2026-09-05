@@ -12,7 +12,7 @@ Use the `/log-incident` skill. Format:
 
 **When:** Block B2, 2026-08-26, minutes after the freeze commit (`8321406`).
 
-**Symptom:** `payments-domain` — dispatched as B2's required gate review,
+**Symptom:** the payments-domain review — dispatched as B2's required gate review,
 same session, before any file under `src/policy/` existed — reported that a
 real batch run of the `coupled` arm recovered ₹3,91,412, roughly 1.7× the
 total liquidity (₹2,30,732) that existed across all 50 simulated households.
@@ -353,7 +353,7 @@ executor, on the money path, after two auditors had already signed off on
 a different design. Neither is something to bolt on at the end of a block.
 
 What settled it is this project's own refrain, quoted in
-`src/execute/recover.py`'s docstring and `PLAN_DETAIL.md` §1: **a
+`src/execute/recover.py`'s docstring and the build spec §1: **a
 double-charge is worse than ten missed recoveries.** The optimisation
 traded exactly that way — ten missed recoveries for one double charge — so
 it goes. `recover.py` is back to B9 semantics, keeping only the
@@ -404,7 +404,7 @@ string, so once a key reaches it, no scan in `recover.py` — not
 `_stuck_keys` (wrong `reason`) — ever examines that key again, for any
 number of future `reconcile()` calls, ever. The design correctly refuses to
 free the NPCI slot on an unconfirmed outcome ("a double-charge is worse
-than ten missed recoveries," CLAUDE.md), so no money-safety invariant is
+than ten missed recoveries," DESIGN.md), so no money-safety invariant is
 violated — but the *reporting* invariant is: a real, later-confirmable
 charge is permanently misfiled as unresolved, with no code path that will
 ever correct it, even though `razorpay_client.py`'s own docstring already
@@ -659,7 +659,7 @@ idempotency and crash-recovery surface — every test that exists to prove the
 ledger write happens before the money action, that an attempt cannot double-
 charge, and that a crash mid-flight resolves rather than hangs.
 
-CLAUDE.md's definition of done, step 3, is "`.\run.ps1 test` passes before
+DESIGN.md's definition of done, step 3, is "`.\run.ps1 test` passes before
 any commit". That step was satisfiable, green, and signed off, without ever
 running the money path.
 
@@ -674,7 +674,7 @@ were the ones that did not.
 **Why it survived this long:** it never produced a red line. Every session
 that ran the suite with Docker down saw green, and the skip count sat in a
 summary line that reads as noise. The pass/skip counts were even copied into
-`STATE.md` at each checkpoint — "781 passed, 132 skipped" — where they were
+the status notes at each checkpoint — "781 passed, 132 skipped" — where they were
 recorded faithfully and read by nobody as a problem, including by me.
 
 This is the same defect class as the `Invoke-Step` bug found in the B13
@@ -795,7 +795,7 @@ still be caught by this same test, at the assertion that matters.
 **When:** Post-B16 remediation, block R2, 2026-09-04, same day as Incident 11
 
 **Symptom:** R2's fix for the DEAD/OPTED_OUT terminal-outcome bug (Incident
-11's context) was sent to `payments-domain` for adversarial review before
+11's context) was sent to the payments-domain review for adversarial review before
 the gate was ticked. The review's central claim: `belief.observe_terminal()`
 collapsed belief to an exact `(1.0, 0.0, 0.0)` posterior on the reasoning
 "an observed DEAD outcome means CANT_PAY_EVER -- that is what the cause

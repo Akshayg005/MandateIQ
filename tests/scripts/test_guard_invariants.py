@@ -9,14 +9,14 @@ main() must exit 2, not 0. Found during the 2026-08-29 vacuous-checks audit
 pass... say so loudly rather than exiting 0," but the code returned 0
 anyway -- the intent was right, the return value was not. Confirmed
 empirically the same day that a genuine violation's exit-2 stderr surfaces
-fully as a PostToolUse hook message; exit 0 has no such proof and the Stop
+fully as a blocking write-guard message; exit 0 has no such proof and the Stop
 hook's own documented contract (exit 0 -> debug log only) is the same
 family of risk. This test is the regression guard for that fix, not a
 docstring pinning a pre-existing behaviour.
 
 The rest of guard_invariants.py (LLM-import / float-money / live-key /
 hard-cancel detection) is exercised indirectly all session via the
-PostToolUse hook itself, not duplicated here.
+write-guard itself, not duplicated here.
 """
 from __future__ import annotations
 

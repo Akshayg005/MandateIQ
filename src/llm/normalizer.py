@@ -31,7 +31,7 @@ NORMALIZER_MODEL = os.environ.get("MODEL_NORMALIZER", "gemini-3.5-flash-lite")
 # Named rather than a bare literal so it can be folded into
 # NORMALIZER_VERSION below: a threshold change is a behaviour change, and
 # should invalidate cached golden-set answers exactly like a prompt edit
-# does (payments-domain review, 2026-08-31 -- the version hash previously
+# does (the payments-domain review, 2026-08-31 -- the version hash previously
 # covered only the prompt text and tool schema, so this constant, and a
 # MODEL_NORMALIZER env override, could both change without busting the
 # cache, letting a stale answer silently pass as current).
@@ -109,7 +109,7 @@ class NormalizedDecline:
     raw_sha256: str
     # The model's own self-reported confidence, kept alongside `value`
     # rather than only consumed and discarded -- an auditable verdict must
-    # be able to show WHY, not just what (payments-domain review,
+    # be able to show WHY, not just what (the payments-domain review,
     # 2026-08-31: "anything that cannot be replayed cannot be disputed").
     # Persisted to normalized_decline.confidence (src/ledger/schema.sql).
     confidence: float
@@ -163,7 +163,7 @@ def normalize(raw: str, *, client: GeminiLike | None = None) -> NormalizedDeclin
     # client.py's own discipline is to treat an anomaly as an error, never
     # to coerce it into the MOST PERMISSIVE plausible value. Defaulting to
     # 0.0 forces UNKNOWN on that anomaly instead of silently trusting an
-    # answer nothing actually vouched for (payments-domain review,
+    # answer nothing actually vouched for (the payments-domain review,
     # 2026-08-31: the original 1.0 default was "the wrong direction").
     confidence = float(result.get("confidence", 0.0))
     if confidence < _CONFIDENCE_FLOOR:

@@ -14,7 +14,7 @@ function needs, with no separate read-then-write and therefore no window
 for a second caller to interleave.
 
 Every comparison against "now" uses src.core.clock.now(), never Postgres's
-own now() -- CLAUDE.md: "Nothing else calls datetime.now() -- tests must be
+own now() -- DESIGN.md: "Nothing else calls datetime.now() -- tests must be
 able to freeze the clock." A lease TTL test that could not freeze time
 would need real wall-clock sleeps to prove expiry.
 """

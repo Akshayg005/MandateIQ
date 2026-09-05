@@ -1,12 +1,12 @@
 """Golden evaluation: score src/llm/normalizer.py and src/llm/intent.py
 against hand-labeled data. Run via `.\\run.ps1 golden` -- NOT wired into the
-Stop hook, despite PLAN_DETAIL.md B11's literal wording ("golden set ...
-wired into the Stop hook"): even cached, the FIRST run after any prompt edit
+pre-commit gate, despite the build spec B11's literal wording ("golden set ...
+wired into the pre-commit gate"): even cached, the FIRST run after any prompt edit
 still costs ~5.5 minutes of live calls (the cache only helps on UNCHANGED
 prompts), which is a bad fit for something that has to finish before a
 session can end. Deliberate deviation, not an oversight -- flagged for
-confirmation, not silently decided either way (payments-domain review,
-2026-08-31, caught this docstring claiming the PLAN_DETAIL wording as if it
+confirmation, not silently decided either way (the payments-domain review,
+2026-08-31, caught this docstring claiming the build spec wording as if it
 were what was actually built).
 
 Cached, by design (DECISIONS.md, 2026-08-30): the live edge is rate-limited
@@ -22,7 +22,7 @@ mode this project has amended gates over before (reports/gates.md, B8).
 
 The cache stores MODEL OUTPUT only, never labels -- eval/golden/declines.jsonl
 and intent.jsonl are hand-authored and must never be regenerated from model
-output (PLAN_DETAIL.md's explicit "Must NOT" for those files). golden_check
+output (the build spec's explicit "Must NOT" for those files). golden_check
 always reports cache hits/misses/live-calls-made, so a green run can never be
 silently misread as "the model was consulted" when it mostly wasn't.
 
@@ -32,12 +32,12 @@ a false MANDATE_REVOKED verdict, a false CUSTOMER_DECLINED one (R5,
 2026-09-05: the WONT_PAY-dominant class, so a false one routes a paying
 customer toward an off-ramp offer), or false-off-ramping a paying customer
 from support text, must still fail. This is what "must NOT pass on a tie with a lowered
-threshold" (PLAN_DETAIL.md B11) means in practice: the threshold cannot be
+threshold" (the build spec B11) means in practice: the threshold cannot be
 gamed by averaging away the one confusion this system exists to prevent.
 
 The decline check gates on ANY false MANDATE_REVOKED, not only the
 INSUFFICIENT_FUNDS<->MANDATE_REVOKED swap it originally checked -- widened
-2026-08-31 after payments-domain review found the narrow version blind to
+2026-08-31 after the payments-domain review found the narrow version blind to
 e.g. UNKNOWN->MANDATE_REVOKED, which is the actual failure the escalation
 path produced on eval/golden/declines.jsonl's payment_cancelled row (a
 string decline_taxonomy.py deliberately leaves UNKNOWN rather than guesses
@@ -48,7 +48,7 @@ MANDATE_REVOKED missed, i.e. still attempting a dead mandate) is a real,
 different cost too, but is intentionally NOT zero-tolerance here, matching
 how the intent check gates only the false-off-ramp direction: this project
 reports both error costs but gates only the one a false positive cannot
-walk back (money-auditor's framing, same principle applied here).
+walk back (the money audit's framing, same principle applied here).
 
 Only 12 of these 56 rows would actually reach the LLM in production
 (decline_taxonomy.py's classify() answers the other 44 confidently) -- a
@@ -96,7 +96,7 @@ class DeclineResult:
     # MANDATE_REVOKED, not only from INSUFFICIENT_FUNDS. Zero-tolerance for
     # the same reason -- a false MANDATE_REVOKED stops retrying a mandate
     # that may still be alive, regardless of which class it was confused
-    # from (payments-domain review, 2026-08-31; see module docstring).
+    # from (the payments-domain review, 2026-08-31; see module docstring).
     any_to_mandate_revoked_confusions: int
     # R5, 2026-09-05: the same zero-tolerance treatment for the OTHER
     # unwalkable-back error this taxonomy can now make. CUSTOMER_DECLINED
@@ -104,7 +104,7 @@ class DeclineResult:
     # off-ramp gate reachable; a FALSE one does not merely mis-label a row,
     # it pushes belief toward the {WONT_PAY} singleton that fires an
     # off-ramp offer at a customer who was always going to pay -- the
-    # precise harm root CLAUDE.md's safety-design section exists to
+    # precise harm root DESIGN.md's safety-design section exists to
     # prevent. Directional, exactly like the field above: the reverse error
     # (a real CUSTOMER_DECLINED missed) costs a retry slot, not a customer,
     # and is reported through aggregate accuracy rather than gated to zero.
@@ -332,8 +332,7 @@ def freshness_report() -> tuple[bool, str]:
     been scored against the live models for the prompts currently in the
     tree, and `.\\run.ps1 golden` should be run before shipping. Never fatal
     -- see main()'s --check-freshness handling and the module docstring on
-    why this is not in the Stop hook's blocking path (payments-domain
-    review, 2026-08-31).
+    why this is not in the pre-commit gate's blocking path (the payments-domain review, 2026-08-31).
     """
     from src.llm.intent import INTENT_VERSION
     from src.llm.normalizer import NORMALIZER_VERSION
@@ -374,7 +373,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if "--check-freshness" in argv:
         # Advisory only -- see check_freshness()'s docstring. Runs no live
-        # calls, so it's cheap enough for the Stop hook / `ci` to call on
+        # calls, so it's cheap enough for the pre-commit gate / `ci` to call on
         # every session end without adding the multi-minute cost caching
         # was built to avoid. Always exits 0: warns, never blocks.
         ok, detail = freshness_report()
@@ -416,7 +415,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # Escalation-only subset: rows the deterministic taxonomy itself leaves
     # UNKNOWN, i.e. the only rows normalize() actually sees in production
-    # (payments-domain review, 2026-08-31 -- 38/50 rows are answered
+    # (the payments-domain review, 2026-08-31 -- 38/50 rows are answered
     # confidently by classify() and never reach the LLM at all). Reuses
     # decline_cache, already fully populated by the pass above -- zero extra
     # live calls, no_cache=False regardless of the outer flag since these
@@ -439,7 +438,7 @@ def main(argv: list[str] | None = None) -> int:
     # never reach normalize() in production (decline_taxonomy.classify()
     # answers them first), so an aggregate-only gate can clear its floor
     # while doing badly on the 12 rows that are the component's actual job
-    # (payments-domain review, 2026-08-31; DECISIONS.md same date). Reuses
+    # (the payments-domain review, 2026-08-31; DECISIONS.md same date). Reuses
     # DECLINE_ACCURACY_FLOOR rather than a second invented number -- this
     # project derives thresholds where it can (B8's gate_criteria) and
     # otherwise reuses an existing, already-disclosed judgment call rather

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Pre-registration guard. Cross-platform.
 
-Runs as a Claude Code PreToolUse hook. Denies any write under eval/frozen/.
+Runs as an editor/pre-commit write guard. Denies any write under eval/frozen/.
 
 Why this exists: the most common way an ML demo fools itself is tuning the
 evaluation until the policy wins. We commit the simulator config and the
@@ -10,15 +10,14 @@ the commit hash in reports/FREEZE_HASH. This hook turns that promise into
 something mechanically enforced.
 
 If a change to the frozen eval is genuinely necessary, that is a decision
-logged in DECISIONS.md and made by a human editing the file outside a Claude
+logged in DECISIONS.md and made by a human editing the file outside the
 session -- not something an agent does mid-task on day eight.
 
 Usage:  python scripts/guard_frozen.py [FILE ...]
-Paths come from argv, CLAUDE_FILE_PATHS, or stdin JSON -- shell-independent.
+Paths come from argv, MANDATEIQ_FILE_PATHS, or stdin JSON -- shell-independent.
 """
 from __future__ import annotations
 
-import json
 import os
 import pathlib
 import sys
@@ -32,7 +31,7 @@ FROZEN = "eval/frozen/"
 def candidates() -> list[str]:
     # Deliberately does NOT fall back to git here: a git fallback would list
     # every changed file and could deny an unrelated edit. For a *deny* hook,
-    # a false positive is worse than a miss, and the PostToolUse guard plus
+    # a false positive is worse than a miss, and the write-guard plus
     # the Day-1 hash check catch anything that slips through.
     for fn in (_from_argv, _from_env, _from_stdin):
         got = fn()
@@ -52,22 +51,12 @@ def main() -> int:
 
         if FROZEN in rel:
             print(
-                json.dumps(
-                    {
-                        "hookSpecificOutput": {
-                            "hookEventName": "PreToolUse",
-                            "permissionDecision": "deny",
-                            "permissionDecisionReason": (
-                                f"{rel} is inside eval/frozen/, pre-registered before "
-                                "any policy code was written (see reports/FREEZE_HASH). "
-                                "Editing it invalidates every number in the report. "
-                                "If this change is truly required, log it in "
-                                "DECISIONS.md and make it manually outside a Claude "
-                                "session."
-                            ),
-                        }
-                    }
-                )
+                f"{rel} is inside eval/frozen/, pre-registered before "
+                "any policy code was written (see reports/FREEZE_HASH). "
+                "Editing it invalidates every number in the report. "
+                "If this change is truly required, log it in DECISIONS.md "
+                "and make it manually, outside this guard.",
+                file=sys.stderr,
             )
             print(f"DENIED: {rel} is frozen.", file=sys.stderr)
             return 2

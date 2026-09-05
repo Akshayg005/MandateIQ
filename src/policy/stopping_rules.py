@@ -2,9 +2,9 @@
 revoked-never-retried -- the hard stopping rules that gate every action the
 allocator considers. A DENY here is final: `allocator.py` must exclude a
 denied action from A(b, r, ctx) entirely, never merely warn and proceed
-(src/policy/CLAUDE.md; the B8 file table's own "Must NOT: be advisory").
+(src/policy/DESIGN.md; the B8 file table's own "Must NOT: be advisory").
 
-Also defines AllocationContext, the state PLAN_DETAIL.md section 4 calls
+Also defines AllocationContext, the state the build spec section 4 calls
 `ctx` -- belief lives separately (src/policy/belief.py), but everything else
 the Q-function and the stopping rules need (amount, ceiling, category,
 attempts already spent, days already committed, contacts already sent,
@@ -94,7 +94,7 @@ class AllocationContext:
 
     def signature(self) -> tuple:
         """Hashable projection used as the memo key's ctx component
-        (PLAN_DETAIL.md:1022, `(quantised(b, 1e-6), r, ctx.signature())`).
+        (the build spec, `(quantised(b, 1e-6), r, ctx.signature())`).
         Every field that can vary the feasible action set or a Q-value must
         appear here, or two distinct contexts would collide in the memo and
         silently share a cached value that does not apply to both. --

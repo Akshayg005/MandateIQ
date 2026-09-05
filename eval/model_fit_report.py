@@ -18,7 +18,7 @@ validation (`_grouped_cv_diffs`) over disjoint, non-overlapping folds that
 together cover the whole corpus -- NOT from repeatedly re-splitting the same
 fixed corpus with different random seeds and treating the per-seed results
 as independent samples. That was tried first and is a real statistical trap
-(DECISIONS.md, B5, stats-reviewer CONFIRMING pass, finding 1): with ~90%
+(DECISIONS.md, B5, the statistics review CONFIRMING pass, finding 1): with ~90%
 overlapping test sets across seeds, `SD/sqrt(n_seeds)` is not a standard
 error at all -- it is a function of how many seeds you choose to loop over,
 demonstrated by the reported t-statistic scaling from -9.56 to -18.67 across
@@ -29,7 +29,7 @@ as a split-STABILITY check (mean, SD, win-count) -- explicitly not a source
 of dispersion for any t-stat or verdict.
 
 Transfer-degradation numbers score BOTH the full model and the intercept-
-only null on each transfer frame (DECISIONS.md, B5 stats-reviewer entry,
+only null on each transfer frame (DECISIONS.md, B5 the statistics review entry,
 finding 3 -- scoring only the full model made a base-rate shift under
 `coupled` look like model skill; reporting relative to the null on the
 SAME frame removes that artifact).
@@ -72,7 +72,7 @@ def _schedule_frame(episodes) -> pd.DataFrame:
     were actually attempted) -- what src/model/paths.hazard_tensor()'s
     `schedule=` parameter needs to score an un-attempted slot from the
     real, pre-registered day rather than imputing one. Removes the
-    outcome-dependent-imputation leak stats-reviewer caught at B6
+    outcome-dependent-imputation leak the statistics review caught at B6
     (DECISIONS.md, 2026-08-28): without this, whether a slot's covariates
     are real or imputed depended on whether the episode SURVIVED to that
     slot, which is a deterministic function of the very outcome being
@@ -275,7 +275,7 @@ def main() -> None:
     cv_se = cv_sd / np.sqrt(len(cv_diffs))
     cv_t = cv_mean / cv_se if cv_se > 0 else float("nan")
     cv_df = len(cv_diffs) - 1
-    # CORRECTED, 2026-09-04 (stats-reviewer, reviewing eval/design_matrix_
+    # CORRECTED, 2026-09-04 (the statistics review, reviewing eval/design_matrix_
     # comparison.py's mirror of this exact function): the critical value
     # for a t-stat on cv_df=4 degrees of freedom is scipy.stats.t.ppf, not
     # the normal-approximation 2.0 -- at df=4 the real 95% two-sided value
@@ -334,7 +334,7 @@ def main() -> None:
     print("=== transfer degradation: full model AND null, scored on misspecified/coupled ===")
     print("(degradation reported relative to the null on the SAME transfer frame --")
     print(" scoring only the full model conflates model skill with a base-rate shift")
-    print(" in the transfer arm's outcome mix; DECISIONS.md B5 stats-reviewer finding 3.")
+    print(" in the transfer arm's outcome mix; DECISIONS.md B5 the statistics review finding 3.")
     print(" NOTE: single point estimate at PRIMARY_SEED, no dispersion -- unlike the")
     print(" nominal-arm claim above, this has not been put through K-fold CV. Flagged,")
     print(" not fixed this session; DECISIONS.md B5 confirming-pass finding 5.)")
@@ -380,7 +380,7 @@ def main() -> None:
     print(" not a defect. It is NOT a bias-risk number: every one of these cells now gets")
     print(" its in_salary_window from the real committed schedule (schedule_df, threaded")
     print(" through hazard_tensor()), not a guess -- see eval/corpus.py's Episode.schedule")
-    print(" field and stats-reviewer's B6 finding 1 (DECISIONS.md, 2026-08-28) for why that")
+    print(" field and the statistics review's B6 finding 1 (DECISIONS.md, 2026-08-28) for why that")
     print(" fix mattered: the un-fixed fallback picked its guess based on which slot the")
     print(" episode SURVIVED to, which is a function of the very outcome being predicted.)")
     print()

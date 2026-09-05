@@ -1,14 +1,14 @@
 # Token prices for the B12 benchmark's cost-per-1k-decisions column.
 #
 # Every number here is quoted from a source, with the date it was read. The
-# benchmark table is a scored deliverable and PLAN.md's rule is absolute --
+# benchmark table is a scored deliverable and the project plan's rule is absolute --
 # "Never fabricate a number. A panel that catches one invented metric
 # discards everything else you built." A price guessed from memory would be
 # exactly that, so this file exists rather than a constant in the script.
 #
 # Prices are integer MICRO-USD per 1,000,000 tokens, not floats. Gemini is
 # quoted in dollars-per-million ("$0.30"); storing that as 300000 micro-USD
-# keeps root CLAUDE.md invariant 2 ("all money is integer paise, a float
+# keeps root DESIGN.md invariant 2 ("all money is integer paise, a float
 # touching a money value is a bug") true through the whole cost computation
 # rather than only at the final rounding. bench/ is outside the guard's
 # PROTECTED_DIRS, so this is discipline, not enforcement.

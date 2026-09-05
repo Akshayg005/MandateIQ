@@ -1,13 +1,12 @@
 """Prints decline_class coverage from `ingested_event` -- specifically the
-UNKNOWN rate, which payments-domain's B3 review flagged as "a reported
-metric" that nothing yet reports (PLAN_DETAIL.md's B3 section pre-concedes
+UNKNOWN rate, which the payments-domain review's B3 review flagged as "a reported
+metric" that nothing yet reports (the build spec's B3 section pre-concedes
 low taxonomy coverage on the condition that its rate is visible, not
 swallowed).
 
-Deliberately NOT wired into scripts/show_state.py (the SessionStart hook):
-that script must stay fast and must not fail a session start just because
-Docker/Postgres happens to be down, and it has no DB dependency today. This
-is a separate, on-demand check instead -- run it whenever the ingest
+Deliberately NOT wired into any startup path: those must stay fast and must
+not fail just because Docker/Postgres happens to be down, and they have no DB
+dependency today. This is a separate, on-demand check instead -- run it whenever the ingest
 pipeline has real rows to look at.
 
 Usage:

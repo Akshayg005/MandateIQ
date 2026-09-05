@@ -44,7 +44,7 @@ eval/allocator_sweep.py.
 
 === How an opt-out is rendered, and why it is not a decline ================
 
-CLAUDE.md's clause 6(c) row is explicit that OPTED_OUT is a distinct
+DESIGN.md's clause 6(c) row is explicit that OPTED_OUT is a distinct
 outcome, never folded into "declined". So a simulated opt-out is NOT sent as
 a decline string. It is recorded as a `mandate_lifecycle` REVOKED row
 effective before the attempt's scheduled time, which is what an opt-out
@@ -146,7 +146,7 @@ def _decision_record(index: int, d: run_mod.DecisionTrace) -> dict[str, Any]:
         "chosen_day": committed.on_day if committed else None,
         "amount_paise": committed.amount_paise if committed else None,
         # Formatted HERE, by money.fmt, because money.py is the only module
-        # allowed to render currency (CLAUDE.md invariant 2). The dashboard
+        # allowed to render currency (DESIGN.md invariant 2). The dashboard
         # is TypeScript, which guard_invariants.py cannot scan, so a
         # formatter written over there would be the same violation the guard
         # was widened to catch in eval/report.py -- in a language where

@@ -1,8 +1,8 @@
-"""Ledger-write-then-money, in that order, exactly per PLAN_DETAIL.md
-section 3's write-ordering protocol and CLAUDE.md invariant 3: the ledger
+"""Ledger-write-then-money, in that order, exactly per the build spec
+section 3's write-ordering protocol and DESIGN.md invariant 3: the ledger
 write happens BEFORE the money action, never after.
 
-THE LATE-READ PRINCIPLE (PLAN_DETAIL.md section 1, restated here because a
+THE LATE-READ PRINCIPLE (the build spec section 1, restated here because a
 future session that forgets the asymmetry will either debit a revoked
 mandate or reintroduce reactive retry): clause 6(a) constrains committing
 an attempt ahead of time; clause 6(c) REQUIRES that an opt-out arriving
@@ -13,7 +13,7 @@ pre-call check (step 2a below) has exactly one outcome available to it:
 abort. It never moves attempt.scheduled_for, never changes
 attempt.amount_paise, never adds a retry.
 
-The five steps, matching PLAN_DETAIL.md section 3 one-to-one:
+The five steps, matching the build spec section 3 one-to-one:
 
   1. INTENT row (ON CONFLICT DO NOTHING). 0 rows -> this attempt already
      exists -> jump straight to reflecting its current state, never to (3).
@@ -74,7 +74,7 @@ ABORT_REASON_LEASE_LOST = "ABORTED_LEASE_LOST"
 # src.classify.cause_map.prior() (DeclineClass -> a Cause belief-update
 # prior) -- this maps to Outcome, the ledger's own terminal-state column.
 # Not independently reviewed the way cause_map.py's mapping was at B3;
-# flagged for a payments-domain or stats-reviewer pass, not presented as
+# flagged for a payments-domain or statistics review pass, not presented as
 # already vetted.
 _DEAD_DECLINE_CLASSES = frozenset(
     {DeclineClass.MANDATE_REVOKED, DeclineClass.CARD_EXPIRED, DeclineClass.ACCOUNT_CLOSED}
@@ -228,7 +228,7 @@ def execute(
     if not lease.claim(conn, attempt.idempotency_key, owner=owner, ttl_seconds=lease_ttl_seconds):
         # We just wrote INTENT ourselves (ledger_id above), so by
         # construction no one else can hold a legitimate lease on this
-        # exact key yet -- a defensive path per PLAN_DETAIL.md section 3,
+        # exact key yet -- a defensive path per the build spec section 3,
         # not one normal operation should reach. We never held the lease,
         # so nothing to release; the row is not voided, since whoever DOES
         # hold it may still be legitimately processing it.

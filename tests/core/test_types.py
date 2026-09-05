@@ -6,9 +6,9 @@ Design decision this test file pins (documented since the module doesn't
 exist yet to document it itself): Outcome is an IntEnum with explicit
 values 0/1/2/3, because a downstream MNLogit survival model needs
 STILL_PENDING as event_code 0 (the reference category) -- see
-src/model/CLAUDE.md. Profile's member NAMES are lowercase (`strict`,
+src/model/DESIGN.md. Profile's member NAMES are lowercase (`strict`,
 `permissive`) to mirror COMPLIANCE_PROFILE=strict|permissive in .env and
-the exact spelling CLAUDE.md uses throughout, rather than the usual
+the exact spelling DESIGN.md uses throughout, rather than the usual
 upper-case enum convention.
 """
 from __future__ import annotations

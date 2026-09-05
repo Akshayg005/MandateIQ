@@ -22,7 +22,7 @@ own file, rather than every module importing src.core.ids directly, so:
 Must never import time, uuid, os, or random -- src.core.ids.idempotency_key
 already doesn't, and this file must not reintroduce non-determinism one
 layer up. Enforced by this module's own source-guard test, the same
-standard CLAUDE.md sets for src/core/ids.py.
+standard DESIGN.md sets for src/core/ids.py.
 """
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ class ScheduledAttempt:
     the executor reads back, possibly in a different process, any amount of
     time later. Deliberately mirrors the table's own columns 1:1 rather than
     hiding any of them behind a narrower view: the executor's pre-call late
-    read (PLAN_DETAIL.md section 1, B9's late-read principle) and void.py's
+    read (the build spec section 1, B9's late-read principle) and void.py's
     generation bump both need the full row, not a projection of it.
 
     action, profile: stored as the enum's own .value string, matching how

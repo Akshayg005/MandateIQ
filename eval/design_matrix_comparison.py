@@ -8,7 +8,7 @@ made.
 
 Three comparisons, following eval/model_fit_report.py's own established
 statistical discipline (see that module's docstring) rather than inventing
-a new one -- PLUS a correction to that discipline, found by stats-reviewer
+a new one -- PLUS a correction to that discipline, found by the statistics review
 on this file's first version, which also applies to model_fit_report.py's
 own `|t| > 2` check (not fixed there in this pass; disclosed in
 DECISIONS.md instead, since that file's own measured t=-6.32 clears both
@@ -374,7 +374,7 @@ def _write_report(
         f"df={cv_df} critical t at 95% is `{cv_crit:.3f}`, not the "
         f"normal-approximation 2.0 an earlier version of this script used "
         f"to claim significance it had not earned -- corrected here, "
-        f"stats-reviewer finding, 2026-09-04): mean(widened - narrow) = "
+        f"the statistics review finding, 2026-09-04): mean(widened - narrow) = "
         f"`{cv_mean:+.5f}`, SD = `{cv_sd:.5f}`, SE = `{cv_se:.5f}`, "
         f"t = `{cv_t:+.2f}`, widened beats narrow on {cv_wins}/{len(cv_diffs)} "
         f"folds. Per-fold (widened - narrow): `{np.round(cv_diffs, 5).tolist()}`. "
@@ -427,7 +427,7 @@ def _write_report(
         "outcomes by them."
     )
     lines.append("")
-    lines.append("### A documentation error, found by stats-reviewer, disclosed here")
+    lines.append("### A documentation error, found by the statistics review, disclosed here")
     lines.append("")
     lines.append(
         "The amount-band cut points (`_AMOUNT_BAND_CUT_1/2/3` in "

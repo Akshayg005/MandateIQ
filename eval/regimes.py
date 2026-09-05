@@ -5,7 +5,7 @@ result under it was seen (see the block's DECISIONS.md entry for the commit
 that fixes this file). A regime is a deviation from the frozen generative
 parameters, expressed as an OVERLAY on eval/frozen/sim_config.yaml -- never
 as an edit to it. `eval/frozen/` is immutable after the Day-1 freeze
-(CLAUDE.md invariant 4); a regime that needed to change the simulator's code
+(DESIGN.md invariant 4); a regime that needed to change the simulator's code
 would be a regime this harness is not entitled to run.
 
 That constraint is real and it shapes what a regime can say. The frozen

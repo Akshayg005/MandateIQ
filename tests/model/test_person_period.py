@@ -3,7 +3,7 @@ src/model/person_period.py -- reshape episodes into one row per (mandate, cycle,
 
 Design decision this file pins: slot 1 is synthesized (not read from episode.attempts),
 every at-risk slot gets exactly one row, and terminal/censoring status is encoded
-precisely per PLAN_DETAIL.md section 2 to enable correct likelihood for a right-censored
+precisely per the build spec section 2 to enable correct likelihood for a right-censored
 competing-risks model. The anti-pattern `y = (df.outcome == RECOVERED).astype(int)` is
 guarded against at the frame level, not silently passed through to a later fit().
 """
@@ -355,7 +355,7 @@ def test_validate_rejects_estimable_slot_mismatch():
     """estimable must equal (slot >= 2) -- a slot-2 row marked non-estimable
     (or a slot-1 row marked estimable) must raise, since B5 filters on this
     flag directly and a drift here would silently reopen the slot-1
-    contamination it exists to prevent (stats-reviewer, B4)."""
+    contamination it exists to prevent (the statistics review, B4)."""
     df = pd.DataFrame({
         "mandate_id": ["M_I", "M_I"],
         "cycle_id": [1, 1],
@@ -381,7 +381,7 @@ def test_validate_rejects_estimable_slot_mismatch():
 
 
 def test_censored_rows_are_not_encoded_as_failures():
-    """This test documents the hazard PLAN_DETAIL.md:685-689 warns against:
+    """This test documents the hazard the build spec-689 warns against:
     naive y = (df.outcome == RECOVERED).astype(int) would turn every censored
     STILL_PENDING row into a hard negative, biasing all downstream estimates.
 

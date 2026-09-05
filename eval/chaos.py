@@ -1,7 +1,7 @@
 """Induced-kill chaos harness (B10). Kills the executor at uniformly
 sampled points and checks what recovery does with the wreckage.
 
-WHY THE DENOMINATOR IS THE WHOLE POINT (PLAN_DETAIL.md section 8.2,
+WHY THE DENOMINATOR IS THE WHOLE POINT (the build spec section 8.2,
 finding 2). "50 kills, zero double-charges" is not evidence. The unsafe
 window -- SENT row written, provider call in flight -- is a few
 milliseconds wide inside an operation that spends most of its life doing
@@ -19,7 +19,7 @@ from where the kill was aimed. A harness that trusted its own aim would
 report the partition it intended rather than the one it produced.
 
 TWO WINDOWS THE LEDGER CANNOT TELL APART, which is itself a finding worth
-stating rather than modelling around. PLAN_DETAIL.md names "SENT ->
+stating rather than modelling around. the build spec names "SENT ->
 provider-ack" and "ack -> RESULT-commit" as separate windows. From the
 ledger they are one: the ack arriving is not written anywhere until the
 RESULT row is written, so "accepted, response still in flight" and

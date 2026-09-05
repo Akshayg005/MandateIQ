@@ -146,12 +146,11 @@ Trace any rupee from a failed debit to a retry and you never cross an amber
 box. That is a property of the repo, not a promise in a diagram —
 [`scripts/guard_invariants.py`](scripts/guard_invariants.py) exits non-zero
 if `src/model/`, `src/policy/` or `src/core/` imports `google.genai`,
-`anthropic` or `openai`. It runs three ways: as a **Claude Code**
-`PostToolUse` hook on every edit (declared in `.claude/settings.json`), as
-`./run.sh lint` / `.\run.ps1 lint`, and in CI on every push. It is *not* a
-git hook -- this sentence claimed one until R7, and `.git/hooks/` holds only
-the stock samples, so a commit made outside Claude Code was never blocked.
-CI is what actually gates a push.
+`anthropic` or `openai`. It runs two ways: as `./run.sh lint` /
+`.un.ps1 lint`, and in CI on every push. It is *not* a git hook -- this
+sentence claimed one until R7, and `.git/hooks/` holds only the stock
+samples, so a commit made locally was never blocked. CI is what actually
+gates a push.
 
 Three LLM calls exist, and each one is deliberately shaped so it *cannot*
 become a decision:
@@ -494,17 +493,11 @@ Indian payments or the statistics.
 | Path | What |
 |---|---|
 | `PROJECT_EXPLAINED.txt` | Plain-text explanation of the whole project |
-| `STATE.md` | **Read first every session** — position + drift check |
-| `SESSIONS.md` | Append-only session history |
-| `SETUP_GUIDE_WINDOWS.md` | Zero-to-Day-1, PowerShell, step by step |
 | `run.ps1` | Task runner (replaces make) |
-| `PLAN.md` | 12-day execution plan |
-| `OPUS_PROMPT.md` | Master spec prompt for Claude Code |
 | **`WHAT_BROKE.md`** | **Start here for the failures.** The readable digest of the two files below — the bugs that taught something and the review findings that changed a published number, in ~180 lines |
 | `DECISIONS.md` | Where a model was used, where one deliberately wasn't (~6,300 lines, the full record) |
 | `POSTMORTEM.md` | What broke during the build — all 12 incidents, in full |
-| `.claude/` | 8 subagents, 5 skills, 4 hooks |
 | `scripts/guard_*.py` | Invariants enforced mechanically, not by prose |
+| `docs/new-failure-class.md` | Checklist for adding a decline class to the taxonomy |
 | `eval/frozen/` | Pre-registered, immutable |
 | `docs/architecture.svg` | The diagram above — core in blue, LLM edge in amber |
-| `docs/VIDEO_SCRIPT.md` | The 5-minute walkthrough, shot list and take discipline |

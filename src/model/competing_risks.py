@@ -26,13 +26,13 @@ the fit used (all six columns for a full fit, just `const` for
 matrix a given model was fit against, regardless of what the model was.
 
 Design matrix -- the final, nominal-arm-only spec, as amended 2026-08-28 by
-stats-reviewer finding 4 (DECISIONS.md, B5 stats-reviewer entry):
+The statistics review finding 4 (DECISIONS.md, B5 the statistics review entry):
 `FEATURE_COLUMNS` (what `fit()` uses by default) is `const`, `slot_3`,
 `slot_4` (slot 2 is the reference level), `in_salary_window`. Two columns
 present in an earlier version of this design -- `days_since_last_attempt`
 and `slot3_x_in_salary_window` -- are excluded from `FEATURE_COLUMNS`.
 
-CAVEAT, added by the B5 stats-reviewer CONFIRMING pass, correcting the
+CAVEAT, added by the B5 the statistics review CONFIRMING pass, correcting the
 original reasoning above (do not repeat the original argument as
 precedent -- it is a category error): "the frozen simulator's `_draw_
 outcome` sets these coefficients to exactly zero" is true only CONDITIONAL
@@ -73,7 +73,7 @@ NOT the default either. `_design_matrix()` now also builds `amount_band_2`,
 `amount_band_3`, `amount_band_4` (quartile cuts of
 `eval/frozen/sim_config.yaml`'s own `below_afa_range` -- NOT "the only
 range fit() trains on": that claim was checked and found FALSE by
-stats-reviewer, 2026-09-04. `eval/corpus.py generate()` drops a mandate
+The statistics review, 2026-09-04. `eval/corpus.py generate()` drops a mandate
 above ITS OWN category's AFA limit, and the elevated categories carry a
 higher one (clause 8(b), Rs 1,00,000) than the standard one these cuts are
 quartiles of (clause 8(a), Rs 15,000) -- 316/7154 mandates (4.42%) in the
@@ -99,7 +99,7 @@ comparison, not in the base hazard logits. MEASURED
 out-of-fold per-row log-loss differences clustered by mandate_id, the
 properly-powered statistic; a naive 5-fold-MEAN t-test the first version of
 that script used was underpowered at df=4 and did NOT clear 95%, corrected
-after stats-reviewer caught it): all 18 of the new coefficients (6 columns
+after the statistics review caught it): all 18 of the new coefficients (6 columns
 x 3 non-reference outcomes) have a 95% CI including zero, and
 `WIDENED_FEATURE_COLUMNS` has WORSE held-out log-loss than
 `FEATURE_COLUMNS` -- mean(widened - narrow) = +0.00103, clustered
@@ -136,7 +136,7 @@ INTERCEPT_ONLY_COLUMNS: tuple[str, ...] = ("const",)
 # from that range alone, not tuned against any fit result.
 #
 # NOT "the only range fit() sees": a claim to that effect here was checked
-# and found FALSE by stats-reviewer (2026-09-04). generate() drops a
+# and found FALSE by the statistics review (2026-09-04). generate() drops a
 # mandate above ITS OWN category's AFA limit, and the elevated categories
 # (insurance_premium/mutual_fund/credit_card_bill, clause 8(b)) allow up to
 # Rs 1,00,000 -- far above this range. Measured: 316/7154 mandates (4.42%)
@@ -291,7 +291,7 @@ def _design_matrix(df: pd.DataFrame, *, columns: tuple[str, ...] = _ALL_DESIGN_C
         # An unrecognised value (a typo'd category, or None/NaN --
         # .astype(str) turns either into the literal string "None"/"nan")
         # would otherwise silently score as the reference level with no
-        # error: found by stats-reviewer (2026-09-04) as a real, if
+        # error: found by the statistics review (2026-09-04) as a real, if
         # currently latent, gap -- every category in the frozen corpus IS
         # one of these four, but Phase B's eval/sim2.py will not carry that
         # guarantee automatically. Loud, not silent, per this file's own
@@ -312,7 +312,7 @@ def _design_matrix(df: pd.DataFrame, *, columns: tuple[str, ...] = _ALL_DESIGN_C
     # groups, requested only via SIM2_FEATURE_COLUMNS -- see that constant's
     # own comment for why these are not part of _ALL_DESIGN_COLUMNS's
     # default. Same loud-not-silent unknown-value discipline as the category
-    # group above (a stats-reviewer-found gap there, R1a): a typo'd issuer or
+    # group above (a statistics-review-found gap there, R1a): a typo'd issuer or
     # instrument would otherwise silently score as the reference level.
     issuer_dummy_cols = {f"issuer_{level}" for level in ISSUER_LEVELS[1:]}
     if issuer_dummy_cols & needed:

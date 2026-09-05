@@ -66,11 +66,11 @@ def test_prior_values_are_float_not_other_types(dc):
 
 def test_unknown_skews_cant_pay_now_not_uniform():
     """DeclineClass.UNKNOWN is skewed toward CANT_PAY_NOW, not exactly
-    uniform -- per .claude/skills/new-failure-class/SKILL.md's explicit
+    uniform -- per docs/new-failure-class.md's explicit
     policy for a genuinely ambiguous class: map it to the safe default,
     because the three actions this feeds have asymmetric downside
     (CANT_PAY_NOW costs a retry slot; WONT_PAY risks an off-ramp offer).
-    Corrected from an earlier exactly-uniform version by payments-domain's
+    Corrected from an earlier exactly-uniform version by the payments-domain review's
     B3 review -- see cause_map.py's module docstring."""
     from src.classify.cause_map import prior
 
@@ -200,7 +200,7 @@ def test_prior_version_records_the_new_row():
 
 
 def test_a_raw_decline_string_maps_to_the_right_cause():
-    """`.claude/skills/new-failure-class` checklist item 6: "a test
+    """`docs/new-failure-class.md` checklist item 6: "a test
     asserting the RAW STRING maps to the right cause" -- end to end through
     classify() and prior(), not just through the class in isolation, so a
     taxonomy rule and a prior row that disagree cannot both pass their own
@@ -222,7 +222,7 @@ def test_a_raw_decline_string_maps_to_the_right_cause():
 
 
 def test_the_model_design_matrix_does_not_encode_declineclass_at_all():
-    """`.claude/skills/new-failure-class` checklist item 4 asks that
+    """`docs/new-failure-class.md` checklist item 4 asks that
     person_period one-hot encode the new class and that an unseen class map
     to an explicit "unknown" bucket rather than silently becoming
     all-zeros. Checked and NOT APPLICABLE here, pinned rather than assumed:

@@ -8,7 +8,7 @@
   self-tests the invariant guards.
 
   Assumes already installed: Python 3.13, Node 20+, Docker Desktop, git,
-  and the Claude Code CLI.
+  and the project toolchain.
 
 .EXAMPLE
   Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
@@ -180,8 +180,7 @@ Write-Host @"
        `$auth = "Basic " + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("`$kid`:`$sec"))
        `$cfg = @{ command = "npx"
                  args = @("mcp-remote","https://mcp.razorpay.com/mcp","--header","Authorization:`$auth") } | ConvertTo-Json -Compress
-       claude mcp add-json razorpay `$cfg
-       claude mcp list
+     (register that JSON with whichever MCP client you use)
 
   3. Create the parallel worktree for the landing page:
        git worktree add ..\mr-site site
@@ -189,10 +188,8 @@ Write-Host @"
   4. Verify everything:
        .\run.ps1 verify
 
-  5. Open Claude Code, press shift+tab twice for plan mode, and paste the
-     prompt from OPUS_PROMPT.md
+  5. Read DESIGN.md, then README.md's "Run it" section.
 
-  Then follow PLAN.md, Day 1.
-  NOTE: on Windows use  .\run.ps1 <task>  wherever PLAN.md says  make <task>
+  NOTE: on Windows every task is  .un.ps1 <task>  (./run.sh on POSIX).
 
 "@ -ForegroundColor White

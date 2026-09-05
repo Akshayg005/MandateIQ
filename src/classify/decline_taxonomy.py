@@ -3,7 +3,7 @@
 classify(code, text) never guesses: unrecognised input is DeclineClass.UNKNOWN,
 routed downstream to the B11 LLM normaliser rather than defaulted into some
 other class. Coverage is a reported metric (the UNKNOWN rate), not a
-swallowed one -- see payments-domain's review of this file.
+swallowed one -- see the payments-domain review's of this file.
 
 Keyword grounding: every phrase below is either a real Razorpay `error_reason`
 enum value or a close paraphrase of one, independently verified against
@@ -39,7 +39,7 @@ research shape this file's design:
    ordinary product noun, so a `payment_cancelled` event's own free text
    routinely names the mandate it belongs to ("...cancelled the UPI AutoPay
    mandate approval request"), which would otherwise satisfy the
-   MANDATE_REVOKED check below by accident -- found by payments-domain's B3
+   MANDATE_REVOKED check below by accident -- found by the payments-domain review's B3
    review.
 
    R5 (2026-09-05, v2): that guard is NARROWED, not deleted. Until R5 this
@@ -57,8 +57,8 @@ research shape this file's design:
    as a positive classification rather than as a negative lookahead that
    could silently stop applying.
 
-Known, disclosed gaps this file does NOT attempt to close (payments-domain's
-B3 review, coverage pre-conceded per PLAN_DETAIL.md): raw NPCI/NACH response
+Known, disclosed gaps this file does NOT attempt to close (the payments-domain review's
+B3 review, coverage pre-conceded per the build spec): raw NPCI/NACH response
 codes (e.g. "51", "U17", two/three-character codes) arrive, if at all,
 outside Razorpay's normalised `error_reason` vocabulary entirely, and no
 substring rule here reaches them -- widening the matcher to arbitrary short
@@ -119,7 +119,7 @@ def classify(code: str | None, text: str | None) -> DeclineClass:
 
     # Highest-consequence, most specific check second -- see docstring
     # finding 1. The `payment_cancelled` exclusion below is retained
-    # (docstring finding 3 / payments-domain B3 review): that code's own
+    # (docstring finding 3 / the payments-domain review B3 review): that code's own
     # free text routinely names "mandate" as the ordinary UPI AutoPay
     # product noun, which would otherwise satisfy this check for a
     # per-attempt cancel, not a real mandate revocation. Belt and braces
@@ -147,7 +147,7 @@ def classify(code: str | None, text: str | None) -> DeclineClass:
         "not activated for online",  # real card_not_enrolled description text
         # Compound, not a fixed phrase: real prose says "account has been
         # closed" -- "account" and "closed" don't sit adjacent (found by
-        # payments-domain's B3 review).
+        # the payments-domain review's B3 review).
     )) or ("account" in haystack and "closed" in haystack):
         return DeclineClass.ACCOUNT_CLOSED
 

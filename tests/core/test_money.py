@@ -1,6 +1,6 @@
 """
 src/core/money.py -- integer-paise arithmetic. This is the only module
-allowed to format currency for display (CLAUDE.md, src/core/CLAUDE.md).
+allowed to format currency for display (DESIGN.md, src/core/DESIGN.md).
 
 Every assertion here is on an int or a formatted string produced from a
 known-good int input -- never on a float, and never comparing formatted
@@ -23,7 +23,7 @@ FMT_CASES = [
     (100, "₹1.00"),
     (99999, "₹999.99"),  # 3-digit rupee part: no comma at all
     (150000, "₹1,500.00"),  # 4-digit rupee part: one comma
-    # 7-digit rupee amount (15,00,000 = 15 lakh) -- the example CLAUDE.md's
+    # 7-digit rupee amount (15,00,000 = 15 lakh) -- the example DESIGN.md's
     # spec calls out explicitly, and the one place Indian grouping (groups
     # of 2 after the first 3 digits) is distinguishable from Western (groups
     # of 3) grouping.

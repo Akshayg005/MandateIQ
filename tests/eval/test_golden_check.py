@@ -394,7 +394,7 @@ def test_score_declines_zero_tolerance_false_customer_declined():
     one therefore does not merely mis-label a row -- it pushes belief
     toward the singleton {WONT_PAY} that fires an off-ramp offer at a
     customer who was always going to pay. That is the precise harm root
-    CLAUDE.md's safety-design section exists to prevent, so it gets the
+    DESIGN.md's safety-design section exists to prevent, so it gets the
     same zero-tolerance treatment a false MANDATE_REVOKED already has."""
     rows = [
         {"raw": "INSUFFICIENT FUNDS", "label": "INSUFFICIENT_FUNDS"},

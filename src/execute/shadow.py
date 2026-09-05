@@ -150,10 +150,10 @@ class DeltaLog:
 
     def summary(self) -> str:
         """One line. Deliberately carries no per-mandate detail: root
-        CLAUDE.md's context discipline makes batch output the single largest
+        DESIGN.md's context discipline makes batch output the single largest
         context cost, and a 200-row dump is exactly what that rule exists to
         prevent. Per-mandate rows go to shadow_ledger and to the report
-        file, where a human or a subagent reads them."""
+        file, where a reviewer reads them."""
         parts = " ".join(f"{k}={self.by_divergence.get(k, 0)}" for k in sorted(DIVERGENCE_CATEGORIES))
         return (
             f"n_mandates={self.n_mandates} n_agree={self.n_agree} "
@@ -288,7 +288,7 @@ def run_shadow(
 def _default_run_id(batch: Sequence[ShadowInput]) -> str:
     """`shadow-<timestamp>-<batch hash>`.
 
-    money-auditor (2026-08-31) flagged that this is second-precision, so a
+    The money audit (2026-08-31) flagged that this is second-precision, so a
     repeat of the same batch under a FROZEN clock yields an identical run_id
     and the second _persist() dies on the shadow_ledger primary key. The
     finding is real; its suggested fix -- adding microseconds -- is not,

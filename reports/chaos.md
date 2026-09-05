@@ -111,7 +111,7 @@ Three findings. Two were fixed; one caused a fix to be **withdrawn**.
    above as `NPCI slots burned with NO SENT row`.
 
 3. **A cross-generation double charge** — `POSTMORTEM.md` incident 5, found
-   by the chaos-engineer review, *introduced by the fix for finding 2*. A
+   by the chaos harness review, *introduced by the fix for finding 2*. A
    worker stalled past its lease TTL is indistinguishable from a crashed one
    in durable state, so recovery voided a live worker's slot; the worker
    then completed its real charge and the freed slot was reissued at

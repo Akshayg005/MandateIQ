@@ -2,7 +2,7 @@
 
 Nothing here may import from src/model/ or src/policy/ -- this is a leaf
 module every layer depends on, and the dependency edge only ever points
-one way (see src/core/CLAUDE.md).
+one way (see src/core/DESIGN.md).
 """
 from __future__ import annotations
 
@@ -62,14 +62,14 @@ class Action(str, Enum):
 
 class Profile(str, Enum):
     """The two RBI compliance interpretations. Lowercase to mirror
-    COMPLIANCE_PROFILE=strict|permissive in .env and CLAUDE.md."""
+    COMPLIANCE_PROFILE=strict|permissive in .env and DESIGN.md."""
 
     strict = "strict"
     permissive = "permissive"
 
 
 class LedgerState(str, Enum):
-    """A ledger row's stage. SENT is forensic only -- see PLAN_DETAIL §3."""
+    """A ledger row's stage. SENT is forensic only -- see the build spec §3."""
 
     INTENT = "INTENT"
     SENT = "SENT"

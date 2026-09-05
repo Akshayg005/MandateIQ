@@ -146,7 +146,7 @@ def committed_for_decision(conn, decision_sha256: str) -> dict | None:
     surface, and a full CommittedScheduleRow type with no other consumer
     would be a convention invented for one call site.
 
-    **VOIDED ROWS ARE DELIBERATELY NOT FILTERED OUT.** `money-auditor`
+    **VOIDED ROWS ARE DELIBERATELY NOT FILTERED OUT.** the money audit
     (2026-09-05) proposed adding `AND voided_at IS NULL`, on the reasoning
     that `committed_one_live_per_slot` -- the schema's own unique index --
     establishes non-voided as the "live" convention. The convention is real
@@ -398,7 +398,7 @@ def find_normalized_decline(
     """Exact (event_id, normalizer_version) lookup -- the read-back path
     src/policy/belief.update()'s required source_version must come from:
     never trust an in-memory NormalizedDecline directly, always round-trip
-    it through the ledger first (PLAN_DETAIL.md B11 gate clause 3). None if
+    it through the ledger first (the build spec B11 gate clause 3). None if
     no row exists for this event under this normaliser version."""
     with conn.cursor() as cur:
         cur.execute(

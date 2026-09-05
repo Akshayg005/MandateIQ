@@ -81,7 +81,7 @@ def test_the_section_reports_both_error_costs(tmp_path):
 
 
 def test_money_is_rendered_through_the_money_helper(tmp_path):
-    """CLAUDE.md: nothing but src/core/money.py formats currency, and
+    """DESIGN.md: nothing but src/core/money.py formats currency, and
     eval/ is inside MONEY_DIRS."""
     text = "\n".join(_offramp_channel(_artifact(tmp_path, [_point()])))
     assert "₹12,000.00" in text           # engine recovered

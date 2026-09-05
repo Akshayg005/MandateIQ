@@ -12,7 +12,7 @@
 # === The exit-code discipline, carried over rather than re-earned ==========
 #
 # run.ps1's Invoke-Step exists because a bare call as a switch branch's last
-# statement returned 0 on a RED test suite, which made CLAUDE.md's own
+# statement returned 0 on a RED test suite, which made DESIGN.md's own
 # definition-of-done step 3 ("`run.ps1 test` passes before any commit")
 # unfalsifiable for several blocks (run.ps1:157-165; reports/gates.md:597).
 # `step()` below is the same guard: it prints a labelled banner, runs the
@@ -122,8 +122,6 @@ Mandate Recovery Engine -- tasks (POSIX; the mirror of run.ps1)
 
   ./run.sh db-up             start the mrdb Postgres container
   ./run.sh db-down           stop it
-  ./run.sh state             print the session-start orientation block
-  ./run.sh checkpoint B4     end of session -- regenerate STATE.md
   ./run.sh clean             remove __pycache__, .pytest_cache, .coverage
   ./run.sh help              this list
 
@@ -233,12 +231,6 @@ case "$TASK" in
   db-up)   step "postgres" docker start mrdb ;;
   db-down) step "postgres" docker stop mrdb ;;
 
-  state)      step "state"      "$PY" scripts/show_state.py ;;
-  # $TEST_FAST_FILTER threaded through as argv[2], exactly as run.ps1 does
-  # -- checkpoint.py's own test count previously hard-coded "not chaos" and
-  # silently diverged from what test-fast/ci actually run (DECISIONS.md,
-  # 2026-08-29). Two runners passing two different filters would reopen it.
-  checkpoint) step "checkpoint" "$PY" scripts/checkpoint.py "${1:-}" "$TEST_FAST_FILTER" ;;
 
   clean)
     find . -type d -name __pycache__ -not -path './.venv/*' -not -path './node_modules/*' \

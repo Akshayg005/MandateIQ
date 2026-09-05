@@ -1,7 +1,8 @@
 # Block gates
 
 Tick only when the stated condition is actually verified, not when the code
-exists. `show_state.py` reads this at every session start, and `checkpoint.py` summarises it into STATE.md at every session end.
+exists. This file is the single record of what has actually been proven,
+and what has only been built.
 
 Blocks are ordered by dependency, not by calendar. A block is sized by what
 it can prove, so two may close in one sitting and one may take three.
@@ -21,8 +22,8 @@ written and its gate unmet counts as zero.
            allocator -- a bare observed decline has no decision to attach to.
            Logged in DECISIONS.md, does not touch eval/frozen/. -->
 - [x] **B4** ★ person-period frame: `validate()` rejects every malformed shape; a censored episode round-trips with all four rows intact; split is mandate-level; no feature encodes a future slot
-- [x] **B5** ★ competing risks + CIF: held-out multinomial log-loss and per-cause Brier on the `test` split beat an intercept-only MNLogit null; transfer degradation of that same fit reported on `misspecified` and `coupled` frames; calibration-in-the-large reported per `slot × in_salary_window` cell; `Σ_c CIF_c(4) + S(4) == 1`; stats-reviewer returns clean
-      <!-- changed from "both" at PLAN_DETAIL v2 (B1), before the freeze commit
+- [x] **B5** ★ competing risks + CIF: held-out multinomial log-loss and per-cause Brier on the `test` split beat an intercept-only MNLogit null; transfer degradation of that same fit reported on `misspecified` and `coupled` frames; calibration-in-the-large reported per `slot × in_salary_window` cell; `Σ_c CIF_c(4) + S(4) == 1`; the statistics review returns clean
+      <!-- changed from "both" at the build spec v2 (B1), before the freeze commit
            and before any file under src/policy/ existed: §8.1 decision 1 added
            a third frozen arm (coupled). Logged in DECISIONS.md.
            2026-08-27: changed from "all three, one bar" to per-metric,
@@ -52,21 +53,21 @@ written and its gate unmet counts as zero.
            touch eval/frozen/. -->
 
 - [x] **B6** ★ calibration + conformal: reliability diagram roughly diagonal; empirical coverage matches nominal on held-out data
-      <!-- 2026-08-28: stats-reviewer found 2 blocking issues before this
+      <!-- 2026-08-28: the statistics review found 2 blocking issues before this
            was ticked -- an outcome-dependent imputation leak in
            hazard_tensor()'s schedule=None fallback (fixed by threading
            eval/corpus.py's real committed schedule through, closing a gap
            this block had deferred and disclosed but not yet fixed), and a
            conformal p-value formula bug under-smoothing test-point ties
-           (one-line fix). Both reverified via eval-runner on the real
+           (one-line fix). Both reverified via the batch runner on the real
            40-seed corpus: corrected marginal coverage 0.9517 mean (min
            0.9327), all four per-class means within ~1.5pp of nominal.
            Full findings and both before/after number tables in
            DECISIONS.md, 2026-08-28, the two B6 entries. Does not touch
            eval/frozen/. -->
 
-- [x] **B7** ★ policy foundation: every constant cites its clause; both profiles instantiate; compliance-auditor all-VERIFIED
-      <!-- 2026-08-29: compliance-auditor, fresh context, returned all 8
+- [x] **B7** ★ policy foundation: every constant cites its clause; both profiles instantiate; the compliance audit all-VERIFIED
+      <!-- 2026-08-29: the compliance audit, fresh context, returned all 8
            checklist clauses VERIFIED (constants cited, both AFA limits,
            4(c) ceiling, NPCI cap, no-cancellation invariant, both profiles
            reachable and neither hard-coded) plus 3 NOT COVERED items
@@ -78,7 +79,7 @@ written and its gate unmet counts as zero.
            disclosed not damped, cause-conditioned-hazard Protocol) in
            DECISIONS.md, 2026-08-29. Does not touch eval/frozen/. -->
 - [x] **B8** ★ allocator + stopping + off-ramp: 2-slot brute-force equivalence test passes; zero constraint violations across the eval, with an attempt rate on AFA-eligible mandates ≥ `eval.gate_criteria.ATTEMPT_RATE_FLOOR` (0.25) AND a mean discrimination gap (true-CANT_PAY_NOW attempt rate minus true-CANT_PAY_EVER attempt rate, seeds 0-19) exceeding `DISCRIMINATION_MARGIN` (~0.0808) -- the null policy must fail the first, a uniform-random policy at the floor rate must fail the second, both proven by test (`tests/eval/test_gate_criteria.py`); both profiles produce numbers
-      <!-- flagged at B4, 2026-08-28, from stats-reviewer's B4 finding 4: the
+      <!-- flagged at B4, 2026-08-28, from the statistics review's B4 finding 4: the
            allocator MUST apply src.policy.constraints.afa_free_limit_paise()
            before ever consulting the hazard model, routing any above-cliff
            mandate straight to Action.REAUTH -- eval/corpus.py already
@@ -88,7 +89,7 @@ written and its gate unmet counts as zero.
            through the CIF/backward-induction path anyway is out-of-support
            extrapolation, not a compliance nuance. Logged in DECISIONS.md,
            does not touch eval/frozen/.
-           2026-08-29, from B7: PLAN_DETAIL.md section 4's Q(b, ATTEMPT)
+           2026-08-29, from B7: the build spec section 4's Q(b, ATTEMPT)
            assumes a CAUSE-CONDITIONED hazard, h(outcome | cause, slot, day,
            amount) -- B5 shipped hazards MARGINAL over cause instead, and
            Cause has no production label, ever, so no fit can close that gap
@@ -163,7 +164,7 @@ written and its gate unmet counts as zero.
            2026-08-30, CLOSED. All three clauses met, 719 tests green,
            guard_invariants exit 0 (--all AND explicitly by path for the
            new untracked files, per the known B3 issue), eval/frozen/
-           untouched. money-auditor: zero findings. compliance-auditor:
+           untouched. The money audit: zero findings. The compliance audit:
            10/10 VERIFIED, zero VIOLATED, zero NOT COVERED -- including
            the three items B7 had to leave NOT COVERED and attribute
            forward (24h-lag enforcement, attempt-cap enforcement,
@@ -244,7 +245,7 @@ written and its gate unmet counts as zero.
            ChaosReport.passed REQUIRES unsafe_window_covered > 0 -- with
            seed 0 at 24 kills the uniform block drew the unsafe window
            ZERO times, so the headline would have been an artifact of
-           sampling exactly as PLAN_DETAIL.md section 8.2 finding 2
+           sampling exactly as the build spec section 8.2 finding 2
            predicts. The gate is met at 50; it was not at 24, by luck.
            NOT a clean history and must not be read as one. The harness
            found TWO defects on its FIRST run, both in code whose 82 tests
@@ -270,8 +271,8 @@ written and its gate unmet counts as zero.
            at UNRESOLVED_FINAL with no SENT row, i.e. never sent, each
            permanently consuming 1 of only 4 lifetime attempts. A fix
            (recover._resolve_never_sent) was approved, built, cleared by
-           money-auditor AND compliance-auditor, and then REVERTED THE
-           SAME DAY when the chaos-engineer review found it introduced a
+           the money audit AND the compliance audit, and then REVERTED THE
+           SAME DAY when the chaos harness review found it introduced a
            CROSS-GENERATION DOUBLE CHARGE -- POSTMORTEM.md incident 5.
            Its proof ("no SENT row means no call was issued") is sound
            about one process's own state and false about a concurrent
@@ -299,8 +300,8 @@ written and its gate unmet counts as zero.
            previously tested; and a green regression guard,
            tests/eval/test_chaos.py::test_a_stalled_worker_cannot_have_
            its_slot_voided_and_reissued.
-           THE REVIEW LESSON, worth more than the code: money-auditor
-           (twice) and compliance-auditor all cleared the reverted design,
+           THE REVIEW LESSON, worth more than the code: the money audit
+           (twice) and the compliance audit all cleared the reverted design,
            both reasoning explicitly about concurrency. What found it was
            a reviewer asked not "is this correct?" but "what states can
            this harness NOT construct?" -- the harness is single-threaded
@@ -338,9 +339,9 @@ written and its gate unmet counts as zero.
            is a required keyword-only parameter, no default -- a belief
            cannot be constructed without naming which classifier version
            produced its observation.
-           NOT a clean history. money-auditor cleared the ledger/belief
-           changes outright (zero findings). payments-domain -- this
-           block's specified review, PLAN_DETAIL.md -- found NINE real
+           NOT a clean history. The money audit cleared the ledger/belief
+           changes outright (zero findings). The payments-domain review -- this
+           block's specified review, the build spec -- found NINE real
            problems on the classify/llm boundary, each independently
            reverified (a probe script or a live measurement) before being
            acted on: two golden-set labels were wrong, not model errors
@@ -371,7 +372,7 @@ written and its gate unmet counts as zero.
            genuinely blocked, not forced: belief.update()'s honesty gap
            (source_version proves something was supplied, not that it was
            honest) needs a fix living in src/execute/, not src/policy/ --
-           PLAN_DETAIL.md section 6's own dependency graph draws ledger/
+           the build spec section 6's own dependency graph draws ledger/
            and policy/ as siblings that never point at each other,
            converging only at the executor, which does not exist for this
            purpose yet. intent_score()'s float has no defined path into
@@ -380,7 +381,7 @@ written and its gate unmet counts as zero.
            fitted predictor consumes nonconformity scores, neither of
            which intent_score() produces -- inventing a threshold to close
            the item would have meant fabricating unreviewed statistical
-           machinery in the exact path CLAUDE.md's safety design section
+           machinery in the exact path DESIGN.md's safety design section
            requires split-conformal rigor for. Both left as real design
            work for whichever block does the relevant wiring, not guessed
            at here.
@@ -423,7 +424,7 @@ written and its gate unmet counts as zero.
            error one level up and would have waved a 440-call flash run past
            a cap of 20; it is now a measured per-model table defaulting an
            unknown model to the SMALLEST observed cap.
-           Also NOT clean: stats-reviewer found the benchmark was measuring
+           Also NOT clean: the statistics review found the benchmark was measuring
            the wrong thing. Per-class AUC is 0.534/0.569/0.487/0.714, i.e.
            DEAD is BELOW CHANCE by construction, so macro AUC had no power to
            decide "the LLM must lose" either way; the headline moved to
@@ -552,7 +553,7 @@ un.ps1 verify passes 5/5 including the postgres check that had
                 mattering.
 
            REVIEWED AFTER THE FIRST TICK, and the numbers above are the
-           POST-REVIEW ones. payments-domain and stats-reviewer were run
+           POST-REVIEW ones. The payments-domain review and the statistics review were run
            against this block; between them they invalidated two published
            numbers and found three checks that could not fail. The gate still
            holds -- both clauses re-verified after the fixes -- but several
@@ -596,7 +597,7 @@ un.ps1 verify passes 5/5 including the postgres check that had
            TWO CHECKS THAT COULD NOT FAIL, fixed:
              * `.\run.ps1 test` returned 0 on a RED suite -- bare `& $Py` in a
                switch branch does not set the script exit code -- which made
-               CLAUDE.md's definition-of-done step 3 unfalsifiable. Proven
+               DESIGN.md's definition-of-done step 3 unfalsifiable. Proven
                with a repro, then fixed via the already-existing Invoke-Step.
              * The golden-set freshness advisory tested file existence, so a
                quota-killed run leaving 1 of 30 rows cached reported "current".
@@ -688,7 +689,7 @@ un.ps1 verify passes 5/5 including the postgres check that had
                probing WebGL before mounting the canvas
                (site/src/hooks/useWebGLSupport.ts); re-verified.
              * counters        -- site/ssr-check.tsx asserts the real figures
-               reach the output AND that PLAN.md's placeholders do not;
+               reach the output AND that the project plan's placeholders do not;
                verified to fail by reintroducing "14 mandates lost".
            The fourth, measured over CDP while scrolling the scene:
              * before: 320 samples, median 16.7ms (59.9fps), p95 16.9ms,
@@ -723,7 +724,7 @@ un.ps1 verify passes 5/5 including the postgres check that had
            real browser rather than carried over on trust:
              * reduced motion -- Emulation.setEmulatedMedia forced: canvas
                NOT mounted, 3 storyboard frames present, 142/110/29.0%/45.3%
-               all on the page, PLAN.md placeholders absent.
+               all on the page, the project plan placeholders absent.
              * canvas failure -- second instance launched --disable-gpu
                --disable-software-rasterizer: canvas NOT mounted, the HTML
                fallback rendered (not the old black rectangle), same real
@@ -731,7 +732,7 @@ un.ps1 verify passes 5/5 including the postgres check that had
              * counters -- npm run render-check green against the staged
                results.json, which is byte-identical to reports/results.json.
            Also removed in this session: site/src/assets/{hero.png,react.svg,
-           vite.svg}, three unreferenced leftovers, closing PLAN_DETAIL's
+           vite.svg}, three unreferenced leftovers, closing the build spec's
            "Vite demo assets replaced wholesale".
            Verified after those deletions: build 677ms, render-check green,
            guard_invariants --all exit 0 on 125 files, 785 passed / 141
@@ -870,8 +871,7 @@ exists" is not a gate here either.
            higher AFA limit (clause 8(b)) lets 4.42% of the training
            sample exceed that stated range, confounding amount_band_4 with
            category. Neither bug changes the null finding; both are
-           disclosed in the report and the module docstring. stats-reviewer
-           reviewed the full change (design, tests, script) and confirmed:
+           disclosed in the report and the module docstring. The statistics review covered the full change (design, tests, script) and confirmed:
            no leakage (amount/category are static per-mandate, present at
            slot 1), censoring discipline intact, CV split genuinely
            mandate-disjoint for both models, no data-snooping in the cut
@@ -899,7 +899,7 @@ exists" is not a gate here either.
            scripts/guard_invariants.py denies eval/run.py importing
            eval.sim2, scoped and tested both directions.
 
-           NOT A CLEAN HISTORY. stats-reviewer found the report's own FIRST
+           NOT A CLEAN HISTORY. The statistics review found the report's own FIRST
            interpretation was wrong, not just incomplete, on all three of
            its severity-flagged findings: (1) the paragraph explaining why
            mandate_age_years came out significant on DEAD/OPTED_OUT (despite
@@ -944,7 +944,7 @@ exists" is not a gate here either.
            written (this file's 2026-09-04 R1b entry), with the aggregate
            dead-rate gap re-derived independently here by analytic
            marginalisation (+6.75pp issuer, +6.42pp instrument, consistent
-           with stats-reviewer's own +7.38pp/+6.70pp). And a real flake
+           with the statistics review's own +7.38pp/+6.70pp). And a real flake
            risk: the two DGP hazard-difference tests' original 20-seed
            window measured only +5.51pp/+5.69pp -- ~0.26 SD above the 5pp
            floor against a measured ~1.9pp/1.4pp window-SD, a confirmed
@@ -989,8 +989,8 @@ exists" is not a gate here either.
            re-solve was skipped ENTIRELY -- _proxy_decline_class() returns
            None for it -- so no decision was ever recorded).
 
-           A FIRST VERSION OF THIS FIX WAS WRONG, found by stats-reviewer
-           and payments-domain BEFORE this gate was ticked, not after:
+           A FIRST VERSION OF THIS FIX WAS WRONG, found by the statistics review
+           and the payments-domain review BEFORE this gate was ticked, not after:
            belief.observe_terminal() originally collapsed belief to an
            exact DEGENERATE (1.0/0/0) posterior, on the reasoning "DEAD
            means CANT_PAY_EVER -- that is what the cause label MEANS, not
@@ -1034,7 +1034,7 @@ exists" is not a gate here either.
            not exchangeable with calib_conf's live-inference calibration
            pool, so mixing it into coverage/singleton-rate MEASUREMENT
            would contaminate exactly the diagnostic the off-ramp's safety
-           claim depends on (payments-domain: "the entire nonzero
+           claim depends on (the payments-domain review: "the entire nonzero
            singleton rate is arithmetically one query per opted-out
            mandate... the gate has still never produced a {WONT_PAY}
            singleton from a belief it actually reasoned about"). Fixed:
@@ -1046,7 +1046,7 @@ exists" is not a gate here either.
            fresh sweep: singleton_wont_pay_rate is back to exactly 0.000
            in every one of 256 engine cells, with 20,592 retrospective
            queries correctly excluded and disclosed via the new
-           coverage_n_retrospective field (matches payments-domain's own
+           coverage_n_retrospective field (matches the payments-domain review's own
            independently-cited 1,162,576 total query count exactly: 1,141,984
            live + 20,592 retrospective). The Plan object's own
            conformal_set audit field is UNCHANGED -- a specific mandate's
@@ -1065,9 +1065,9 @@ exists" is not a gate here either.
            path. README's "What this can't do" item 5 rewritten to
            disclose this rather than the now-fixed 4,032 count.
 
-           Reviewed by stats-reviewer, compliance-auditor (all 6 checked
+           Reviewed by the statistics review, the compliance audit (all 6 checked
            clauses VERIFIED, singleton-on-departed-customer concern
-           confirmed inert), and payments-domain (found all of the above;
+           confirmed inert), and the payments-domain review (found all of the above;
            confirmed the permitted()/instrument_dead/signature() core of
            the fix is correct and was "the actual fix"). Does not touch
            eval/frozen/. -->
@@ -1091,7 +1091,7 @@ exists" is not a gate here either.
            false_reauth_inference_count -- the genuinely-interesting
            number, about a third of the pre-registered count. Effective-
            cause-scored versions slightly lower (8,542 / 2,732), as
-           expected. payments-domain confirmed the route attribution is
+           expected. The payments-domain review confirmed the route attribution is
            correct (requires_afa() at counting time cannot disagree with
            _best_action's own branch: ctx is object-identical between
            decision and count, and amount_paise/category are never
@@ -1106,12 +1106,12 @@ exists" is not a gate here either.
            the number is real and reproducible, its INTERPRETATION as
            "belief was wrong" is approximate, not exact. Also flagged,
            disclosed not fixed here (R5's territory): false_offramp_count
-           is structurally 0 (n_offer=0 everywhere), so root CLAUDE.md's
+           is structurally 0 (n_offer=0 everywhere), so root DESIGN.md's
            "report both error costs" pairing is currently one real number
            and one zero by construction, not two measurements. Reviewed by
-           compliance-auditor (clause 8(a)/8(b) reasoning: VERIFIED, purely
+           the compliance audit (clause 8(a)/8(b) reasoning: VERIFIED, purely
            a scoring change, no effect on which action the allocator
-           chose) and payments-domain. Does not touch eval/frozen/. -->
+           chose) and the payments-domain review. Does not touch eval/frozen/. -->
 - [x] **R3** `reports/regimes.md` names the LTV break-even ratio as a ratio to
       mean mandate amount, and every point on the sensitivity curve is
       reproducible by one command
@@ -1159,14 +1159,14 @@ exists" is not a gate here either.
            tests/ anywhere). 10 tests added to tests/core/test_money.py
            before any R3 code was written.
 
-           REVIEWED by money-auditor before ticking. One real, fixed
+           REVIEWED by the money audit before ticking. One real, fixed
            finding: eval/report.py's rendering read the JSON artifact's
            FLOAT convenience fields rather than the EXACT Fraction strings
            stored alongside them for exactly this purpose -- no rendered
            digit was actually wrong at the 2-3 decimals ever displayed,
            but it defeated interpolate_crossing()'s own reason for
            returning a Fraction. Fixed: the renderer now parses the exact
-           strings. Everything else money-auditor checked (exact-arithmetic
+           strings. Everything else the money audit checked (exact-arithmetic
            ordering, dataclasses.replace() safety on the frozen
            PolicyCosts, _signed_rupees()'s zero-sign handling, no ledger/
            execute import anywhere in this path, the worked example's
@@ -1193,7 +1193,7 @@ exists" is not a gate here either.
       <!-- 2026-09-04, CLOSED. `src/execute/cycle.py` (new): `plan_cycle()`
            reads durable state for every registered mandate (a new,
            additive `mandate` table -- no FK from ledger/plan/
-           committed_schedule, deliberately, per R4_PLAN.md) and calls the
+           committed_schedule, deliberately, per R4_the project plan) and calls the
            already-gated `solve()`/`commit()`; `run_due()`, called >=24h
            later, scans `committed_schedule` for due rows and calls the
            already-gated `execute()`. Neither writes a ledger/
@@ -1251,15 +1251,15 @@ exists" is not a gate here either.
            `contacts_sent` tracks `ATTEMPT` contacts only, since
            `REAUTH`/`OFFER` never produce a ledger row to count.
 
-           REVIEWED by both `money-auditor` and `compliance-auditor`
+           REVIEWED by both the money audit and the compliance audit
            before ticking (this is the first path that could move real
            money end to end via a real Postgres-backed cycle, and clause
            6(a) is the constraint this module exists to honour). Both
-           clean: money-auditor confirmed the ledger-before-money-action
+           clean: the money audit confirmed the ledger-before-money-action
            ordering holds throughout, idempotency keys stay derived from
            deterministic fields only, and the NPCI attempt-cap
            reconstruction cannot be raced past `_is_eligible()`'s
-           in-flight gate. compliance-auditor returned 10/10 VERIFIED (6a,
+           in-flight gate. The compliance audit returned 10/10 VERIFIED (6a,
            6c, 8a, 8b, 4c, the NPCI cap, no-cancellation, both profiles
            reachable, contact-frequency/quiet-hours, constant citations),
            zero VIOLATED, zero NOT COVERED -- including confirming
@@ -1286,7 +1286,7 @@ exists" is not a gate here either.
            on the number as first stated would have read 13.6-17.6%). Live
            singleton-{WONT_PAY} rate 0.0395 mean, against exactly 0 before.
 
-           CORRECTED, R5 review pass, 2026-09-05 (stats-reviewer): "256
+           CORRECTED, R5 review pass, 2026-09-05 (the statistics review): "256
            engine cells" / "1292" DOUBLE-COUNTS. `strict` and `permissive`
            are byte-identical on every field across all 128 (regime, arm,
            seed) triples (verified: 0 differing cells out of 128) -- the
@@ -1305,7 +1305,7 @@ exists" is not a gate here either.
            and neither dropped: (A) DeclineClass.CUSTOMER_DECLINED, a new
            8th taxonomy class for Razorpay's `payment_cancelled` -- a real
            WONT_PAY-flavoured event that src/classify/decline_taxonomy.py's
-           own docstring (finding 3, payments-domain's B3 review) had already
+           own docstring (finding 3, the payments-domain review's B3 review) had already
            identified as distinct from MANDATE_REVOKED and which fell through
            to UNKNOWN for want of a home. cause_map prior 0.70 WONT_PAY /
            0.20 CANT_PAY_NOW / 0.10 CANT_PAY_EVER, dominant but deliberately
@@ -1356,7 +1356,7 @@ exists" is not a gate here either.
            decline channel 10.4% at the oracle -> 44.1% at realised AUC
            0.498; intent channel 9.3% -> 75.0% at AUC 0.507.
 
-           CORRECTED, R5 review pass, 2026-09-05 (stats-reviewer): this
+           CORRECTED, R5 review pass, 2026-09-05 (the statistics review): this
            paragraph previously said "the intent channel is measurably
            worse than the decline channel... the honest consequence of its
            adapter being misspecified." Independently re-derived via
@@ -1391,7 +1391,7 @@ exists" is not a gate here either.
            per-class coverage as low as 0.795 on CANT_PAY_EVER. Degradation
            is a result, not a bug.
 
-           CRITICAL, R5 review pass, 2026-09-05 (stats-reviewer), NOT FIXED
+           CRITICAL, R5 review pass, 2026-09-05 (the statistics review), NOT FIXED
            IN THIS PASS. "0.95 target" is a WEAKER claim than the code
            supports even that far: the calibration pool (200 slot-1
            beliefs) has only 2-3 DISTINCT nonconformity values per class --
@@ -1420,7 +1420,7 @@ exists" is not a gate here either.
            corpus, not one row per mandate at slot 1 -- that changes
            fit_gate() for every consumer in this project, not only R5's
            channel, and needs its own investigation rather than a patch
-           inside a review response. CLAUDE.md's "at 95% coverage" line is
+           inside a review response. DESIGN.md's "at 95% coverage" line is
            corrected to remove the unsupported guarantee rather than left
            standing next to this finding.
 
@@ -1554,7 +1554,7 @@ exists" is not a gate here either.
            {WONT_PAY} singleton => not OFFER (should_act()'s requirement) --
            and anything left is reported as NOT_ATTEMPT with a
            chosen_action_candidates superset, never as a guessed label.
-           R5_R6_R7_PLAN.md's test list said "derived as REAUTH/STOP"; that
+           the R5-R7 plan's test list said "derived as REAUTH/STOP"; that
            is not derivable from this schema, and naming one would be the
            same failure R2's _binding_constraint() bug was (a hard-forced
            decision recorded as a free choice). The real fix is a
@@ -1688,12 +1688,12 @@ exists" is not a gate here either.
            .gitattributes; CI re-runs eval-quick and checks the sha256
            against the first run.
 
-           FALSE CLAIM CORRECTED, NOT MADE TRUE. CLAUDE.md and README both
+           FALSE CLAIM CORRECTED, NOT MADE TRUE. DESIGN.md and README both
            said the invariants are enforced by GIT hooks. `.git/hooks/` holds
            only the stock samples and core.hooksPath is unset; they are
-           CLAUDE CODE hooks in .claude/settings.json, which do not gate a
-           commit made outside Claude Code. Both sentences rewritten to say
-           what is true (the guard runs as a PostToolUse hook, as
+           local editor write-guards, which do not gate a commit made
+           locally. Both sentences rewritten to say what is true (the
+           guard runs as a local write-guard, as
            `run.sh lint` / `.\run.ps1 lint`, and in CI, which is what
            actually gates a push). Installing git hooks nobody asked for
            would change how contributors work; that is not a documentation
@@ -1718,12 +1718,10 @@ exists" is not a gate here either.
            and CRLF, and setup.ps1 changed to stop reintroducing them
            (PS 5.1's `-Encoding utf8` always writes a BOM).
 
-           OUT OF SCOPE, DISCLOSED: .claude/settings.json's Stop hook is
-           `powershell -NoProfile -File scripts/stop_hook_ci.ps1` and its
-           other three hooks call a bare `python` (often absent on Linux,
-           and never the project venv). Those are Claude Code dev-loop
-           concerns, not commands a reviewer executes, and they are left
-           alone. Also disclosed: schema.sql has no migration path (found
+           OUT OF SCOPE, DISCLOSED: the local write-guards call a bare
+           `python` (often absent on Linux, and never the project venv).
+           Those are local dev-loop concerns, not commands a reviewer
+           executes, and they are left alone. Also disclosed:
            concretely at R6 -- this machine's own dev database had drifted
            several tables and one column behind it), and `run.sh test`
            depends on a Postgres the reviewer must start first. -->

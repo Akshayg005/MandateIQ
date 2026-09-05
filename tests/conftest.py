@@ -69,7 +69,7 @@ SCHEMA_PATH = _ROOT / "src" / "ledger" / "schema.sql"
 # Until 2026-09-03 an unreachable Postgres made 132 tests skip and the suite
 # still exit 0. What skipped was the entire money-critical surface: ledger,
 # executor, lease, void, recover, commit, webhook, dedupe, chaos -- every
-# idempotency and crash-recovery test in the repo. CLAUDE.md's
+# idempotency and crash-recovery test in the repo. DESIGN.md's
 # definition-of-done step 3 was therefore satisfiable without running any of
 # it, which is the same defect class as POSTMORTEM's Invoke-Step bug: a
 # check that passes by not checking.

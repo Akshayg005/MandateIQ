@@ -1,7 +1,7 @@
 """src/execute/lease.py -- crash-safe lease claiming over attempt_lease.
 
 Every test freezes src.core.clock so lease expiry is proven by advancing a
-frozen clock, never by a real sleep() -- CLAUDE.md's clock discipline
+frozen clock, never by a real sleep() -- DESIGN.md's clock discipline
 applies here exactly as it does everywhere else in the codebase.
 """
 from __future__ import annotations

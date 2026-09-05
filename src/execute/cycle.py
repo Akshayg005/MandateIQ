@@ -5,7 +5,7 @@ Two entry points, not one combined pass -- `committed_schedule`'s own CHECK
 constraint (`scheduled_for >= committed_at + INTERVAL '24 hours'`,
 src/ledger/schema.sql, clause 6(a)) means a single combined function would
 either violate that check or silently no-op the execute half on every real
-invocation. See R4_PLAN.md for the investigation this design is based on,
+invocation. See R4_the project plan for the investigation this design is based on,
 and DECISIONS.md, 2026-09-04, "R4", for the scope decisions made before this
 file was written.
 
@@ -173,7 +173,7 @@ def _latest_normalized_decline(conn, mandate_id: str) -> tuple[str, str] | None:
     """(DeclineClass value, normalizer_version) of the most recent
     normalized_decline row for any ingested_event tied to this mandate, or
     None. The read-back path src/policy/belief.update()'s required
-    source_version must come from (PLAN_DETAIL.md B11 gate clause 3): never
+    source_version must come from (the build spec B11 gate clause 3): never
     an in-memory classifier result, always a round-trip through the ledger."""
     with conn.cursor() as cur:
         cur.execute(
@@ -235,7 +235,7 @@ def _read_context(
 
     attempts_used/contacts_sent start at 1: slot 1, the original debit that
     triggered recovery, already happened before this system ever engages
-    (CLAUDE.md's own framing -- "failed recurring debits") and is never
+    (DESIGN.md's own framing -- "failed recurring debits") and is never
     itself committed by this module, mirroring eval/run.py's and
     src/execute/shadow.py's own `_initial_context` exactly. contacts_sent
     tracks ATTEMPT contacts only: REAUTH/OFFER never produce a ledger row
@@ -316,7 +316,7 @@ def _due_rows(conn, as_of: datetime) -> list[ScheduledAttempt]:
     """Every committed_schedule row that is due (scheduled_for <= as_of),
     not voided, and not yet resolved (no RESULT/FAILED ledger row for its
     idempotency_key) -- the first "scan committed_schedule for due,
-    unresolved rows" query in the codebase (R4_PLAN.md)."""
+    unresolved rows" query in the codebase (R4_the project plan)."""
     with conn.cursor() as cur:
         cur.execute(
             """

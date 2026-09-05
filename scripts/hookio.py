@@ -2,9 +2,9 @@
 """Resolve which files a hook is about, without depending on the shell.
 
 The problem this solves: hook commands are strings run by whatever shell the
-platform uses. `$CLAUDE_FILE_PATHS` expands on bash and does nothing on
-PowerShell or cmd, where the syntax is `$env:CLAUDE_FILE_PATHS` or
-`%CLAUDE_FILE_PATHS%`. Get it wrong and the guard runs with zero arguments,
+platform uses. `$MANDATEIQ_FILE_PATHS` expands on bash and does nothing on
+PowerShell or cmd, where the syntax is `$env:MANDATEIQ_FILE_PATHS` or
+`%MANDATEIQ_FILE_PATHS%`. Get it wrong and the guard runs with zero arguments,
 finds nothing, exits 0, and you believe your invariants are enforced when
 they are not.
 
@@ -15,8 +15,8 @@ So the guards do not rely on shell expansion at all. They try four sources
 in order and use the first that yields file paths:
 
   1. command-line arguments        (works everywhere if the shell expanded)
-  2. CLAUDE_FILE_PATHS env var     (read directly, no shell involved)
-  3. JSON on stdin                 (Claude Code passes hook payloads this way)
+  2. MANDATEIQ_FILE_PATHS env var     (read directly, no shell involved)
+  3. JSON on stdin                 (editor hook payloads arrive this way)
   4. git: staged + modified files  (last-resort fallback, never empty-passes)
 
 Source 4 matters most: if the first three come up empty, scanning changed
@@ -39,7 +39,7 @@ def _from_argv() -> list[str]:
 
 
 def _from_env() -> list[str]:
-    raw = os.environ.get("CLAUDE_FILE_PATHS", "").strip()
+    raw = os.environ.get("MANDATEIQ_FILE_PATHS", "").strip()
     if not raw:
         return []
     # may be whitespace-, comma-, or semicolon-separated depending on platform

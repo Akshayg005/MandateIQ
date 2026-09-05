@@ -12,14 +12,14 @@ decision cannot be reproduced in a dispute.
 
 TARGET. Both arms predict `Outcome` (STILL_PENDING / RECOVERED / DEAD /
 OPTED_OUT), NOT `Cause`. The statistical model never predicts Cause -- root
-CLAUDE.md's own design puts Cause behind action-gating, and no production
+DESIGN.md's own design puts Cause behind action-gating, and no production
 label for it exists, ever. Scoring the LLM on Cause would compare it against
 nothing, so this file scores the thing the model actually emits.
 
 SPLIT. src/model/splits.py's 4-way mandate-level split, `test` arm only,
 estimable rows only (slot 1 is a structural zero). The stats model is fit on
 `train` and never sees a test row. The LLM was fit on neither, which is the
-easy half of PLAN_DETAIL.md's review clause; the load-bearing half is that
+easy half of the build spec's review clause; the load-bearing half is that
 the STATS arm must not be scored on anything it was fit on, which the split
 guarantees structurally rather than by assertion.
 
@@ -42,7 +42,7 @@ PROMPT_FIELDS is asserted disjoint from src/model/features.py's FORBIDDEN by
 tests/eval/test_bench.py, and render_prompt() applies the allowlist rather
 than trusting its caller's dict.
 
-WHY AUC IS NOT THE HEADLINE. PLAN_DETAIL.md names AUC, so it is reported --
+WHY AUC IS NOT THE HEADLINE. the build spec names AUC, so it is reported --
 but it cannot decide this block's claim, and saying so is the point of this
 paragraph. Two independent problems, both measured rather than suspected:
 
@@ -68,9 +68,9 @@ AUC printed carries a mandate-level cluster bootstrap CI, because rows are
 clustered (one mandate contributes up to three slot rows) and overlapping
 intervals mean a tie however many decimals the point estimates differ by.
 
-Found by stats-reviewer, 2026-08-31; see DECISIONS.md.
+Found by the statistics review, 2026-08-31; see DECISIONS.md.
 
-TEMPERATURE. Both 0.0 and 1.0 are run. PLAN_DETAIL.md explicitly forbids
+TEMPERATURE. Both 0.0 and 1.0 are run. the build spec explicitly forbids
 running the LLM at temperature 0 only, and the sharpest finding available is
 that variance at t=0.0 is not zero -- a model pinned to its most
 deterministic setting still moves between identical calls.
@@ -219,7 +219,7 @@ Return only the function call."""
 def load_pricing(path: pathlib.Path | None = None) -> dict[str, Any]:
     """Read config/llm_pricing.yaml. Kept in a file with its source URL and
     retrieval date rather than as constants here -- see that file's header
-    and PLAN.md's "never fabricate a number"."""
+    and the project plan's "never fabricate a number"."""
     with open(path or PRICING_PATH, encoding="utf-8") as fh:
         return yaml.safe_load(fh)
 
@@ -246,7 +246,7 @@ def cost_per_1k_paise(
 
     Integer arithmetic throughout, with a single floor at the end. Prices are
     stored as integer micro-USD per million tokens precisely so that root
-    CLAUDE.md invariant 2 ("a float touching a money value is a bug") holds
+    DESIGN.md invariant 2 ("a float touching a money value is a bug") holds
     through the whole computation and not merely at the final rounding.
 
     Raises KeyError on a model with no price entry -- a model swapped in via
@@ -304,7 +304,7 @@ def multiclass_log_loss(y_true: np.ndarray, p: np.ndarray, *, eps: float = 1e-12
     """Mean negative log likelihood of the true class.
 
     THE HEADLINE METRIC, and the reason the AUC column is no longer it.
-    stats-reviewer (2026-08-31) measured what AUC was actually doing on this
+    The statistics review (2026-08-31) measured what AUC was actually doing on this
     problem: per-class OvR AUCs of 0.534 / 0.569 / 0.487 / 0.714, i.e. DEAD
     BELOW CHANCE and STILL_PENDING barely above it. That is structural, not a
     bad fit -- on the nominal arm the simulator sets the DEAD hazard from the
@@ -372,7 +372,7 @@ def wilson_ci(successes: int, n: int, *, z: float = 1.96) -> tuple[float, float]
     binomial SE alone is ~0.06 -- three decimals of a number that is plus or
     minus six points. Wilson rather than normal-approximation because it
     stays inside [0, 1] and behaves at the boundaries, and 0.000 is exactly
-    the value this block most wants to report honestly (stats-reviewer,
+    the value this block most wants to report honestly (the statistics review,
     2026-08-31). Still ignores WITHIN-mandate clustering in the variance
     subsample, so treat it as a floor on the true width.
     """
@@ -454,7 +454,7 @@ def variance_report(runs: Sequence[Sequence[np.ndarray]]) -> VarianceReport:
     # An earlier version named this `decision_flip_rate` and the table called it
     # "retry-slot flip", claiming it measured how often the customer "would have
     # been debited on a different day". That was an OVERCLAIM on this block's
-    # headline number and stats-reviewer was right to attack it: no slot and no
+    # headline number and the statistics review was right to attack it: no slot and no
     # day is computed anywhere in this module, and the real allocator does exact
     # backward induction over CIFs, which a swap in this ordering neither implies
     # nor is implied by. Renamed to say only what it measures.
@@ -502,7 +502,7 @@ def render_prompt(row: Mapping[str, object]) -> str:
         # the prompt BELOW parity with FEATURE_COLUMNS while the table's
         # footnote went on printing the superset claim, biasing the result
         # against the LLM for a reason having nothing to do with the model.
-        # Found by stats-reviewer, 2026-08-31.
+        # Found by the statistics review, 2026-08-31.
         raise ValueError(
             f"render_prompt() is missing PROMPT_FIELDS {missing} -- the prompt "
             f"would silently drop below the information set the table claims. "
@@ -628,7 +628,7 @@ class InstrumentedGemini:
         self._last_started: float | None = None
         # Counted, not silent: a degenerate answer that quietly becomes
         # uniform would degrade both AUC and variance with no trace in the
-        # table or bench.json (stats-reviewer, 2026-08-31).
+        # table or bench.json (the statistics review, 2026-08-31).
         self.degenerate_answers = 0
 
     def _pace(self) -> None:
@@ -811,7 +811,7 @@ def fit_plan_to_quota(model: str, *, n: int, repeats: int, variance_n: int,
     variance_n pinned to 1 they are the only thing carrying the measurement,
     and leaving quota unspent would weaken the one claim available.
 
-    Both temperatures survive. PLAN_DETAIL.md forbids a t=0-only run and the
+    Both temperatures survive. the build spec forbids a t=0-only run and the
     sharpest finding available is that variance at t=0.0 is not zero, so
     buying repeats by dropping a temperature would spend the arm's whole
     point.
@@ -972,7 +972,7 @@ def build_test_split(seed: int = 0) -> tuple[pd.DataFrame, pd.DataFrame]:
     and handing back only one frame would leave the fit/score boundary to a
     convention rather than to the type. Built from eval.corpus's TRAIN_SEEDS
     draw -- the SAME recipe, corpus and split seed as B8's fit. (An earlier
-    draft said "the model this project actually ships"; stats-reviewer noted
+    draft said "the model this project actually ships"; the statistics review noted
     that is literally false -- this is a refit inside the benchmark, and the
     sentence is in any case conditional on seed 0, which `--seed` can change.
     Corrected rather than defended.)
@@ -980,7 +980,7 @@ def build_test_split(seed: int = 0) -> tuple[pd.DataFrame, pd.DataFrame]:
     The split is GROUPED ON mandate_id (splits.py's default), so no mandate
     contributes rows to both sides. A row-level split would let the same
     mandate's slot-2 row train the model that scores its slot-3 row, which
-    is the leakage src/model/CLAUDE.md's rule 2 exists to prevent.
+    is the leakage src/model/DESIGN.md's rule 2 exists to prevent.
     """
     episodes = corpus.generate(arm="nominal")
     pp = person_period.build(episodes)
@@ -992,7 +992,7 @@ def build_test_split(seed: int = 0) -> tuple[pd.DataFrame, pd.DataFrame]:
 
 def stats_arm(train: pd.DataFrame, test: pd.DataFrame) -> tuple[ArmResult, np.ndarray]:
     """Fit on `train`, score `test`. The fit never sees a test row -- that is
-    the clause PLAN_DETAIL.md's stats-reviewer note actually turns on."""
+    the clause the build spec's the statistics review note actually turns on."""
     started = time.perf_counter()
     model = competing_risks.fit(train)
     fit_s = time.perf_counter() - started
@@ -1002,7 +1002,7 @@ def stats_arm(train: pd.DataFrame, test: pd.DataFrame) -> tuple[ArmResult, np.nd
     # took a percentile over those three numbers -- which is the max of three
     # measurements of the same amortised throughput, not a tail statistic, and
     # not comparable to a per-call wall clock printed beside it under one
-    # header (stats-reviewer, 2026-08-31).
+    # header (the statistics review, 2026-08-31).
     per_row: list[float] = []
     for i in range(min(len(test), 200)):
         one = test.iloc[[i]]
@@ -1037,7 +1037,7 @@ def stats_arm(train: pd.DataFrame, test: pd.DataFrame) -> tuple[ArmResult, np.nd
 def null_arm(train: pd.DataFrame, test: pd.DataFrame) -> ArmResult:
     """An intercept-only fit: the base rates, and nothing else. Both real arms
     are measured against it so "better than the LLM" cannot quietly mean
-    "better than nothing". stats-reviewer's point: without a shared null, two
+    "better than nothing". The statistics review's point: without a shared null, two
     scores near chance are indistinguishable from two scores that are simply
     both uninformative."""
     model = competing_risks.fit(train, intercept_only=True)
@@ -1123,7 +1123,7 @@ def llm_arm(
     raw_runs: dict[str, list] = {}
     # A draw, not rows[:variance_n]. At --n 200 the frame is already randomly
     # sampled so a head was harmless, but at --n 1212 it would silently become
-    # the first ~26 mandates in mandate_id order (stats-reviewer, 2026-08-31).
+    # the first ~26 mandates in mandate_id order (the statistics review, 2026-08-31).
     sub_idx = list(test.sample(n=min(variance_n, len(rows)), random_state=0).index)
     sub = [rows[i] for i in sub_idx]
     for temp in temperatures:

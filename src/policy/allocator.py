@@ -4,7 +4,7 @@ Plan.
 
 === The cause-conditioned hazard gap, and how this file resolves it ========
 
-PLAN_DETAIL.md section 4's Q(b, ATTEMPT(d,m)) sums Sigma_c b[c] * h_c(...)
+the build spec section 4's Q(b, ATTEMPT(d,m)) sums Sigma_c b[c] * h_c(...)
 -- hazards conditioned on a specific latent cause c. B5 shipped hazards
 MARGINAL over cause instead (Cause is latent with no production label,
 ever -- DECISIONS.md, 2026-08-28), and src/policy/hazards.py's
@@ -27,7 +27,7 @@ test suite proves this rather than asserting it.
 
 **Consequence for belief across the lookahead: b0 is carried UNCHANGED
 through every recursive node in one solve() call.** The theoretically pure
-version of PLAN_DETAIL's recursion updates belief via
+version of the build spec's recursion updates belief via
 `update(b, obs=survived(c,d,m))` on each "still pending" branch -- but that
 update needs a specific observed DeclineClass (src.policy.belief.update's
 only accepted observation type), and a cause-marginal hazard model has no
@@ -40,7 +40,7 @@ happens at EXECUTION time (B9): the executor observes the actual issuer
 decline string, normalises it, calls belief.update(), and re-invokes
 solve() for the next slot with the genuinely updated belief -- consistent
 with "the allocator is never consulted again for the current cycle"
-(PLAN_DETAIL.md section 4) but *is* consulted again once real evidence
+(the build spec section 4) but *is* consulted again once real evidence
 exists and enough lead time remains.
 
 One practical consequence: since Sigma_c b[c] * h collapses to h regardless
@@ -55,7 +55,7 @@ no honest model of how it would move.
 
 === CIF vs SlotHazard =======================================================
 
-PLAN_DETAIL.md section 2 says "allocator.py takes a CIF object, not a
+the build spec section 2 says "allocator.py takes a CIF object, not a
 HazardModel." There is no CIF *object* in this codebase -- src/model/cif.py
 exposes free functions over (n, 3, 4) numpy arrays, and CIF is the
 recursion's cumulative OUTPUT, not a per-node input; backward induction
@@ -77,13 +77,13 @@ that invariant targets a money value that is ITSELF a float (a balance, an
 amount field, a persisted or displayed currency figure). No Q-value is ever
 persisted, charged, or displayed; the only money that reaches a Plan is
 ctx.amount_paise, copied through unchanged as a plain int on every
-CommittedAttempt. money-auditor review is expected on this file precisely
+CommittedAttempt. The money audit is expected on this file precisely
 because it is easy to mistake one for the other; this paragraph is the
 answer prepared for that review, not a claim it will not be checked.
 
 === Plan.committed's type ===================================================
 
-PLAN_DETAIL.md's file table types this `list[CommittedAttempt]`; this
+the build spec's file table types this `list[CommittedAttempt]`; this
 module uses `tuple[CommittedAttempt, ...]` instead, matching this
 codebase's own convention (every dataclass in src/model/ and src/policy/ is
 frozen; test_profiles.py states the pattern explicitly). A Plan that could
@@ -109,7 +109,7 @@ from src.policy.stopping_rules import AllocationContext, Verdict, permitted
 _SOLVER_VERSION = "b8-backward-induction-v1"
 _MEMO_QUANT_STEP = 1e-6
 
-# Structural day-window constants (PLAN_DETAIL.md section 4, decision 2).
+# Structural day-window constants (the build spec section 4, decision 2).
 # A 30-day repeating cycle is a stated simplifying assumption -- this
 # corpus and simulator have no calendar either (eval/frozen/simulator.py),
 # and the real hour-level 24h lag is enforced at B9 via src.core.clock,
@@ -214,7 +214,7 @@ def _next_day_in_window(lo: int, hi: int, earliest: int, cycle_len: int = _CYCLE
 def committable_days(ctx: AllocationContext) -> list[int]:
     """Four structural day-index candidates for the NEXT attempt slot
     (ctx.attempts_used + 1), each carrying its replenishment-rhythm
-    rationale (PLAN_DETAIL.md section 4, decision 2):
+    rationale (the build spec section 4, decision 2):
 
     - pre-salary: tests whether a residual balance exists, before the
       month's credit.
@@ -235,7 +235,7 @@ def committable_days(ctx: AllocationContext) -> list[int]:
     notification, so the earliest eligible day is plan_day + 1. Under
     `permissive`, the cycle's original notification already covers
     retries, so the earliest eligible day is plan_day itself. This is
-    "shrinking committable_days" (PLAN_DETAIL.md section 4's description of
+    "shrinking committable_days" (the build spec section 4's description of
     `strict`) expressed at the only granularity this layer has -- the real
     hour-level 24h lag is enforced at B9 via src.core.clock, for both
     profiles alike.
@@ -277,7 +277,7 @@ def _binding_constraint(ctx: AllocationContext, r0: int) -> str | None:
     recorded on the Plan for auditability regardless of what the eventual
     chosen_action turns out to be.
 
-    R2, 2026-09-04 (payments-domain review): `ctx.instrument_dead` was
+    R2, 2026-09-04 (the payments-domain review): `ctx.instrument_dead` was
     missing from this function -- a real correctness bug, not a style gap.
     A post-DEAD re-solve that returned REAUTH (ATTEMPT denied ONLY by
     `permitted()`'s instrument_dead rule -- none of the other four checks
@@ -313,7 +313,7 @@ def _value(
     gate: ConformalGate,
     memo: dict,
 ) -> float:
-    """V(b, r, ctx) -- PLAN_DETAIL.md section 4. V(b, 0, ctx) = 0: budget
+    """V(b, r, ctx) -- the build spec section 4. V(b, 0, ctx) = 0: budget
     exhausted, no salvage value."""
     if r <= 0:
         return 0.0
@@ -335,7 +335,7 @@ def _best_action(
     gate: ConformalGate,
     memo: dict,
 ) -> tuple[Action, float, int | None]:
-    """argmax over A(b, r, ctx) of Q(b, a, r, ctx) -- PLAN_DETAIL.md section
+    """argmax over A(b, r, ctx) of Q(b, a, r, ctx) -- the build spec section
     4. Returns (action, its value, the committed day if action is ATTEMPT
     else None). STOP is always feasible at value 0.0 and is the floor every
     comparison is made against, so a genuinely worthless option never wins
@@ -369,7 +369,7 @@ def _best_action(
             # wins only once b[CANT_PAY_EVER] is high enough for its
             # discounted value to beat continuing to retry -- rather than
             # from a hand-picked threshold constant, which
-            # src/policy/CLAUDE.md would require a clause citation for and
+            # src/policy/DESIGN.md would require a clause citation for and
             # which this project has declined three times before (B5's
             # stop-threshold scalar, the paired-criterion reversal, B7's
             # switch_eps).
@@ -378,7 +378,7 @@ def _best_action(
             # src/classify/cause_map.py: mistaking CANT_PAY_EVER for
             # CANT_PAY_NOW costs one retry slot (cheap, reversible);
             # mistaking CANT_PAY_NOW for CANT_PAY_EVER costs a customer we
-            # could have kept. Root CLAUDE.md: the system sometimes
+            # could have kept. Root DESIGN.md: the system sometimes
             # deliberately recovers less this cycle to protect lifetime
             # value.
             q_reauth = (
@@ -410,7 +410,7 @@ def _best_action(
             # belief-weighted: one comparison, two different beliefs.
             #
             # The correction is DEFINITIONAL, not a fit and not a tuning
-            # constant: root CLAUDE.md defines CANT_PAY_EVER as "Instrument
+            # constant: root DESIGN.md defines CANT_PAY_EVER as "Instrument
             # dead -- expired card, closed account, revoked mandate," so
             # P(RECOVERED | CANT_PAY_EVER) ~ 0 follows from what the cause
             # MEANS, not from data. Only the recovery term is scaled --

@@ -336,7 +336,7 @@ def test_timestamps_are_isoformat_strings(client, pg_schema):
 # === the review findings, pinned ============================================
 
 def test_a_voided_attempt_still_derives_as_attempt_and_says_it_is_dead(client, pg_schema):
-    """money-auditor, 2026-09-05, and the fix is NOT the one proposed.
+    """the money audit, 2026-09-05, and the fix is NOT the one proposed.
 
     The reviewer suggested filtering `voided_at IS NULL` out of
     `committed_for_decision()`. That would be wrong: `commit()` writes a
@@ -376,7 +376,7 @@ def test_a_live_committed_row_is_flagged_live(client, pg_schema):
 
 
 def test_the_module_discloses_that_it_has_no_authentication():
-    """compliance-auditor, 2026-09-05: these endpoints serve money amounts,
+    """the compliance audit, 2026-09-05: these endpoints serve money amounts,
     decision rationale and customer outcomes with no auth and no tenant
     scoping. That is a stated non-decision, not an oversight -- and a
     stated non-decision that stops being stated is just an oversight, so

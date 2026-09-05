@@ -1,7 +1,7 @@
 """
 src/core/ids.py -- deterministic identifier derivation only. Must not
 depend on wall-clock time, process identity, or randomness in any form
-(CLAUDE.md invariant 4 / STATE.md's B1 gate names this file explicitly).
+(DESIGN.md invariant 4 / the status notes's B1 gate names this file explicitly).
 
 test_ids_module_imports_no_time_uuid_os_random reads the module's SOURCE
 TEXT rather than importing it and inspecting sys.modules, so it still means

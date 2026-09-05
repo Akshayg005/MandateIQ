@@ -192,7 +192,7 @@ def test_the_mondrian_floor_is_reported_and_met(tiny_sweep):
 
 
 def test_coverage_is_re_reported_after_recalibration(tiny_sweep):
-    """R5 review pass, 2026-09-05 (stats-reviewer): this test's own FIRST
+    """R5 review pass, 2026-09-05 (the statistics review): this test's own FIRST
     version asserted `0.0 <= coverage_marginal_mean <= 1.0`, which cannot
     fail for any probability -- a genuine calibration break (e.g. a
     quantile computation returning garbage) would pass silently. This
@@ -218,7 +218,7 @@ def test_every_point_carries_habitual_fraction_and_repeat_rate(tiny_sweep):
         assert "rate" in p["repeat_false_fire"]
 
 
-# === R5 review pass, 2026-09-05: dependence_sweep() (stats-reviewer, HIGH) ==
+# === R5 review pass, 2026-09-05: dependence_sweep() (the statistics review, HIGH) ==
 
 @pytest.fixture(scope="module")
 def tiny_dependence_sweep():

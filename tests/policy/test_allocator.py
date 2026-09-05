@@ -111,7 +111,7 @@ def test_committable_days_are_strictly_after_the_lead_time_under_strict():
 
 
 def test_strict_and_permissive_committable_days_differ():
-    """The 'shrinking committable_days' PLAN_DETAIL.md describes for strict
+    """The 'shrinking committable_days' the build spec describes for strict
     must be an observable difference, not a vacuous one -- both profiles
     must not silently produce the same set."""
     strict_days = committable_days(_ctx(profile=Profile.strict, plan_day=4, attempts_used=1))
@@ -219,7 +219,7 @@ def test_attempt_value_is_discounted_by_belief_the_instrument_is_dead():
     belief. Left undiscounted, the allocator would value an attempt at
     population-average recovery odds while believing the instrument is
     dead, and burn NPCI slots on it. Scaling ONLY the recovery term by
-    (1 - b[CANT_PAY_EVER]) follows from root CLAUDE.md's own definition of
+    (1 - b[CANT_PAY_EVER]) follows from root DESIGN.md's own definition of
     CANT_PAY_EVER ("instrument dead"), not from any fit.
 
     Checked as a strict ordering rather than a pinned constant: an
@@ -371,7 +371,7 @@ def test_revoked_denies_attempt_but_allows_reauth():
 
 
 def test_instrument_dead_denies_attempt_and_names_itself_as_the_binding_constraint():
-    """R2, 2026-09-04 (payments-domain review): _binding_constraint() was
+    """R2, 2026-09-04 (the payments-domain review): _binding_constraint() was
     missing ctx.instrument_dead entirely -- a real correctness bug, not a
     style gap. A REAUTH forced by this rule alone (none of AFA_CLIFF/
     ATTEMPT_CAP_EXHAUSTED/OPTED_OUT/MANDATE_REVOKED apply) previously wrote
@@ -413,7 +413,7 @@ def test_decision_sha256_changes_with_amount():
 
 def test_marginal_hazard_makes_the_cause_sum_an_identity():
     """Sigma_c b[c] * h == h when h does not vary with c, for any belief on
-    the simplex -- the identity that makes narrowing PLAN_DETAIL.md's
+    the simplex -- the identity that makes narrowing the build spec's
     Sigma_c b[c] * h_c(...) down to a single marginal h lossless given the
     available (cause-marginal) hazard source. Checked directly, not just
     asserted in a docstring."""

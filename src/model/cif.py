@@ -15,7 +15,7 @@ in Outcome int order [RECOVERED, DEAD, OPTED_OUT], axis 2 indexes SLOT
 1, 2, 3, 4 (0-indexed 0..3) -- the cumulative incidence of that cause by that
 slot, inclusive. `survival(h)` returns shape (n, 4): S(1), S(2), S(3), S(4).
 
-Recursion (PLAN_DETAIL.md section 2, "CIF"):
+Recursion (the build spec section 2, "CIF"):
     S(1) = 1                                   # hard-wired
     CIF_c(1) = 0                                # hard-wired
     for slot k in (2, 3, 4):                    # h's row index (k - 2)
@@ -100,7 +100,7 @@ def terminal_distribution(h: np.ndarray) -> np.ndarray:
     before slot 4 (src/model/paths.terminal_labels()'s eligibility filter)
     -- about 4% of the corpus, and NOT a random 4%: exclusion is exactly
     "committed day4 > MAX_DAY", the same draw that also sets
-    in_salary_window, a model covariate (stats-reviewer, B6, DECISIONS.md
+    in_salary_window, a model covariate (the statistics review, B6, DECISIONS.md
     2026-08-28 finding 4). Harmless for conformal calibration/coverage
     (both the fitting and reporting populations are filtered identically --
     confirmed by an independent permutation control), but the eligible

@@ -305,7 +305,7 @@ def test_cell_counts_structure():
 def test_cell_counts_full_grid_reported_even_when_a_cell_is_zero():
     """cell_counts() must report all 18 (cause x slot x bucket) cells,
     including any that are genuinely 0 -- this is the exact bug
-    stats-reviewer's B4 finding 3 caught: the old dict.get()-based
+    the statistics review's B4 finding 3 caught: the old dict.get()-based
     accumulation only created a key for a cell that occurred at least once,
     so a truly empty cell was invisible to thin_cells(), which only filters
     counts.items(). A single episode with a single slot-2 attempt cannot
@@ -353,7 +353,7 @@ def test_generate_raises_on_empty_cell(monkeypatch):
     a corpus with a zero-count cell. Forced deterministically by disabling
     the compressed-schedule component (COMPRESSED_FRAC=0.0) and using only
     2 seeds -- under wide-only draws, slot 3/4 landing in the salary window
-    is vanishingly rare (this is literally the bug stats-reviewer found:
+    is vanishingly rare (this is literally the bug the statistics review found:
     0/365 slot-4-in-window rows under the pre-fix schedule), so this
     reliably reproduces an empty cell without depending on luck."""
     import eval.corpus as corpus_module
@@ -384,7 +384,7 @@ def test_generate_default_corpus_has_no_thin_cells():
     non-recurring salary window, not a remaining bug.
 
     TRAIN_SEEDS was widened 10 -> 40 on 2026-08-28 (DECISIONS.md, B5
-    stats-reviewer entry, finding 2 -- unrelated motivation: a held-out
+    the statistics review entry, finding 2 -- unrelated motivation: a held-out
     log-loss claim needed more statistical power). That widening resolved
     this disclosed limitation as a side effect: all three cells now clear
     MIN_CELL_COUNT (22/52/38), and the corpus has zero thin cells anywhere.

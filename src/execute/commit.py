@@ -1,6 +1,6 @@
 """Turns one src.policy.allocator.Plan into durable rows: always a `plan`
 row, and -- iff the chosen action is ATTEMPT -- one `committed_schedule`
-row. This file is new scope beyond PLAN_DETAIL.md's B9 file table, added
+row. This file is new scope beyond the build spec's B9 file table, added
 because nothing upstream of it writes either table: B8's solve() is
 "pure and DB-free" by its own docstring, so something has to be the first
 thing that persists a decision. Approved and logged in DECISIONS.md,
@@ -35,7 +35,7 @@ This module does NOT special-case that away by silently pushing the date
 out: doing so would be the allocator's decision to make (a different
 `on_day`), not this layer's to invent, and it would be exactly the kind of
 late read that ACTS rather than stops -- forbidden by the same asymmetry
-PLAN_DETAIL.md section 1's late-read principle states for the executor.
+the build spec section 1's late-read principle states for the executor.
 Instead: the INSERT is attempted as computed, and `committed_schedule`'s
 own CHECK constraint is the enforcement. A violation is caught narrowly and
 re-raised as CommitError -- a clear, typed signal that this specific Plan

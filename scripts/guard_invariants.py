@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """Architectural invariant guard. Cross-platform.
 
-Runs as a Claude Code PostToolUse hook on every Edit/Write. Exits non-zero
+Runs as an editor/pre-commit guard on every edit. Exits non-zero
 with a readable reason when an edit violates a project invariant.
 
 This file is a deliverable. It is the mechanical proof that the "no LLM in
 the decision core" claim in the README is an enforced property rather than a
 paragraph of intent.
 
-Invariants enforced (see CLAUDE.md):
+Invariants enforced (see DESIGN.md):
   1. src/model/, src/policy/, src/core/ may not import an LLM client
   2. money is integer paise, never float
   5. no live Razorpay keys anywhere in the repo
@@ -17,7 +17,7 @@ Invariants enforced (see CLAUDE.md):
 Usage:
   python scripts/guard_invariants.py [FILE ...]
   python scripts/guard_invariants.py --all      # scan every tracked .py
-File paths come from argv, CLAUDE_FILE_PATHS, stdin JSON, or git -- in that
+File paths come from argv, MANDATEIQ_FILE_PATHS, stdin JSON, or git -- in that
 order -- so it works identically under bash, PowerShell and cmd.
 """
 from __future__ import annotations
@@ -45,7 +45,7 @@ PROTECTED_DIRS = ("src/model/", "src/policy/", "src/core/", "src/classify/")
 # because the money checks ran only over PROTECTED_DIRS -- i.e. exactly where
 # the rule already held -- so `guard_invariants --all` reported "clean" while
 # the violation sat in the file that writes the report. A guard scoped to
-# where a rule is already obeyed is not a guard. (payments-domain review.)
+# where a rule is already obeyed is not a guard. (the payments-domain review.)
 #
 # Added 2026-09-05 (R6): "src/api/". A directory in neither PROTECTED_DIRS
 # nor MONEY_DIRS gets NO float-money scanning at all -- precisely the
@@ -72,7 +72,7 @@ LLM_IMPORT = re.compile(
 
 # B11 extension: protected dirs also cannot import the first-party src.llm
 # package. `from src import llm` bypassed the original single-alternative
-# form (payments-domain review, 2026-08-31) -- the exact same miss the
+# form (the payments-domain review, 2026-08-31) -- the exact same miss the
 # google.genai fix three lines above this one already had to patch for
 # `from google import genai`, reproduced here in the fix meant to close it.
 SRC_LLM_IMPORT = re.compile(
@@ -124,7 +124,7 @@ FAULT_SEAM_OK = ("src/execute/razorpay_client.py", "eval/chaos.py")
 # same limitation: direct textual `import`/`from` forms only. A relative
 # `from .sim2 import ...` (eval/ is a PEP-420 namespace package, so this
 # resolves), `importlib.import_module("eval.sim2")`, or a transitive import
-# via some other eval/ module all evade this regex -- stats-reviewer,
+# via some other eval/ module all evade this regex -- the statistics review,
 # 2026-09-04 (DECISIONS.md, "R1b review pass"). Disclosed, not closed: the
 # same gap already exists for SRC_LLM_IMPORT above and nothing here makes
 # it worse.
@@ -251,8 +251,8 @@ def main() -> int:
         # return value contradicted it (found in the 2026-08-29 vacuous-
         # checks audit, DECISIONS.md). Confirmed empirically the same day:
         # a genuine violation's exit-2 stderr surfaces fully as a
-        # PostToolUse:Write hook message; there is no equivalent proof
-        # exit 0 would have been seen at all, and the Stop hook's own
+        # blocking write-guard message; there is no equivalent proof
+        # exit 0 would have been seen at all, and the pre-commit gate's own
         # documented contract (exit 0 -> debug log only, never shown) is
         # the same family of risk. Exit 2 here now, so "nothing was
         # checked" gets the same loud treatment as "a violation was found"
@@ -271,7 +271,7 @@ def main() -> int:
         print("\n[X] INVARIANT VIOLATION\n", file=sys.stderr)
         for x in problems:
             print(f"  - {x}", file=sys.stderr)
-        print("\nSee CLAUDE.md > Non-negotiable invariants.\n", file=sys.stderr)
+        print("\nSee DESIGN.md > Non-negotiable invariants.\n", file=sys.stderr)
         return 2
 
     if "--all" in sys.argv or "-v" in sys.argv:

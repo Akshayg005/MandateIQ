@@ -1,9 +1,9 @@
 """Regulatory constants governing when a debit may bypass Additional Factor
 of Authentication (AFA). Every constant here must cite its RBI clause --
-root CLAUDE.md's "no unattributed magic numbers" rule.
+root DESIGN.md's "no unattributed magic numbers" rule.
 
 Source: RBI "Digital Payments -- E-mandate Framework, 2026", circular
-RBI/DPSS/2026-27/396, dated 21 April 2026 (see root CLAUDE.md's regulatory
+RBI/DPSS/2026-27/396, dated 21 April 2026 (see root DESIGN.md's regulatory
 constants table).
 
 This file is created early, at B4, because eval/corpus.py's AFA-cliff
@@ -23,7 +23,7 @@ for clause 4(c)'s mandate ceiling (`within_mandate_ceiling`).
 
 Attempt-cost, mandate-LTV, re-auth cost, quiet hours, and contact-frequency
 caps carry no RBI clause and do NOT belong in this file -- per
-src/policy/CLAUDE.md they are tuning parameters for a config file, not a
+src/policy/DESIGN.md they are tuning parameters for a config file, not a
 regulatory constant. B8 owns where they land.
 """
 from __future__ import annotations
@@ -64,7 +64,7 @@ def requires_afa(amount_paise: int, category: str) -> bool:
 
 # NPCI: 1 original attempt + 3 retries = 4 attempts total, ever. Not itself
 # an RBI clause -- NPCI's own attempt-budget rule, cited the same way
-# throughout this codebase (root CLAUDE.md's regulatory constants table).
+# throughout this codebase (root DESIGN.md's regulatory constants table).
 # Currently also expressed independently in src/model/paths.py's HORIZON,
 # src/ledger/schema.sql's two `attempt_index` CHECK constraints, and
 # eval/frozen/simulator.py's slot-range guard -- src/model/ and src/core/
@@ -85,7 +85,7 @@ COMMIT_LEAD_HOURS = 24
 
 
 # Clause 6(d): pre-notification is exempt only for FASTag / NCMC
-# auto-replenishment. Out of scope for this system -- root CLAUDE.md:
+# auto-replenishment. Out of scope for this system -- root DESIGN.md:
 # "assert we never hit this path" -- so these categories never reach a
 # committable attempt at all, rather than being silently handled correctly.
 PRE_NOTIFICATION_EXEMPT_CATEGORIES = frozenset({"fastag", "ncmc"})

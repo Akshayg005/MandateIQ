@@ -283,7 +283,7 @@ def test_find_by_receipt_never_filters_payments_by_receipt():
 
 def test_module_never_calls_a_cancellation_endpoint():
     """Invariant 6, checked at the source level here too (in addition to
-    the PostToolUse guard) so this test fails loudly in CI even if the
+    the write-guard) so this test fails loudly in CI even if the
     hook is ever bypassed."""
     import pathlib
 

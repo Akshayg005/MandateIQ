@@ -10,7 +10,7 @@ else -- if a number appears in `reports/` it came out of this file, so
 "reproducible by one command" is a property of the pipeline rather than a
 claim in prose.
 
-Per PLAN_DETAIL.md's B13 row this module must NOT print per-mandate logs to
+Per the build spec's B13 row this module must NOT print per-mandate logs to
 stdout. It prints one progress line per cell and a final summary; the
 per-mandate detail goes to the JSON artifact.
 
@@ -123,7 +123,7 @@ DEFAULT_CHANNEL_KIND = "decline"
 # mandate ids are namespaced (see _calib_group_id) so a real disjointness
 # check WOULD have something meaningful to compare against.
 #
-# CORRECTED, R5 review pass, 2026-09-05 (stats-reviewer): this comment
+# CORRECTED, R5 review pass, 2026-09-05 (the statistics review): this comment
 # previously claimed conformal.assert_disjoint() "can actually check the
 # split" here, as though it does. It is never called on this path --
 # verified: `assert_disjoint` appears only in eval/model_fit_report.py, a
@@ -207,7 +207,7 @@ class CellResult:
     false_offramp_paise: int = 0
     # R5, ADDED BESIDE IT, never folded into it. false_offramp_count had no
     # denominator: an OFFER to a mandate that would NOT have paid was
-    # counted nowhere, so root CLAUDE.md's "report BOTH error costs" was one
+    # counted nowhere, so root DESIGN.md's "report BOTH error costs" was one
     # real number and one structural zero. These three make the pair two
     # measurements.
     #   offramp_scored_count -- OFFERs that reached the counterfactual at
@@ -315,9 +315,9 @@ class _RecordingGate:
     wrong ACTION rather than an abstention. Replaying slot 1 also ignored
     `arm` and `profile` entirely, so six distinct numbers were being printed
     as thirty-two. Recording what the gate was actually asked fixes both.
-    (stats-reviewer, 2026-08-31.)
+    (the statistics review, 2026-08-31.)
 
-    R2, 2026-09-04 (payments-domain review): each recorded query now also
+    R2, 2026-09-04 (the payments-domain review): each recorded query now also
     carries whether its belief was a LIVE, ordinarily-inferred one or a
     RETROSPECTIVE one from belief.observe_terminal() (tagged
     `;observed=terminal` in `Belief.provenance`). Reason: `calib_conf` (the
@@ -474,7 +474,7 @@ def _run_engine_mandate(m, sim: Simulator, profile: Profile, hazard,
         # instead of the plain proxy -- see eval/allocator_sweep.py's
         # channel section.
         #
-        # CORRECTED, R5 review pass, 2026-09-05 (stats-reviewer): this
+        # CORRECTED, R5 review pass, 2026-09-05 (the statistics review): this
         # comment previously claimed the channel "consumes exactly one draw
         # per decision point regardless of which branch is taken". Verified
         # FALSE for two of the four outcomes: `channel_decline_class()`
@@ -496,7 +496,7 @@ def _run_engine_mandate(m, sim: Simulator, profile: Profile, hazard,
         if result.outcome != Outcome.STILL_PENDING:
             # Terminal. The ATTEMPT sequence is over, but the DECISION
             # sequence is not: a dead instrument is exactly when REAUTH is
-            # the right next action (CLAUDE.md's own cause->action table).
+            # the right next action (DESIGN.md's own cause->action table).
             #
             # R2, 2026-09-04: DEAD and OPTED_OUT are OBSERVED facts, not
             # decline-string evidence to Bayes-update on -- belief_mod.
@@ -591,7 +591,7 @@ def _run_engine_mandate(m, sim: Simulator, profile: Profile, hazard,
         # ATTEMPT -- on a mandate whose instrument the issuer just confirmed
         # DEAD, or which just OPTED_OUT. The first version of this function
         # counted only OFFER/REAUTH/STOP, so this case fell through every
-        # branch and was silently discarded; payments-domain found it by
+        # branch and was silently discarded; the payments-domain review found it by
         # re-running the same solve path and getting 16 ATTEMPTs and 0
         # REAUTHs on 19 observed-DEAD mandates. Counting it is what makes
         # that visible in the report instead of invisible in the code.
@@ -721,7 +721,7 @@ def _calibration_rows(
     which stream position each mandate's slot-1 fire-check lands on. Verified
     harmless: WontPayChannel's own dedicated _CALIB_CHANNEL_OFFSET stream has
     exactly one consumer, so this changes which draw a mandate gets, never
-    the distribution it is drawn from (stats-reviewer, R8 review pass).
+    the distribution it is drawn from (the statistics review, R8 review pass).
 
     Grinds UNCONDITIONALLY (as if ATTEMPT were the allocator's own choice at
     every slot) rather than replaying the allocator's actual decisions:
@@ -840,7 +840,7 @@ def fit_gate(base_cfg: dict, *, alpha: float = 0.05, channel_spec=None):
     except conformal.ConformalUnderpowered as exc:
         return FullSetGate(), "full_set", {"reason": f"underpowered: {exc}"}
 
-    # R8, 2026-09-05 (stats-reviewer): calib_per_class counts ROWS, and since
+    # R8, 2026-09-05 (the statistics review): calib_per_class counts ROWS, and since
     # _calibration_rows can contribute up to 3 per mandate, "the floor holds"
     # (ceil(1/alpha)-1 = 19 rows) is a weaker proof than it was pre-R8, when
     # one mandate was one row. calib_units_per_class counts DISTINCT mandate
@@ -886,7 +886,7 @@ def _score_recorded_queries(recorder: "_RecordingGate", truth: dict[str, Cause],
     conformal's entire purpose is class-conditional coverage, and a marginal
     number can sit at target while one class is badly under-covered.
 
-    R2, 2026-09-04 (payments-domain review): filters to LIVE queries only
+    R2, 2026-09-04 (the payments-domain review): filters to LIVE queries only
     (see _RecordingGate's docstring for why a retrospective, observe_
     terminal()-built belief is not exchangeable with calib_conf and would
     contaminate this measurement). cell.coverage_n_retrospective records
@@ -1012,7 +1012,7 @@ def run_null_cell(regime: str, arm: str, profile: Profile, cfg: dict, seed: int,
     that column forward, which made the headline unfalsifiable: every metric
     here is monotonically decreasing in attempt count by construction, so
     "preserves more" follows from "attempts less" and says nothing about
-    knowing WHY a payment failed. payments-domain measured one_shot beating
+    knowing WHY a payment failed. The payments-domain review measured one_shot beating
     the engine on that bar in 14 of 16 cells. Printing both columns is what
     stops the report overstating the system.
     """

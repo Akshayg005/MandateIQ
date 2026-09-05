@@ -89,7 +89,7 @@ statsmodels / lifelines / scikit-learn stack already supports.
 
 ### 2026-08-26 · B0 · Work keyed to dependency blocks, not calendar days
 
-`PLAN.md`'s `Day N` headings are superseded by `B0`–`B16` in
+The project plan's `Day N` headings are superseded by `B0`–`B16` in
 `reports/gates.md`. A block is sized by what it can *prove*, so two may close
 in one sitting and one may take three. Progress is gates passed, never blocks
 started. Calendar days encouraged ticking a gate because the day was over.
@@ -99,7 +99,7 @@ started. Calendar days encouraged ticking a gate because the day was over.
 `nominal` + `misspecified` + **`coupled`** (mandates share one household
 balance; our own debit consumes it).
 
-*Why.* `payments-domain` found that `solve()` is per-mandate with no batch
+*Why.* the payments-domain review found that `solve()` is per-mandate with no batch
 capacity term, so every `CANT_PAY_NOW`-dominant mandate computes the same
 argmax day and the allocator builds a debit storm. Worse, when our own first
 debit consumes the balance the second returns `INSUFFICIENT_FUNDS`, which
@@ -121,7 +121,7 @@ seen. The reason is recorded inline in `gates.md`.
 Pre-salary · salary window (days 1–5) · post-salary · month-end, each carrying
 its replenishment-rhythm rationale in a docstring.
 
-*Why.* `payments-domain` correctly noted that "a few thousand nodes" ignored
+*Why.* the payments-domain review correctly noted that "a few thousand nodes" ignored
 date branching: the tree is `(|days|·|DeclineClass|)^4`, so ~20 arbitrary days
 gives `≈10^8` and the exact-solve claim would have to be dropped. Partially
 pushed back — the fix is to restrict the day set and *say so*, not to abandon
@@ -142,9 +142,9 @@ costs the off-ramp lane and the coverage claim, not the allocator.
 *Consequence.* `eval/run.py` records which gate was active, and B13's report may
 make the 95%-coverage claim only for runs where the real `conformal.py` gate was.
 
-### 2026-08-26 · B1 · money-auditor review — two real bugs fixed, one fix rejected
+### 2026-08-26 · B1 · money audit — two real bugs fixed, one fix rejected
 
-`money-auditor` reviewed the six B1 files before the gate was ticked (required
+The money audit reviewed the six B1 files before the gate was ticked (required
 by the definition of done: any diff touching money or the ledger). Findings,
 and what was done with each:
 
@@ -213,7 +213,7 @@ way.
 now, at B1. B3 adds the revocation event route; B9 implements the void path and
 the `UNCONFIRMED` resolution against DDL that already exists.
 
-*Why.* `payments-domain` filed the opt-out-inside-the-window gap as a B9
+*Why.* the payments-domain review filed the opt-out-inside-the-window gap as a B9
 concern, but most of it is DDL, and `schema.sql` plus `ids.py` are what B1's
 gate certifies. Doing it at B9 means reopening a passed gate and rewriting
 `schema.sql`, `store.py`, `ids.py` and their tests after they were signed off.
@@ -267,14 +267,13 @@ cloglog for CANT_PAY_NOW's base rates).
 freeze exists to prevent, caught one step early: a config number
 (`link: cloglog`) that looks like it pre-registers a real difference, backed
 by an implementation that quietly doesn't produce one. Pre-freeze iteration
-on the generative mechanism itself is expected and healthy — CLAUDE.md's
+on the generative mechanism itself is expected and healthy — DESIGN.md's
 "immutable after the Day-1 freeze commit" is about after the commit, not
 about never revising the design while `src/policy/` is still empty. Found
 via `tests/eval/test_simulator.py::test_misspecified_uses_cloglog_not_softmax_directly`,
 before any git commit existed for `eval/frozen/`.
 
-**What `coupled` is verified to reproduce, empirically, before payments-domain
-review:** a controlled scenario (`tests/eval/test_simulator.py`,
+**What `coupled` is verified to reproduce, empirically, before the payments-domain review:** a controlled scenario (`tests/eval/test_simulator.py`,
 `_tight_coupled_config`) shows household balance depleting monotonically as
 members are attempted in order, later-scheduled members showing a
 significantly higher `iatrogenic_insufficient_funds` rate than earlier ones,
@@ -287,7 +286,7 @@ no coupling mechanic at all).
 
 ### 2026-08-26 · B2 · Freeze corrected — money-fabrication bug found by required gate review
 
-`payments-domain` (B2's required review, dispatched in the same session,
+The payments-domain review (B2's required review, dispatched in the same session,
 before the working tree had a single file under `src/policy/`) found that
 `coupled`'s household-balance coupling fabricated money: a below-balance
 attempt had a chance to "recover anyway," crediting the mandate's full
@@ -374,7 +373,7 @@ as anything else to a reviewer. `eval/frozen/` stays as re-frozen at
 *What `coupled` was actually built to show, restated.* Independence, not
 scheduling skill, is what `coupled` varies. A per-mandate allocator that
 never checks batch-level contention builds its own debit storm and
-misreads the result as customer illiquidity (PLAN_DETAIL.md finding 1) —
+misreads the result as customer illiquidity (the build spec finding 1) —
 that is a claim about **wasting less under contention**, not about
 **recovering more**. Money recovered was never the right axis to hold
 `coupled` to a "beats the ladder" bar on.
@@ -413,7 +412,7 @@ arm is actually built to test:
 - **attempts spent and iatrogenic count** — binds on `coupled` only.
 - **mandates preserved** — binds on all three arms.
 
-`reports/gates.md` and `PLAN_DETAIL.md`'s B5 section updated to match, both
+`reports/gates.md` and the build spec's B5 section updated to match, both
 carrying this entry's date, the same pattern as the "both" → "all three"
 amendment already on that line.
 
@@ -424,7 +423,7 @@ record the cause-aware-oracle finding, the fixed contention order
 arm-by-metric split, the same way the misspecified-arm asymmetry is already
 documented there. That file is under `eval/frozen/`, and `guard_frozen.py`
 denies every agent edit to it unconditionally — per its own docstring, this
-needs a human edit outside a Claude session, the same path the 2026-08-26
+needs a deliberate human edit outside the normal write path, the same path the 2026-08-26
 corrected freeze used. Not yet applied as of this entry — pending the
 user's choice of how to route a second frozen-file amendment.
 
@@ -473,7 +472,7 @@ says so. The reliable channel for clause 6(c) signal is
 `MandateState.REVOKED` — a structurally different, more trustworthy signal
 than anything decline text can offer.
 
-*The gap this leaves, found by `compliance-auditor`'s B3 review.* If that
+*The gap this leaves, found by the compliance audit's B3 review.* If that
 subscription webhook is delayed beyond the 48h replay window or genuinely
 never arrives (Razorpay retries failed delivery on backoff for 24h, then
 gives up), the only signal remaining is the weak decline-text match — and
@@ -485,7 +484,7 @@ a future executor consulting only that table could attempt again.
 — treat a repeated pattern of `MANDATE_REVOKED`-classified `ingested_event`
 rows with no corresponding lifecycle row as secondary revocation evidence —
 is executor-side interpretation logic, which is B9's `pre-call re-read`
-concern (PLAN_DETAIL.md §1 B9's "late-read principle"), not B3's ingest
+concern (the build spec §1 B9's "late-read principle"), not B3's ingest
 concern. Designing it now, before B9's belief/executor machinery exists,
 would be guessing at an interface that doesn't exist yet. What B3 *has* done
 is make the fallback possible: every weakly-classified `MANDATE_REVOKED`
@@ -520,14 +519,14 @@ sharpens it.* This system was never designed to lean on provider-side
 dedup as a backstop: invariant 3 (ledger write before money action) and
 `ledger_intent_once`'s partial unique index exist specifically so that a
 second `Order.create`/`Payment` call for the same attempt is *never issued
-in the first place* — the lease-claim-before-send step in PLAN_DETAIL.md
+in the first place* — the lease-claim-before-send step in the build spec
 §3's write-ordering protocol is the actual safety mechanism, not a
 courtesy. This result proves that assumption was load-bearing correctly:
 had `razorpay_client.py` been designed around "the provider will catch a
 duplicate for us," this finding would have been a shipped double-charge
 path, not a spike result.
 
-*Consequence for B9.* `PLAN_DETAIL.md` §1 B9 already names
+*Consequence for B9.* the build spec §1 B9 already names
 `find_by_receipt` as `razorpay_client.py`'s recovery interface rather than
 "trust the key" — this result confirms that was the right call, for a
 stronger reason than originally written (not "belt and braces," but "the
@@ -541,7 +540,7 @@ resending. Implementation deferred to B9, per plan.
 
 ### 2026-08-27 · B3 · payments-domain review — taxonomy fixed, cause_map's safe-default corrected, two gaps disclosed
 
-`payments-domain`'s required B3 review (decline-taxonomy coverage) ran
+The payments-domain review's required B3 review (decline-taxonomy coverage) ran
 adversarially rather than confirmatory, and found real, demonstrated
 failures — not speculation — by feeding `classify()` the actual verified
 Razorpay `error_description` strings this session's own research had
@@ -578,11 +577,11 @@ the check explicitly, since it's a real, specific Razorpay code for exactly
 this case; pinned with a named regression test.
 
 **Fixed — `cause_map.py`'s ambiguous-class priors violated documented
-project policy.** `.claude/skills/new-failure-class/SKILL.md` already says,
+project policy.** `docs/new-failure-class.md` already says,
 for a genuinely ambiguous class: *"map it to CANT_PAY_NOW (the safe
 default: we retry rather than offer an exit)."* `UNKNOWN` (exact uniform)
 and `ISSUER_DECLINE` (near-uniform) both violated this — a design choice
-made last session (PLAN_DETAIL.md, before this skill file was consulted)
+made last session (the build spec, before this skill file was consulted)
 reasoning from statistical honesty ("no signal → no opinion") rather than
 this project's actual safety framing. The reviewer's sharper point: the
 three causes are not symmetric in consequence — `CANT_PAY_NOW` costs a
@@ -600,7 +599,7 @@ also asserts the skew stops short of 0.75 (an abstention, not overconfidence).
 ruleset produced it — the same gap B11's gate exists to close for the LLM
 normaliser ("normaliser output is versioned in the ledger before it can
 touch a belief"), just for the keyword matcher instead, and arguably more
-urgent given `new-failure-class/SKILL.md` states outright that *"the
+urgent given `docs/new-failure-class.md` states outright that *"the
 taxonomy will grow all week."* Two nullable columns, `taxonomy_version` /
 `prior_version`, added to `ingested_event`; `decline_taxonomy.TAXONOMY_VERSION`
 / `cause_map.PRIOR_VERSION` module constants added, bumped by hand,
@@ -631,7 +630,7 @@ Splitting it into better-fitting sub-bins is a real improvement but a
 larger redesign than a review-response pass should attempt unilaterally —
 noted for whoever next touches this file, not actioned here.
 
-**Independently corroborates the compliance-auditor's finding, same
+**Independently corroborates the compliance audit's finding, same
 session:** both reviews, working from different files and different
 reasoning paths, converged on the same real gap — `lifecycle_route.py`
 declines to map `pending`/`halted` because the taxonomy said the reliable
@@ -666,7 +665,7 @@ landed in `ingested_event`:
   session had never seen before ("Your payment didn't go through due to a
   temporary issue...") — matched via the `payment_failed` keyword, one
   layer of coverage this same session added in response to
-  payments-domain's review.
+  the payments-domain review's.
 - `cause_prior = {"CANT_PAY_NOW": 0.6, "CANT_PAY_EVER": 0.2, "WONT_PAY":
   0.2}` — the corrected safe-default skew, also confirmed live.
 - `taxonomy_version = "v1"`, `prior_version = "v2"` both stamped.
@@ -689,7 +688,7 @@ exercise the UPI-specific vocabulary this session researched as thoroughly.
 **Flagging for the user, not this session to fix:** this test account is
 missing both **Subscriptions** (no `subscription.*` category in the
 webhook event picker) and, now confirmed, **UPI** as a Checkout payment
-method. `SETUP_GUIDE_WINDOWS.md` Stage B already anticipated the
+method. the setup guide Stage B already anticipated the
 Subscriptions gap ("if it is missing or greyed out, request activation via
 support right now") — worth doing that request now, since B9's
 `pause_subscription` and any real e-mandate registration testing need it,
@@ -704,8 +703,8 @@ charge for unused or failed test-mode orders.
 ### 2026-08-27 · B2 · protocol.md correction applied — FREEZE_HASH updated again
 
 The Known-limitations bullets and per-arm restatements drafted in the entry
-above were pasted into `eval/frozen/protocol.md` by hand, outside a Claude
-session (one paste-seam bug — a missing line break between the last
+above were pasted into `eval/frozen/protocol.md` by hand, outside the normal write path
+(one paste-seam bug — a missing line break between the last
 existing bullet and the first new one, which would have silently merged
 into the preceding paragraph rather than rendering as its own bullet — was
 caught in review before commit and fixed), then committed as `4daf9ec`
@@ -725,7 +724,7 @@ truth elsewhere), `eval/corpus.py` (exploring-behaviour-policy training
 corpus), `src/model/person_period.py` (`build`/`validate`),
 `src/model/features.py` (`featurize`, `SPEC_COLUMNS`, `UNSOURCED`,
 `FORBIDDEN`), `src/model/splits.py` (`split`). Tests written first via
-`test-writer`, four new files under `tests/model/` and `tests/eval/`.
+The test-generation pass, four new files under `tests/model/` and `tests/eval/`.
 
 **Why training data is not the frozen ladder's own episodes.** The fixed
 T+1/T+2/T+3 cadence (`sim_config.yaml:26-33`) attempts on days 1/2/3 —
@@ -775,7 +774,7 @@ it perfectly collinear with the intercept once dummy-encoded — drop it
 from the design matrix, or only include it when a batch genuinely mixes
 both profiles' rows.
 
-**Reviews, round 1.** `compliance-auditor`: all four items VERIFIED (AFA
+**Reviews, round 1.** the compliance audit: all four items VERIFIED (AFA
 paise conversion exact; category gating matches `sim_config.yaml` exactly;
 AFA-cliff exclusion is the compliant response; no `rzp_live_`, no
 cancellation calls). One recommendation applied: `assert_legal()`'s
@@ -783,12 +782,12 @@ docstring now states explicitly that its clause 6(a) check is a
 training-data artifact (day granularity only, no hour component), not real
 enforcement, naming the exact failure mode (a schedule committed at 23:59
 and attempted at 00:01) a future B9 session must not assume this already
-covers. `money-auditor`: clean, no defects — every money value confirmed
+covers. The money audit: clean, no defects — every money value confirmed
 Python `int` end to end from `SimMandate` through `.astype("int64")`, no
 float/division, no unit mismatch, no fabrication/duplication across
 `build()`/`featurize()`.
 
-**Review, round 2 — `stats-reviewer`, NOT clean on the first pass.**
+**Review, round 2 — the statistics review, NOT clean on the first pass.**
 Verified clean, with hard evidence: censoring (319/1,769 episodes censored,
 all kept as `STILL_PENDING`/`event_code=0`, none dropped or relabeled,
 worked example B round-trips exactly); `featurize()` leakage (every
@@ -834,7 +833,7 @@ enforcement. But found four real defects, all now fixed:
    prevent — while a reliability diagram fit and read on the same rows
    would still look diagonal. *Fix:* `src/model/splits.py`'s `split()` now
    returns **four** frames — `(train, calib_iso, calib_conf, test)` at
-   **70/10/10/10** (changed from PLAN_DETAIL.md's literal 3-tuple
+   **70/10/10/10** (changed from the build spec's literal 3-tuple
    interface; the guarantee could not be delivered otherwise). `calib_iso`
    fits isotonic (B6); `calib_conf`, a disjoint mandate set, supplies the
    conformal quantile. At ~1,769 mandates each lands near 175-180, clearing
@@ -905,9 +904,9 @@ slot 2) branch is unreachable under `generate()`'s current defaults
 is fine (a future `max_day`/schedule change could make it reachable, and
 `build()` must keep handling it correctly regardless).
 
-**Test-writer bugs found and fixed by hand, not routed around.** Three
+**Generated-test bugs found and fixed by hand, not routed around.** Three
 genuine defects in the generated test suite, found by actually running it
-rather than trusting the subagent's summary: (1)
+rather than trusting the generator's summary: (1)
 `test_spec_columns_equals_emitted_plus_unsourced` computed "emitted" as a
 set-difference against `build()`'s columns, which excludes any column
 `featurize()` legitimately carries through unchanged (`amount_paise`,
@@ -960,7 +959,7 @@ standard as the B3 and earlier B5 rebinds.
 
 #### 1. The finding: three of B5's four gate clauses do not measure the model
 
-`payments-domain` (dispatched during planning, per PLAN.md's prescription for
+The payments-domain review (dispatched during planning, per the project plan's prescription for
 this block) constructed a **null policy** — attempt slot 2 once, stop, consult
 nothing — and scored it paired against the fixed ladder over seeds 0-19. The
 result was reproduced independently in the main session before being accepted:
@@ -1019,7 +1018,7 @@ would have passed a broken model through to B8 with a green tick behind it.
 > ★ competing risks + CIF: beats the ladder on **recovered money**
 > (misspecified arm), on **attempts spent and iatrogenic count** (coupled arm),
 > and on **mandates preserved** (all three arms); `Σ_c CIF_c(4) + S(4) == 1`;
-> stats-reviewer returns clean
+> the statistics review returns clean
 
 **New text:**
 
@@ -1027,7 +1026,7 @@ would have passed a broken model through to B8 with a green tick behind it.
 > the `test` split beat an intercept-only MNLogit null; transfer degradation of
 > that same fit reported on `misspecified` and `coupled` frames;
 > calibration-in-the-large reported per `slot × in_salary_window` cell;
-> `Σ_c CIF_c(4) + S(4) == 1`; stats-reviewer returns clean
+> `Σ_c CIF_c(4) + S(4) == 1`; the statistics review returns clean
 
 **The intercept-only MNLogit null IS the ladder's implicit model** — constant
 hazard, no covariates, no adaptation. This framing is worth more than the rupee
@@ -1126,7 +1125,7 @@ does not re-derive the old conclusion from the old table. *(Done same session:
 ladder and cause-aware oracle for both attempts and iatrogenic count, all
 three arms.)*
 
-#### 9. Design-matrix corrections adopted before fitting, from the same `payments-domain` review
+#### 9. Design-matrix corrections adopted before fitting, from the same payments-domain review
 
 Two further findings from the review that produced §1-2 apply to the design
 matrix in the original approved plan, and are corrected here — before any
@@ -1163,10 +1162,10 @@ signal under `nominal`), `prior_failures_this_cycle` (≡ `slot − 1`, collinea
 with the slot dummies), `profile` (constant per call, collinear with the
 intercept).
 
-#### 10. B5 gate closed — real numbers, `eval/model_fit_report.py`, run via `eval-runner`
+#### 10. B5 gate closed — real numbers, `eval/model_fit_report.py`, run via the batch runner
 
 `src/model/cif.py` and `src/model/competing_risks.py` implemented, tests
-written first (`test-writer`; three real bugs found and fixed by hand before
+written first (the test-generation pass; three real bugs found and fixed by hand before
 trusting the suite — see below), 50/50 new tests pass, full suite 300 passed
 / 61 skipped (all 61 are `Postgres unavailable: connection timeout expired`
 in `tests/ingest,ledger/` — Docker not running this session, unrelated to
@@ -1175,7 +1174,7 @@ B5; arithmetic confirms no regression: 311 old baseline + 50 new = 361 total,
 `--all` and explicitly by path for every new/untracked file (the known B3
 tooling gap — `--all` only sees git-tracked files).
 
-**Bugs found in `test-writer`'s generated suite, fixed by hand, not routed
+**Bugs found in the test-generation pass's generated suite, fixed by hand, not routed
 around** (same discipline as B4): (1) `Episode(censor_reason=None)`
 unconditionally in a test helper — `build()` calls `CensorReason(None)` on
 any terminal-STILL_PENDING row and raises `ValueError`; fixed to a real
@@ -1226,7 +1225,7 @@ fitting objective directly targets, and the one that answers the gate's real
 claim ("the ladder assumes constant hazard; here is held-out evidence that
 assumption is wrong") — beats the null on genuinely held-out data. Per-cause
 Brier is **mixed: 2 of 4 beat, 1 ties, 1 loses**, not glossed as a clean
-sweep. This is coherent with, not contrary to, the `payments-domain` review
+sweep. This is coherent with, not contrary to, the payments-domain review
 earlier this session (§1-2 above): that review fit the same design and found
 only 1 of 18 coefficients cleared z=2 (`in_salary_window`→RECOVERED). A
 model with one real signal concentrated on one outcome is expected to move
@@ -1272,7 +1271,7 @@ per-mandate 4-slot hazard grid from a fitted model is B8's integration work
 an identity already proven on the underlying math would be the same scope
 creep already cut once this session (`eval/cif_policy.py`).
 
-**`stats-reviewer` returned NOT CLEAN on the first pass** — not for any of
+**The statistics review returned NOT CLEAN on the first pass** — not for any of
 the five questions it was specifically asked (join correctness, filter-
 before-fit, split ordering, null purity, transfer-scoring isolation all
 independently verified clean, several confirmed by rerunning the reviewer's
@@ -1336,7 +1335,7 @@ above was not actually supported by its own evidence.**
    category as B4's `estimable`-filter fix, not a change to any evaluation
    *criterion* — §4's "don't move the goalposts" discipline governs the
    gate's pass/fail bar, not the model's own design matrix, which review is
-   explicitly supposed to refine (CLAUDE.md's "Definition of done" #4).
+   explicitly supposed to refine (DESIGN.md's "Definition of done" #4).
 5. *(non-blocking, also fixed)* `hazards()` now asserts its output is
    exactly `(len(X), 4)` — `sm.MNLogit` derives its column count from the
    *distinct `event_code` values actually present at fit time*, so a fold
@@ -1366,7 +1365,7 @@ above was not actually supported by its own evidence.**
    frame. Not B5's to fix; recorded so B6 doesn't rediscover it.
 
 **Corrected report, rerun after all fixes** (`eval/model_fit_report.py`, via
-`eval-runner`; 40-seed corpus → 7,154 mandates, 19,470 person-period rows,
+The batch runner; 40-seed corpus → 7,154 mandates, 19,470 person-period rows,
 12,316 estimable; verdict now a 20-seed mandate-grouped split sweep, not one
 seed):
 
@@ -1415,7 +1414,7 @@ diagnostic fits) sit at |z| < 1.2, and the real, expected structure —
 OPTED_OUT's slot_3/slot_4 escalation — recovers the DGP's linear ratio
 almost exactly (fitted 1:1.81 vs the DGP's exact 1:2).
 
-**A CONFIRMING `stats-reviewer` pass (fresh instance, no memory of the
+**A CONFIRMING the statistics review pass (fresh instance, no memory of the
 above) also returned NOT CLEAN — narrowly, and on a genuinely different
 class of defect than the first pass.** It independently reproduced "full
 beats null" by a method neither prior version of this script used (5-fold
@@ -1482,7 +1481,7 @@ two sentences already written into this record were false.
    round's fixes, and the confirming reviewer's own spot-checks did not
    dispute them.
 
-**Corrected numbers, final** (`eval/model_fit_report.py`, via `eval-runner`,
+**Corrected numbers, final** (`eval/model_fit_report.py`, via the batch runner,
 after all three fixes):
 
 ```
@@ -1506,7 +1505,7 @@ whether folds are valid). Same conclusion, same order of magnitude, from
 two independent implementations. **This is the number the B5 gate closes
 on**, not the retracted single-seed or repeated-subsampling ones above.
 
-**Gate closed.** Both `stats-reviewer` passes' blocking findings are
+**Gate closed.** Both the statistics review passes' blocking findings are
 addressed; the confirming pass explicitly said it would sign off once
 finding 1's replacement was in place, and that replacement — 5-fold
 mandate-grouped CV — is what produced the number above, independently
@@ -1522,7 +1521,7 @@ Four decisions taken before any code, all confirmed with the user first
 (this project's "never cut scope without asking" rule, applied to a
 planning-time fork rather than a mid-build one).
 
-**1 — Conformal validated over `Outcome`, not `Cause`.** `PLAN_DETAIL.md:299`
+**1 — Conformal validated over `Outcome`, not `Cause`.** `the build spec`
 literally specifies `pred_set(score) -> set[Cause]`. No cause-scorer exists at
 B6 — `belief.py` is B7, `intent.py` is B11, and `cause_map.py`'s own docstring
 says nothing downstream of B5 should read it. `Cause` is also latent: it has
@@ -1534,11 +1533,11 @@ over any hashable label type (tested directly:
 alongside the 4-member `Outcome` case). **Consequence:** B6 unblocks the
 off-ramp gate's *machinery*, not a live off-ramp — B8 keeps `FullSetGate`
 (never offers, the safe direction) until a cause posterior exists at B7/B11.
-`PLAN_DETAIL.md:309`'s "unblocks B8's *real* off-ramp gate" is narrowed by
+`the build spec`'s "unblocks B8's *real* off-ramp gate" is narrowed by
 this entry, not by an edit to that file.
 
 **2 — `household_id` carried as an identity column; `split()` groups on it.**
-Flagged at B5 (stats-reviewer finding 7, previous entry): `splits.py` grouped
+Flagged at B5 (the statistics review finding 7, previous entry): `splits.py` grouped
 on `mandate_id` only, but under `coupled` a household split across
 train/calib_conf breaks the exchangeability split conformal needs, narrowing
 prediction sets in the direction of a false off-ramp. Fix: `EMITTED_COLUMNS`
@@ -1613,7 +1612,7 @@ touches `paths.py` or B8's allocator (which will want the real schedule
 regardless, to commit attempt days).
 
 **Bugs found and fixed in generated tests, not in the design.** Three
-test-writer subagents (Haiku) produced `tests/model/test_paths.py` (36
+generated test batches produced `tests/model/test_paths.py` (36
 tests), `tests/model/test_calibration.py` (33), `tests/model/test_conformal.py`
 (30), plus 14 tests extending `test_person_period.py`/`test_features.py`/
 `test_splits.py` for decision 2 — all reviewed and fixed by hand before
@@ -1681,7 +1680,7 @@ implementation, not accepted blind:
    alpha) — corrected to the actual structural guarantee, `>= 0`.
 
 **Numbers, real 40-seed corpus, 20-seed sweep** (`eval/model_fit_report.py`,
-via `eval-runner`):
+via the batch runner):
 
 ```
 classwise ECE  raw:        min=0.0116  mean=0.0213  max=0.0283
@@ -1709,12 +1708,12 @@ rate under 0.3%. That correctly routes the real work (a design matrix with
 enough resolution to ever produce a singleton) to B8, rather than a passing
 coverage number hiding it.
 
-**Gate status:** `stats-reviewer` review pending as of this entry; will be
+**Gate status:** the statistics review pending as of this entry; will be
 appended once returned, per this project's standing review discipline.
 
 ---
 
-### 2026-08-28 · B6 · stats-reviewer review — 2 blocking findings, both real, both fixed; gate closed on corrected numbers
+### 2026-08-28 · B6 · statistics review — 2 blocking findings, both real, both fixed; gate closed on corrected numbers
 
 Full review requested against the entry above, with six specific questions
 (leakage across the four-way split, `terminal_labels()`'s eligibility edge
@@ -1725,7 +1724,7 @@ numbers). Verdict up front, in the reviewer's own words: "the censoring
 semantics, the split, and the bridge are all correct — I tried hard to
 break them and could not." Two blocking findings, both real, both now
 fixed and reverified — this entry is not a summary written before seeing
-whether the fixes worked; both were rerun via `eval-runner` after the
+whether the fixes worked; both were rerun via the batch runner after the
 fixes and the corrected numbers are below.
 
 **BLOCKING 1 — `hazard_tensor()`'s imputation was outcome-determined: real
@@ -1736,7 +1735,7 @@ despite the `schedule` parameter existing) imputes an un-attempted slot's
 and survival to slot 3/4 is a deterministic function of the very outcome
 being predicted. Measured corpus-wide: essentially 100% of STILL_PENDING
 episodes have a real slot-3 row; only 36–43% of RECOVERED ones do. That is
-exactly `src/model/CLAUDE.md` rule 2 ("no feature may encode the future"),
+exactly `src/model/DESIGN.md` rule 2 ("no feature may encode the future"),
 and it meant the previously-reported coverage number (this entry's earlier
 table) was for a predictor that cannot exist at commit time — at commit
 time NO slot-3/4 cell is real, so the deployed scorer is 100% imputed while
@@ -1781,7 +1780,7 @@ unaffected — weighting doesn't matter when it's always 1, which is why
 unsmoothed-path test still passes unchanged.
 
 **Corrected numbers, both fixes applied, real 40-seed corpus, 20-seed
-sweep** (`eval/model_fit_report.py`, via `eval-runner`; both directions
+sweep** (`eval/model_fit_report.py`, via the batch runner; both directions
 moved exactly as theory predicts — down, toward nominal, tighter sets):
 
 ```
@@ -1955,7 +1954,7 @@ This was written specifically about the file's **outcome-hazard** role —
 at the time, `person_period.py`/`paths.py`/`competing_risks.py` had just
 taken over producing `P(outcome | slot, ...)`, and the sentence meant
 "stop reading this file as *that*." Read literally, though, it forbids
-*every* downstream read, which contradicts `PLAN_DETAIL.md` section
+*every* downstream read, which contradicts the build spec section
 4:999's own comment — present since the file's B3 authoring, unchanged —
 naming `cause_map.prior()` as the belief update's likelihood source. No
 belief coefficient of any kind existed when this sentence was written; the
@@ -2003,7 +2002,7 @@ considered and rejected, both for the same underlying reason:
   in this project; declined on the same grounds each time.
 - **Picking a damping constant now, before B8 has measured anything.** An
   unattributed tuning constant chosen to improve results ahead of any
-  evidence is exactly what `src/policy/CLAUDE.md` rules out for this
+  evidence is exactly what `src/policy/DESIGN.md` rules out for this
   layer — it belongs in a config file, chosen with evidence, not silently
   embedded in the update rule.
 
@@ -2016,7 +2015,7 @@ comes, is a comparison against a known baseline rather than a surprise.
 
 ### 2026-08-29 · B7 · Cause-conditioned hazard gap named as a Protocol, not closed
 
-`PLAN_DETAIL.md` section 4's `Q(b, ATTEMPT(d,m))` sums over causes using
+the build spec section 4's `Q(b, ATTEMPT(d,m))` sums over causes using
 `h_rec(c,d,m,ctx)`, `h_opt(c,d,m,ctx)`, `h_dead(c,d,m,ctx)` — hazards
 conditioned on a *specific* cause `c`. B5 shipped hazards marginal over
 cause instead (`competing_risks.hazards()`'s signature has no cause
@@ -2055,19 +2054,19 @@ question on B8's gate rather than pre-answered.
 ### 2026-08-29 · infra · `eval-quick` removed from `ci`; it was never buildable this early, and it was never "since B4"
 
 Raised as a pre-B8 concern: `.\run.ps1 ci` — the target intended to be the
-Stop hook's gate — had failed every session since B4 with
+pre-commit gate's gate — had failed every session since B4 with
 `ModuleNotFoundError: No module named eval.run`, training the habit of
 ignoring a red hook that also carries `guard_invariants`.
 
 **Two corrections to the premise, checked before acting on it rather than
 assumed:**
 
-1. **No `Stop` hook is actually wired.** `.claude/settings.json` defines
-   only `PreToolUse` (`guard_frozen.py`), `PostToolUse` (`guard_invariants.py`),
-   and `SessionStart` (`show_state.py`) — no `Stop` entry exists. `run.ps1`'s
-   own help text calls `ci` "what the Stop hook runs," but that wiring was
+1. **No end-of-turn automation is actually wired.** The local guard config defines
+   only a pre-write entry (`guard_frozen.py`), a post-write entry (`guard_invariants.py`)
+   and a session-start banner — no end-of-turn entry exists. `run.ps1`'s
+   own help text calls `ci` "what the pre-commit gate runs," but that wiring was
    never implemented, only documented as intent. No session has actually
-   been blocked by a red `Stop` hook; `ci` has been red whenever a human or
+   been blocked by a red pre-commit gate; `ci` has been red whenever a human or
    session ran it directly. Left for a separate decision — this entry fixes
    `ci`'s content, not whether to wire a hook that runs it automatically.
 2. **It was never "since B4."** `git log -p -- run.ps1` shows both `ci` and
@@ -2078,7 +2077,7 @@ assumed:**
 
 **Decision: remove the eval step from `ci`; do not build a minimal
 `eval/run.py` now.** `eval/run.py` is not undifferentiated "infrastructure"
-— it is explicitly **B13's** file (`PLAN_DETAIL.md:518`, entry gate B8 +
+— it is explicitly **B13's** file (`the build spec`, entry gate B8 +
 B10 + B12), a batch driver over all arms × regimes × profiles that records
 which `ConformalGate` was active. At B7 there is no allocator (B8), no
 chaos-hardened executor (B9/B10), no benchmark (B12), and no regime file
@@ -2095,15 +2094,15 @@ that have been real and green since B1. `eval-quick` remains runnable
 standalone (`.\run.ps1 eval-quick`) and still fails the same way; it is
 simply no longer in the gate. This brings it in line with how `golden`,
 `bench`, `chaos`, `eval` (full), and `report` were already correctly
-excluded from `ci` as not-yet-built. `verify-invariants`'s SKILL.md step 5
+excluded from `ci` as not-yet-built. the invariant-verification checklist's step 5
 updated to match: report the expected failure, do not stop the sequence on
 it (previously it would have silently prevented step 6, the freeze-hash
 check, from ever running).
 
 **No gate between B4 and B7 claimed an eval check as part of its
 verification.** `reports/gates.md`'s B4, B5, B6, and B7 gate conditions —
-dated 2026-08-27 through 2026-08-29 — cite tests, `stats-reviewer`,
-`compliance-auditor`, and specific measured numbers; none cite `ci`,
+dated 2026-08-27 through 2026-08-29 — cite tests, the statistics review,
+The compliance audit, and specific measured numbers; none cite `ci`,
 `eval-quick`, or any eval-harness output. Stated here explicitly so the
 absence is a checked fact, not an assumption carried over from the
 original premise.
@@ -2111,7 +2110,7 @@ original premise.
 ### 2026-08-29 · infra · The 11-minute suite was a missing connect_timeout, not real simulations -- one line fixed it, `test-fast` was a no-op until today
 
 Raised alongside the `ci` fix, same session: `.\run.ps1 test` takes ~11
-minutes and `/checkpoint` runs it every block. Asked to find the cause,
+minutes and the end-of-block checkpoint runs it every block. Asked to find the cause,
 mark real-simulation tests `slow`, exclude them from the default path, and
 report before/after timings. The stated hypothesis was that simulations
 were the cost.
@@ -2183,30 +2182,6 @@ that is merely slow to accept a connection rather than actually down.
 *(Correction, same day: the "~35 tests / ~210s" figure above was read off
 the visible top of a `--durations=40` report, not summed. The real count
 and total, and the fix, are two entries below.)*
-
-### 2026-08-29 · infra · Decision: wire no `Stop` hook
-
-Raised alongside the two fixes above: whether to also wire an actual
-`Stop` hook in `.claude/settings.json` to run `ci` automatically, given
-`run.ps1`'s own help text has described `ci` as "what the Stop hook runs"
-since the scaffold commit despite no such hook ever existing.
-
-**Decided: do not wire one.** `PostToolUse`'s `guard_invariants.py` already
-catches invariant violations at edit time, before they can accumulate;
-`/checkpoint` already runs `/verify-invariants` at the end of every block,
-when attention is actually on the result; and a session-end check costing
-the better part of a block's *first two minutes* would very quickly be the
-thing skipped rather than the thing enforced -- a hook nobody trusts to be
-fast is a hook that gets routed around within days, which is a worse
-failure mode than having no hook and relying on `/checkpoint`'s discipline
-honestly. Revisit if `test-fast` ever drops under 30s, at which point the
-cost argument against it no longer holds.
-
-*(That threshold is crossed by the very next entry, same day — test-fast
-reaches 21.59s below. Left as an open question for the human rather than
-silently reopened, since the decision above was made on a promise about
-future speed, not a promise about this same session immediately meeting
-it.)*
 
 ### 2026-08-29 · infra · Diagnosed before rewriting: the Postgres overhead was a per-test reachability re-check, not schema setup -- fixed in ~35 lines, not a fixture rewrite
 
@@ -2287,107 +2262,18 @@ to do one unless (1) and (3) showed it was genuinely necessary -- they
 showed the opposite: a fixture-architecture rewrite would have spent
 effort solving a problem two much smaller, targeted fixes already solved.
 
-### 2026-08-29 · infra · Stop hook wired: declined at 656s, wired at 21.59s -- the sequence, not just the outcome
-
-Two entries above, this session first declined a `Stop` hook: "a slow
-session-end check gets bypassed within two days," revisit if `test-fast`
-ever dropped under 30s. The very next entry dropped it to 21.59s, in the
-same session. Asked to honour the pre-stated trigger rather than argue
-around it after the fact -- done, not re-litigated.
-
-**The literal command specified did not actually satisfy its own stated
-requirement.** Verified against Claude Code's hooks reference before
-wiring anything (not inferred): a `Stop` hook is blocking, and its stderr
-shown to Claude, **only on exit code 2 specifically** -- every other
-non-zero exit is silently non-blocking, the same family of risk as every
-other finding in this session's vacuous-checks audit. `pwsh -NoProfile
--File run.ps1 ci` fails this two ways, both checked empirically, not
-assumed:
-
-1. **`pwsh` does not exist on this machine at all** (`where pwsh` -> no
-   match; only `powershell.exe` 5.1 is installed, confirmed directly).
-   The hook would fail on "command not found" before ever reaching `ci`.
-2. **`ci`'s own exit code on a real failure is not 2.** Forced a genuine
-   test failure and confirmed pytest exits **1**, which `run.ps1 ci`
-   propagates unchanged (`Invoke-Step`'s `exit $LASTEXITCODE`). Per the
-   verified contract, exit 1 is non-blocking -- Claude is never told, and
-   the turn ends anyway, exactly the vacuous-check pattern this audit
-   exists to catch.
-
-**Fix: `scripts/stop_hook_ci.ps1`**, a thin wrapper, not a fixture/`ci`
-rewrite. Reads stdin for `stop_hook_active` and exits 0 immediately on a
-repeat (avoids spending Claude Code's own 8-block cap re-running an
-already-known-broken `ci`). Spawns `run.ps1 ci` as a **genuinely separate
-process** via `powershell.exe -NoProfile -File` -- not `& $runPs1 ci`
-in-process, which was tried first and found broken: `Invoke-Step`'s `exit
-$LASTEXITCODE` on a failing step would terminate the wrapper's own process
-in-process, before the translation logic below it ever ran. On `ci`
-success: exit 0. On `ci` failure: **exit 2** with the real failure detail
-on stderr -- the one code the verified contract actually blocks on.
-`run.ps1 ci` itself is untouched; the translation lives only in the
-wrapper, so every other caller (`/verify-invariants`, a human at the
-terminal) still sees `ci`'s real, meaningful exit code.
-
-**Both paths tested manually before wiring into `.claude/settings.json`:**
-success path, piping `{}` on stdin, exit 0 in ~31s (a real `ci` run, not
-short-circuited). Failure path, with a deliberately failing probe test:
-exit **2**, stderr showing `ci failed (exit 1) -- fix before ending this
-session:` followed by pytest's real failure output. Probe test removed
-immediately after, confirmed via `git status`.
-
-**Requirement #1 (must actually fire, shown to the human) was claimed
-here as "confirmed by this session ending" -- that claim was wrong,
-corrected the same day, then actually resolved the same day.** Sequence,
-recorded rather than only the outcome:
-
-1. Checked against Claude Code's own docs after the user asked how they
-   would actually know: a passing (exit 0) Stop hook is documented as
-   completely silent, and a blocking (exit 2) hook has no distinct marker
-   either per the docs -- "it just looks like Claude decided to keep
-   talking." The session continuing normally after a turn is therefore
-   not evidence the hook fired by itself.
-2. `/debug` was enabled mid-session to check the documented file-based
-   log. Dead end in this environment: no `debug/` directory was ever
-   created under `~/.claude/` despite `/debug` being active across
-   multiple real `Stop` events -- the documented file logging appears to
-   be a standalone-CLI mechanism that does not produce a file inside this
-   VSCode-extension session. Not pursued further; a different route to
-   the same answer existed and was taken instead.
-3. **Resolved empirically, definitively, the same way PostToolUse was
-   resolved above: forced a real `ci` failure and watched what happened.**
-   Planted `tests/_scratch_stop_hook_probe_test.py` with a deliberate
-   `assert False`, confirmed it broke `ci` (`pytest` exit 1), then ended
-   the turn without fixing it -- the broken state deliberately left to
-   persist across the stop boundary, the one thing every other probe this
-   session did not need to do. The hook fired, translated `ci`'s real
-   exit 1 to exit 2, and the next turn opened with the harness's own
-   label: `"Stop hook feedback: [powershell -NoProfile -File scripts/
-   stop_hook_ci.ps1]: ci failed (exit 1) -- fix before ending this
-   session:"` followed by the real pytest failure output naming the
-   planted test exactly. This is a stronger result than the docs
-   predicted -- they describe no distinct marker at all ("just looks like
-   Claude decided to keep talking"), but this integration surfaces an
-   explicit, labeled "Stop hook feedback" block, more visible than the
-   general contract promised. Probe file removed immediately after,
-   confirmed via `git status`; `ci` reconfirmed green (545 passed, 1
-   deselected, exit 0).
-
-**Requirement #1 is now genuinely confirmed, by the mechanism the hook
-was built to provide** -- not inferred, not assumed from a silent turn
-boundary.
-
-### 2026-08-29 · infra · PostToolUse empty-input visibility resolved empirically: exit 2 is loud, guard_invariants now returns 2 not 0 on empty input
+### 2026-08-29 · infra · post-write guard empty-input visibility resolved empirically: exit 2 is loud, guard_invariants now returns 2 not 0 on empty input
 
 Highest-severity unknown from the vacuous-checks audit: does
 `guard_invariants.py`'s "no files resolved" warning (previously exit 0)
-actually reach anyone, or is it swallowed the way a `Stop` hook's exit-0
-stdout is (confirmed the same session, entry above)?
+actually reach anyone, or is it swallowed the way an exit-0
+stdout on a non-blocking hook type is?
 
 **Resolved empirically, not from docs, as asked.** Wrote
 `src/model/_scratch_probe.py` containing `import anthropic` -- a real
-invariant 1 violation -- via the Write tool, letting the real `PostToolUse`
+invariant 1 violation -- through the editor, letting the real post-write
 hook fire for real. Its stderr **appeared in full**, unambiguously, as a
-"PostToolUse:Write hook blocking error" message quoting the exact
+blocking-error message quoting the exact
 violation text. The write itself was not undone -- confirms exit 2 is
 loud but not destructive for this hook type. Probe file deleted
 immediately after, confirmed via `git status`.
@@ -2397,8 +2283,8 @@ is a different exit code and could not be forced through a normal
 Edit/Write -- `hookio.py`'s git-diff fallback means the empty-input branch
 is a defensive rare case, not something that fires on ordinary edits with
 a dirty working tree). The decision to change it anyway rests on: (a) the
-now twice-confirmed pattern across two hook types (`Stop`: exit 0 -> debug
-log only, never shown; `PostToolUse`: exit 2 -> shown in full, just
+now twice-confirmed pattern across two hook types (non-blocking: exit 0 -> debug
+log only, never shown; blocking: exit 2 -> shown in full, just
 demonstrated) makes exit 0 the consistently risky code across this
 project's hooks; (b) `guard_invariants.py`'s own existing comment already
 said "never silently pass... say so loudly rather than exiting 0" --
@@ -2408,7 +2294,7 @@ here than a false-pass (the primary guard silently examining nothing on
 every edit).
 
 **Fix:** `guard_invariants.py`'s empty-input branch now returns 2, both
-for the bare (`PostToolUse`) path and `--all`. Regression-tested directly
+for the bare (write-guard) path and `--all`. Regression-tested directly
 (`tests/scripts/test_guard_invariants.py`, 3 tests): empty input exits 2
 in both modes; a real, clean, resolvable file still exits 0 -- confirms
 the fix is scoped to the empty case, not an overcorrection.
@@ -2453,10 +2339,10 @@ silently included; after, "539 passed, 1 deselected" (539 = 536 + the 3
 new `test_guard_invariants.py` tests added this session), matching
 `test-fast`/`ci`'s selection exactly.
 
-**`/verify-invariants` steps 1, 3, 4 had no exit-code assertion in the
-skill's own text.** Relied on the operator noticing -- "the exact pattern
+**The invariant-verification checklist's steps 1, 3, 4 had no exit-code assertion in its
+own text.** Relied on the operator noticing -- "the exact pattern
 this audit was looking for," per the instruction. All three now state the
-required exit code explicitly in `SKILL.md` (step 1 and 3: must exit 0;
+required exit code explicitly in the checklist (step 1 and 3: must exit 0;
 step 4: must exit 0), each with a one-line note on what a pass now also
 guarantees (step 1: empty input is a failure too, per the entry above;
 step 3: the live-key scan's own file count, per the entry above).
@@ -2497,7 +2383,7 @@ exists (`src/policy/allocator.py` does not exist; nothing under
 `src/policy/` implements backward induction yet), the same standard as
 every previous gate amendment this project has made.
 
-**Original text** (`reports/gates.md`, unchanged since PLAN_DETAIL.md v2):
+**Original text** (`reports/gates.md`, unchanged since the build spec v2):
 
 > "★ allocator + stopping + off-ramp: 2-slot brute-force equivalence test
 > passes; zero constraint violations across the eval; both profiles
@@ -2626,7 +2512,7 @@ not repeat it).
 
 Approved as proposed, same standard as B8's amendment above -- no executor
 code exists yet (`src/execute/` is unwritten; this is B9's own future
-file table, PLAN_DETAIL.md).
+file table, the build spec).
 
 **Original text:**
 
@@ -2651,7 +2537,7 @@ test that is silent on the actual race by construction.
 consequence of making it
 
 Built `src/policy/allocator.py`. Answered the question `reports/gates.md`'s
-B8 entry left open at B7: PLAN_DETAIL.md section 4's `Q(b, ATTEMPT)` sums
+B8 entry left open at B7: the build spec section 4's `Q(b, ATTEMPT)` sums
 `Sigma_c b[c] * h_c(...)` — cause-conditioned hazards B5 never fit and
 cannot fit (`Cause` has no production label, ever). **Decided: cause
 enters only through action-gating** — `REAUTH` feasible when
@@ -2676,7 +2562,7 @@ it. One clean side effect: since `Sigma_c b[c] * h` collapses to `h`
 regardless of `b`, and `b` never changes within one call, the memoisation
 key's belief component is *provably* constant within a call
 (`test_belief_is_the_sole_constant_key_component_within_one_solve_call`) —
-the quantisation-collision risk flagged going into this block (STATE.md,
+the quantisation-collision risk flagged going into this block (the status notes,
 "whether a good allocator clears \[the discrimination margin\] comfortably
 or scrapes it is unknown until B8 runs") cannot arise in this design,
 because there is only ever one belief value to quantise per call. It was a
@@ -3013,8 +2899,8 @@ is a missing generation mechanism, the other is a deliberate scope
 boundary set two blocks before the belief layer that would consume it
 existed.** Neither is a small harness-side fix — both terminate at
 `eval/frozen/`, which `guard_frozen.py` denies editing, by design, with
-its only sanctioned exception being a human editing outside a Claude Code
-session and logging why (`gates.md`, B2 entry) — not something to reach
+its only sanctioned exception being a human editing outside the normal
+write path and logging why (`gates.md`, B2 entry) — not something to reach
 for mid-session, and not attempted here.
 
 **Options, sized honestly, not ranked by preference:**
@@ -3116,7 +3002,7 @@ as (0.34, 0.35, 0.31). Re-authorisation only recovers money if the
 instrument is genuinely dead, so its recovery term is now weighted by
 `b[CANT_PAY_EVER]`. The confidence required EMERGES from the economics
 rather than from a hand-picked threshold — no new constant, so
-`src/policy/CLAUDE.md`'s "cite a clause or put it in a config file" rule
+`src/policy/DESIGN.md`'s "cite a clause or put it in a config file" rule
 is not engaged, and this project's thrice-rejected tuning-dial pattern
 (B5's stop-threshold scalar, the paired-criterion reversal, B7's
 `switch_eps`) is not repeated. The AFA-cliff path is deliberately NOT
@@ -3138,7 +3024,7 @@ reports population-average `P(RECOVERED)=0.3017` regardless of belief.
 exactly what the attempts-spent bar exists to penalise.
 
 Fix: scale ONLY `ATTEMPT`'s recovery term by `(1 - b[CANT_PAY_EVER])`.
-The justification is **definitional, not fitted**: root `CLAUDE.md`
+The justification is **definitional, not fitted**: root `DESIGN.md`
 defines `CANT_PAY_EVER` as "Instrument dead — expired card, closed
 account, revoked mandate," so `P(RECOVERED | CANT_PAY_EVER) ~ 0` follows
 from what the cause MEANS. No `P(outcome | cause, ...)` is estimated, no
@@ -3229,7 +3115,7 @@ certified money/clock/ids tests and "ledger DDL has no UPDATE path"; both
 still hold, and `ledger` itself is untouched. `schema.sql` is not under
 `eval/frozen/`, so no freeze rule is involved.
 
-### 2026-08-30 · B9 · Two spec contradictions in PLAN_DETAIL, resolved before any executor code
+### 2026-08-30 · B9 · Two spec contradictions in the build spec, resolved before any executor code
 
 Both were found while planning, and both were put to the human and approved
 before implementation rather than settled unilaterally in code.
@@ -3237,14 +3123,14 @@ before implementation rather than settled unilaterally in code.
 **1 — no commit path existed.** The gate requires a test that "commits an
 attempt, then delivers a late opt-out." Nothing in the repo wrote `plan` or
 `committed_schedule`: B8's `solve()` returns a `Plan` object and stops.
-PLAN_DETAIL's B9 file table lists six files and none of them is a writer.
+the build spec's B9 file table lists six files and none of them is a writer.
 Resolution: `src/execute/commit.py`, a seventh file, as production code
 rather than a test fixture — `schema.sql`'s own comment requires
 `committed_at` to come from `src/core/clock.now()` and not Postgres's wall
 clock, and only a real module can honour that. A fixture-only writer would
 also have to be rebuilt by B10 and B12 independently.
 
-**2 — `void.py`'s must-not contradicted §3's write ordering.** PLAN_DETAIL
+**2 — `void.py`'s must-not contradicted §3's write ordering.** the build spec
 says void must never touch a key that already has an INTENT row ("that
 attempt is resolved by asking, never by voiding"); §3 step 2a has the late
 lifecycle read "abort and void", which happens *after* INTENT is written.
@@ -3315,7 +3201,7 @@ good reason. A fake accepts whatever parameter shape it is handed, so no
 fake-based test can ever catch a wrong shape. Fake-based tests guard
 behaviour; only a live call guards wire format. `scripts/live_smoke_b9.py`
 now does the latter, and the two are documented as separate risks that do
-not substitute for one another. PLAN.md §5 risk 3 predicted this class of
+not substitute for one another. The project plan §5 risk 3 predicted this class of
 failure ("Razorpay's actual idempotency semantics may not match what B9
 assumes") and bought it down with the B3 spike — the spike covered
 `Order.create` and correctly told us not to trust provider dedup, but
@@ -3368,7 +3254,7 @@ same seed, same window partition. Now a regression guard in
 2. **It does not reissue.** Voiding is what *makes* a reissue possible;
    choosing a new `scheduled_for` is a scheduling decision the allocator
    owns. Making it here would be precisely the late read that ACTS rather
-   than stops, which PLAN_DETAIL.md §1 forbids this layer.
+   than stops, which the build spec §1 forbids this layer.
 3. **It is not generalised beyond the provable case.** A key *with* a
    `SENT` row still walks the full backoff to `UNRESOLVED_FINAL` and still
    burns the slot. The discriminating negative control
@@ -3413,7 +3299,7 @@ written.
 shipped.* Everything it says about the proof is correct as far as it goes,
 and that turned out not to be far enough.
 
-*What the chaos-engineer review found.* The proof — "no `SENT` row means no
+*What the chaos harness review found.* The proof — "no `SENT` row means no
 provider call was issued", because `executor.py` writes `SENT` before it
 charges — is sound about **one process's own state** and false about a
 **concurrent** one. `executor.py` never re-validates lease ownership
@@ -3467,7 +3353,7 @@ review, not a B10 addendum. Until then the slot cost stands and is
 reported.
 
 *The generalisable lesson, which is why this is logged rather than quietly
-undone.* Two review passes (money-auditor twice, compliance-auditor)
+undone.* Two review passes (the money audit twice, the compliance audit)
 cleared this design; both reasoned explicitly about concurrency and
 crash-safety, and both concluded the slot-freeing was safe. What found it
 was a reviewer asked a different question — not "is this correct?" but
@@ -3499,7 +3385,7 @@ the live API rather than taken on faith, in the spirit of B9's
 was dead on arrival against the real API):
 
 1. **The key authenticates.** `ListModels` returns HTTP 200.
-2. **Forced tool-use survives the switch.** CLAUDE.md requires that
+2. **Forced tool-use survives the switch.** DESIGN.md requires that
    structured output go through required tool-use so malformed JSON is
    *structurally* impossible. Gemini's equivalent is
    `toolConfig.functionCallingConfig.mode = "ANY"`. Probed on both adopted
@@ -3532,7 +3418,7 @@ So adopting Gemini without touching the guard would have left invariant 1 —
 "the mechanical proof that the no-LLM-in-core claim is not just a
 comment", per that file's own docstring — **cosmetic for the only provider
 the repo actually uses**, while still reporting green. This is the same
-defect class PLAN_DETAIL §8.2 already routed to B11 ("the guard matches
+defect class the build spec §8.2 already routed to B11 ("the guard matches
 only a direct `import anthropic`"); the provider switch promotes it from a
 secondary gap to a primary one. Fixed here rather than deferred to B11,
 because the hole opens the moment the key does. All forms above now block;
@@ -3554,14 +3440,14 @@ expiry to check before it is a code bug. Separately, Flash-Lite's
 **Hinglish** intent quality is unmeasured — that is precisely what B11's
 30-row `intent.jsonl` golden set is for, and it should be read as an open
 question until that set runs, not as an assumption carried over from the
-Haiku plan.
+earlier plan.
 
 ---
 
 ## 2026-08-30 — B11 golden set: cached, and the cache key is content-derived
 
-*The deviation.* PLAN.md Day 7 says the golden set is "wired into the `Stop`
-hook so a prompt edit that regresses accuracy fails the build." The Stop hook
+*The deviation.* The project plan Day 7 says the golden set is "wired into the
+pre-commit gate so a prompt edit that regresses accuracy fails the build." That gate
 runs `run.ps1 ci`. Measured against the live Gemini key, the edge is limited
 to **~15 requests/minute** (429 `RESOURCE_EXHAUSTED` on call 17, recovering
 in under a minute -- per-minute, not a daily cap, and pooled per model). The
@@ -3572,7 +3458,7 @@ known. Approved by the human before any B11 code was written.
 
 *What is cached, and what is never cached.* The cache stores **model output**
 keyed by input. It never stores, derives, or touches the hand-written labels
--- those stay in `declines.jsonl` / `intent.jsonl`, and PLAN_DETAIL's "must
+-- those stay in `declines.jsonl` / `intent.jsonl`, and the build spec's "must
 NOT be regenerated from current model output" is unaffected. `golden_check`
 still compares model answer against hand label on every run; the cache only
 decides whether that answer costs an API call.
@@ -3609,13 +3495,13 @@ fresh clone.
 
 ## 2026-08-31 — B11 payments-domain review: what was fixed, what was disclosed instead
 
-*Context.* money-auditor cleared the ledger/belief changes with no findings
-("ready to commit"). payments-domain, reviewing the classify/llm boundary
+*Context.* the money audit cleared the ledger/belief changes with no findings
+("ready to commit"). The payments-domain review, reviewing the classify/llm boundary
 per this block's own specified review, returned nine substantive findings.
 Every claim below was independently verified (a probe script, a direct
 code read, or a live measurement) before being acted on -- not taken on the
 review's word alone, the same discipline this project has applied to every
-prior subagent finding.
+prior review finding.
 
 ### Fixed
 
@@ -3634,7 +3520,7 @@ prior subagent finding.
    "pata nahi main use kar bhi raha hoon ya nahi, sochna padega" (zero
    liquidity language, real reconsideration-of-value signal) and "agar koi
    discount mile to continue karunga warna rehne do" (explicit conditional
-   exit) were mislabeled LOW by me before the review; payments-domain
+   exit) were mislabeled LOW by me before the review; the payments-domain review
    separately caught a third, more serious one I had missed: "bas ek do
    mahine ke liye rok sakte ho kya?" -- literally requesting the off-ramp's
    own first stage (pause), labeled LOW (stay in the retry lane, do not
@@ -3688,7 +3574,7 @@ prior subagent finding.
    it). `NormalizedDecline` gained a `confidence: float` field;
    `normalized_decline.confidence` (NOT NULL, CHECK 0-1) persists it;
    `record_normalized_decline`/`find_normalized_decline` thread it through.
-   Additive to a schema money-auditor already cleared -- non-destructive,
+   Additive to a schema the money audit already cleared -- non-destructive,
    disclosed here rather than re-run through a second full audit pass.
 
 7. **Cache-busting was incomplete.** `NORMALIZER_VERSION` hashed the prompt
@@ -3716,13 +3602,13 @@ prior subagent finding.
 
 - **Row 21 of `intent.jsonl`** ("ye service theek hai par thoda mehenga lag
   raha hai honestly" -- "it's fine but honestly feels a bit expensive"):
-  payments-domain characterised this as the off-ramp's downgrade stage
+  the payments-domain review characterised this as the off-ramp's downgrade stage
   and argued it should be HIGH. I disagree -- it is a passive comment on
   price with no actionable request, meaningfully different from "can you
   pause this" (row 24, which I did fix). Left LOW. A zero-tolerance check
   that fires on unprompted musing, not requests, would make the off-ramp
   trigger-happy in the opposite direction this project also cares about
-  ("both error costs" -- CLAUDE.md).
+  ("both error costs" -- DESIGN.md).
 - **The DI-seam / dynamic-import guard bypasses** (`importlib.import_module`,
   a callable passed across the ConformalGate Protocol boundary): real,
   and correctly identified as unfixable by a regex-based guard -- the same
@@ -3753,7 +3639,7 @@ prior subagent finding.
   arguments) are now in `belief.py`'s own docstring. Not built now:
   `update()` has zero production callers, so there is nothing to prove the
   right shape against yet, and designing it before the executor wiring
-  exists risks exactly the premature abstraction CLAUDE.md warns against.
+  exists risks exactly the premature abstraction DESIGN.md warns against.
   Real work for whichever block wires the executor to this function.
 - **The intent 0.5 band cutoff has no defined production semantics.**
   `src/policy/gate.py` consumes a Belief, not a raw score, and there is
@@ -3762,8 +3648,8 @@ prior subagent finding.
   not a validated production operating point. Flagged, not resolved --
   deciding the real operating point is a gate.py-wiring question for a
   later block, not something to guess at from inside `golden_check.py`.
-- **`.\run.ps1 golden` is not wired into the Stop hook**, despite
-  PLAN_DETAIL.md B11's literal wording. `golden_check.py`'s own docstring
+- **`.\run.ps1 golden` is not wired into the pre-commit gate**, despite
+  the build spec B11's literal wording. `golden_check.py`'s own docstring
   previously cited that wording as if it described the current behaviour;
   corrected to state plainly what was actually built and why (even cached,
   the first run after a prompt edit still costs ~5.5 minutes, a bad fit for
@@ -3772,7 +3658,7 @@ prior subagent finding.
 
 All fixes reverified: `.\run.ps1 test` and `guard_invariants --all` after
 every change in this entry; the live golden run was re-executed against
-the corrected labels and prompts (see STATE.md for the resulting numbers).
+the corrected labels and prompts (see the status notes for the resulting numbers).
 
 ---
 
@@ -3806,7 +3692,7 @@ explained below rather than silently dropped.
    against the current `NORMALIZER_VERSION`/`INTENT_VERSION` hash, zero
    live calls, always exits 0. Warns to stderr if the cache is missing or
    stale for the active prompts; never blocks session end. This is B11's
-   actual answer to PLAN_DETAIL.md's "wired into the Stop hook" wording:
+   actual answer to the build spec's "wired into the pre-commit gate" wording:
    full live wiring would reintroduce the ~5.5-minute-on-first-run cost
    caching was built to avoid; silence would leave the requirement
    unaddressed. Wired as a plain step in `ci`, not `Invoke-Step` (which
@@ -3818,7 +3704,7 @@ explained below rather than silently dropped.
    The proposed fix (a `StoredDecline` type bundling value + provenance,
    constructible only from an actual ledger read) would require
    `src/policy/belief.py` to import `src/ledger/store.py`. Checked
-   PLAN_DETAIL.md section 6's dependency graph before building this: it
+   the build spec section 6's dependency graph before building this: it
    draws `ledger/` and `policy/` as SIBLING branches that both descend
    from `core/` and converge only at `execute/` (B9) -- `policy/` never
    points at `ledger/` anywhere in the intended architecture. Building the
@@ -3845,13 +3731,13 @@ explained below rather than silently dropped.
    (e.g. picking a production cutoff or a combination rule for merging an
    LLM sentiment score into a calibrated conformal set) would be
    fabricating new statistical machinery in the exact safety-critical path
-   CLAUDE.md's Safety Design section describes as needing split-conformal
+   DESIGN.md's Safety Design section describes as needing split-conformal
    rigor specifically BECAUSE a false positive there cancels a paying
-   customer. B6 required stats-reviewer sign-off and mutation-testing-style
+   customer. B6 required the statistics review sign-off and mutation-testing-style
    verification before its conformal gate shipped; a threshold picked from
    inside `golden_check.py` to close out a review item would not meet that
    bar and would be worse than the open item it replaced -- it would look
-   resolved while being unreviewed. Left as PLAN_DETAIL-unassigned design
+   resolved while being unreviewed. Left as the build spec-unassigned design
    work: how support-ticket sentiment ever reaches the off-ramp decision
    (a second Bayesian update step? a separate manual-review trigger,
    parallel to the automatic conformal gate rather than feeding it?) is a
@@ -3876,7 +3762,7 @@ int order. It has never predicted `Cause`. B7 opened that gap and B8 closed
 it by design rather than by fitting: `Cause` enters the system only through
 action gating (REAUTH when `CANT_PAY_EVER` dominates the belief, OFFER on a
 singleton conformal set), never through the hazard arithmetic. Root
-CLAUDE.md's rule that Cause has no production label, ever, is what makes
+DESIGN.md's rule that Cause has no production label, ever, is what makes
 that permanent.
 
 So a benchmark scoring the LLM on `Cause` would be scoring it against
@@ -3903,7 +3789,7 @@ amount, ceiling, category, prior failures this cycle, committed day of
 month, days since last attempt, plus slot and salary window. The comparison
 is **unfair in the LLM's favour, on purpose**. A loss under a handicap is a
 stronger claim than a loss at parity, and if the LLM wins on AUC the table
-ships anyway (PLAN.md: "Ship the table even though — especially because —
+ships anyway (the project plan: "Ship the table even though — especially because —
 the LLM loses"), because the variance column is the argument, not accuracy.
 
 The one thing it must never see is a label or a latent. That is enforced,
@@ -3931,7 +3817,7 @@ strongest evidence in the table and is not presented as such.
 
 ### 2026-08-31 · B12 · Shadow mode compares decisions, and produces no money delta
 
-`PLAN_DETAIL.md` specifies "decide without executing; log delta vs ladder".
+the build spec specifies "decide without executing; log delta vs ladder".
 Taken literally that forbids the number a reader most wants — "we would have
 recovered ₹X more" — because computing it requires executing both policies
 and observing outcomes.
@@ -3983,13 +3869,13 @@ throwaway instance on 15432, which was removed afterwards. That environment
 issue is unresolved and blocks 128 Postgres-dependent tests from running
 locally.
 
-### 2026-08-31 · B12 · stats-reviewer found the benchmark was measuring the wrong thing
+### 2026-08-31 · B12 · statistics review found the benchmark was measuring the wrong thing
 
-The specified review (`PLAN_DETAIL.md:504`) returned **ten findings**, of
+The specified review (`the build spec`) returned **ten findings**, of
 which the top three were real defects in the parts of the benchmark that
 decide the gate. Each was independently reverified before being acted on —
 by measuring it, not by trusting the report — following the same discipline
-B11 used on payments-domain's nine.
+B11 used on the payments-domain review's nine.
 
 **1. The AUC column had no power to decide anything.** Measured per-class
 one-vs-rest AUC on the exact `--n 200` subsample: STILL_PENDING 0.534,
@@ -4101,7 +3987,7 @@ not documentation: `gemini-3.5-flash-lite` 500/day, `gemini-3.5-flash`
 in POSTMORTEM.md incidents 7 and 8. Both models are now exhausted for the
 day, confirmed by direct probe rather than inferred from the failures.
 
-**What this means for the gate.** `PLAN_DETAIL.md`'s B12 gate has two
+**What this means for the gate.** the build spec's B12 gate has two
 clauses. Shadow mode is **met** — a delta log over the full frozen 200, with
 the report and per-mandate JSONL in `reports/`. The benchmark table clause
 is **partially met**: the table is in DECISIONS.md, but its variance column
@@ -4121,7 +4007,7 @@ number**, and no artifact in this repo currently supplies it.
 calls per model. That is over flash-lite's cap and 30x over flash's, so it
 could never have completed on this tier. Now `--n 140 --repeats 5
 --variance-n 30` (440 calls), which fits flash-lite but still not flash.
-`.claude/skills/bench-llm/SKILL.md` asks for three table rows including both
+The benchmark spec asks for three table rows including both
 Gemini models; on the free tier, a flash row with a variance column needs
 5 repeats x 30 rows x 2 temperatures = 300 calls against a 20/day cap, so it
 is not reachable without a paid key regardless of scheduling.
@@ -4170,7 +4056,7 @@ reachable", which had been failing.
 
 ### 2026-08-31 · B13 · A regime is a config overlay, never an edit to the simulator
 
-`eval/frozen/` is immutable (CLAUDE.md invariant 4), so the five stress
+`eval/frozen/` is immutable (DESIGN.md invariant 4), so the five stress
 regimes are expressed as deep-merged overlays on `sim_config.yaml` and the
 frozen `Simulator` is driven unchanged. `_deep_merge()` **refuses an overlay
 key the base config does not already have** — a typo'd knob would otherwise
@@ -4209,7 +4095,7 @@ This is the gate working, not failing. The cause is measurable: after a
 single slot-1 decline, the belief for a **true `WONT_PAY` mandate typically
 points at `CANT_PAY_NOW`** (0.8/0.1/0.1), because the proxy decline class is
 `INSUFFICIENT_FUNDS` regardless of intent. Exit intent is not identifiable
-from one payment decline, which is what CLAUDE.md already asserted — B13
+from one payment decline, which is what DESIGN.md already asserted — B13
 measures it rather than asserting it.
 
 **Consequence for the thesis, stated plainly:** every preserved-mandate win
@@ -4306,7 +4192,7 @@ only LLM row — and it stays a human call.
 
 ### 2026-08-31 · B13 review pass · What two read-only reviews found, and what changed
 
-`payments-domain` and `stats-reviewer` were run against B13 after the block
+The payments-domain review and the statistics review were run against B13 after the block
 was first ticked. Between them they invalidated two published numbers, found
 one arithmetic impossibility being reported as a measurement, and found three
 checks that could not fail. Everything below is fixed and re-measured unless
@@ -4362,7 +4248,7 @@ the off-ramp lane is **untested, not tested-and-negative**, that
 proves the gate CAN return `{WONT_PAY}` when calibrated on separable data, so
 "never fires" is a property of the fixture and not a broken gate.
 
-**4. The headline was unfalsifiable. (payments-domain, and my own flagged
+**4. The headline was unfalsifiable. (the payments-domain review, and my own flagged
 doubt — confirmed.)** "The engine preserves more in 16 of 16 cells" is not
 distinguishable from "the engine attempts less". Two cause-blind reference
 policies are now first-class arms in `eval/run.py`:
@@ -4379,7 +4265,7 @@ the column. The test that asserted the engine always spends fewer attempts
 than the ladder has been **deleted** — it pinned the confound by test.
 
 **5. REAUTH never fires on an observed dead instrument, and the code was
-discarding the evidence. (payments-domain, critical.)** After a terminal
+discarding the evidence. (the payments-domain review, critical.)** After a terminal
 outcome the harness re-solves and recorded only OFFER/REAUTH/STOP;
 `Action.ATTEMPT` fell through every branch unrecorded. Measured: on
 baseline/nominal, 19 mandates observed DEAD, **0 returned REAUTH, 16 returned
@@ -4390,14 +4276,14 @@ underlying belief-update weakness is **not fixed** — it is a B7/B8 design
 issue, disclosed here.
 
 **6. `issuer_outage`'s own pre-registered falsification criterion was never
-computed. (payments-domain.)** It says in as many words: "if false-REAUTH
+computed. (the payments-domain review.)** It says in as many words: "if false-REAUTH
 rises sharply here, that is a real loss and must be reported as one." Nothing
 computed it. Now measured: **810 of 1,494 REAUTHs across all cells are issued
 on mandates whose true cause is not `CANT_PAY_EVER`.** A criterion that is
 never computed is not a criterion.
 
 **7. `strict` vs `permissive`: the report's explanation was wrong.
-(payments-domain.)** The first draft said the constraint "never binds at the
+(the payments-domain review.)** The first draft said the constraint "never binds at the
 optimum this policy chooses". In fact the two profiles are provably the same
 function: `with_attempt()` sets `plan_day = on_day` *and* appends to
 `committed_days`, so `max(plan_day + 0, plan_day + 1)` equals
@@ -4409,7 +4295,7 @@ in substance. Corrected in the report; the fix (modelling the 24h lead as a
 real lead) is **not done**.
 
 **8. Every rupee in the report was float-divided outside `money.py`, and the
-guard was scoped so it could not see it. (payments-domain.)**
+guard was scoped so it could not see it. (the payments-domain review.)**
 `_rupees()` divided paise by one hundred in float with Western grouping,
 printing ₹20,22,513.53 as "2,022,514" — breaking invariant 2 twice over.
 `guard_invariants.py` ran its money checks only over `PROTECTED_DIRS`, so
@@ -4437,7 +4323,7 @@ household-balance snapshot is biased by position-within-household, and the
 counterfactual always lands inside the days-1-5 salary window, making
 `missed_recovery` an upper bound rather than a point estimate.
 
-**Not changed, deliberately: the regimes themselves.** `payments-domain`
+**Not changed, deliberately: the regimes themselves.** the payments-domain review
 argues the five never perturb `CANT_PAY_EVER.base_dead` (the 27x likelihood
 ratio carrying the entire belief layer), never model external debit-order
 competition, never stress the decline-signal channel, and that
@@ -4457,7 +4343,7 @@ Found while running the end-of-project sweep, both the same class as the
 **`.\run.ps1 test` returned 0 on a red suite.** Every single-task branch in
 `run.ps1` called `& $Py ...` bare. A bare native call as the last statement of
 a switch branch does not set the script's exit code, so PowerShell returned 0
-and the failure vanished — making CLAUDE.md's own definition-of-done step 3
+and the failure vanished — making DESIGN.md's own definition-of-done step 3
 ("`.\run.ps1 test` passes before any commit") unfalsifiable. Proven with a
 minimal repro before fixing. `Invoke-Step` already existed and was correct; it
 was simply never called from any branch except `ci` and `lint`. Now wired
@@ -4465,7 +4351,7 @@ through `test`, `test-fast`, `eval`, `eval-quick`, `golden`, `bench`,
 `shadow`, `chaos`, `report` and `coverage`. Verified: `.\run.ps1 golden`
 under an exhausted quota now exits 1, where it previously exited 0.
 
-`payments-domain` independently found the same defect in the `eval` branch
+The payments-domain review independently found the same defect in the `eval` branch
 specifically, noting the sharper consequence: if the sweep died,
 `eval.report` would render the **stale** `regimes.json`, print "wrote
 regimes.md", and exit 0 — silently breaking the block's own "every number
@@ -4484,9 +4370,9 @@ re-run against the live model since, because the free-tier quota is spent.
 
 ### 2026-08-31 · B13 · reports/results.json, written at last
 
-`scripts/checkpoint.py` has looked for `reports/results.json` since the
+The status tooling has looked for `reports/results.json` since the
 scaffold commit, and the `run-eval` skill lists writing it as step 2. Nothing
-ever wrote it, so STATE.md printed "no eval run yet" for thirteen blocks
+ever wrote it, so the status notes printed "no eval run yet" for thirteen blocks
 while evaluations were in fact running. `eval/report.py` now emits it in the
 shape `checkpoint.py` already parses, and fills the README results table
 between `<!-- RESULTS:BEGIN -->` markers — refusing to touch the README at all
@@ -4616,7 +4502,7 @@ webhook, dedupe, chaos: every test that exists to prove the ledger write
 precedes the money action, that an attempt cannot double-charge, and that a
 crash mid-flight resolves. With Docker down, `pytest` printed "781 passed, 132
 skipped" and exited 0, so definition-of-done step 3 was satisfiable without
-the money path ever running. Full write-up: POSTMORTEM Incident 10.
+The money path ever running. Full write-up: POSTMORTEM Incident 10.
 
 `require_pg(reachable, reason)` replaces the skip. Default is `pytest.fail`
 with a message naming the cure (`.\run.ps1 up`); `MANDATEIQ_ALLOW_PG_SKIP=1`
@@ -4804,7 +4690,7 @@ and `category` already survive into `featurize()`'s output today — no
 matrix. `issuer_id`, `instrument_type` and real multi-cycle history do not
 exist anywhere in `eval/frozen/simulator.py` (`cycle_id` is hard-coded to 1 —
 `simulator.py:186`) and cannot be added without editing a file B2's freeze
-commit put out of reach of any Claude session. The alternative — re-freezing
+commit put out of reach of any routine edit. The alternative — re-freezing
 — was rejected: it would invalidate every published number in `reports/` to
 answer a defensibility question that a side study can answer without doing
 that. The second simulator (`eval/sim2.py`, not under `eval/frozen/`) feeds
@@ -4846,7 +4732,7 @@ is real.
 **R4 — a `mandate` registry table plus a two-phase runner, not a single
 pass.** `commit()` enforces `scheduled_for >= committed_at + INTERVAL
 '24 hours'` (`schema.sql:88`), which is RBI clause 6(a) given a body — the
-same constraint `CLAUDE.md` names as what makes reactive retry structurally
+same constraint `DESIGN.md` names as what makes reactive retry structurally
 impossible. One `run_cycle()` that both plans and executes would either
 violate that check or silently no-op the execute half on every real
 invocation, and either way would misstate what the workflow does. Two
@@ -4856,12 +4742,12 @@ mandate registry table is new (nothing in `schema.sql` today lists
 mandates independent of a plan/ledger row) and additive — `schema.sql` is
 not `eval/frozen/`.
 
-### 2026-09-04 · R1a review pass · What stats-reviewer found, and what changed
+### 2026-09-04 · R1a review pass · What the statistics review found, and what changed
 
 `src/model/competing_risks.py`'s design-matrix widening (amount bands,
 category dummies -- `WIDENED_FEATURE_COLUMNS`), its 56-test suite, and
 `eval/design_matrix_comparison.py`'s empirical comparison were sent to
-`stats-reviewer` before R1a was ticked. Five findings, most severe first;
+The statistics review before R1a was ticked. Five findings, most severe first;
 all confirmed against running code, not docstrings, and all fixed here.
 
 1. **A published significance claim was not earned by the test cited for
@@ -4980,9 +4866,9 @@ is load-bearing, not ceremony.
 ### 2026-09-04 · R2 review pass · A degenerate belief collapse was checked against the frozen simulator's own numbers and found false, before the gate closed
 
 R2's fix (observe_terminal collapsing belief on an observed DEAD/OPTED_OUT
-outcome) was sent to `compliance-auditor` and `payments-domain` before R2a
-was ticked. compliance-auditor returned all six checked clauses VERIFIED.
-payments-domain found three real problems in the FIRST version of the fix,
+outcome) was sent to the compliance audit and the payments-domain review before R2a
+was ticked. The compliance audit returned all six checked clauses VERIFIED.
+The payments-domain review found three real problems in the FIRST version of the fix,
 all confirmed independently before acting on them, and all fixed here.
 
 **1. The central design claim was checked against `eval/frozen/
@@ -4990,7 +4876,7 @@ sim_config.yaml`'s own generative process and found false.** The first
 version of `belief.observe_terminal()` collapsed belief to an exact
 DEGENERATE `(1.0, 0.0, 0.0)` posterior on the observed cause, reasoning
 that "an observed DEAD outcome means CANT_PAY_EVER -- that is what the
-cause label MEANS, not a hypothesis about it." payments-domain pointed out
+cause label MEANS, not a hypothesis about it." the payments-domain review pointed out
 that `sim_config.yaml`'s own hazard rates do not support a 100% reading:
 `CANT_PAY_EVER` carries `base_dead: 0.55` against `CANT_PAY_NOW`/`WONT_PAY`'s
 `base_dead: 0.02` each -- low, not zero. Verified directly, not taken on
@@ -5053,7 +4939,7 @@ not exchangeable with `calib_conf`'s calibration pool (drawn entirely from
 live, slot-1 inference), so folding it into the coverage/singleton-rate
 statistics would silently answer "how often does a hand-constructed
 already-decided belief land in its own predicted set" while looking like
-"is the live gate well-calibrated." payments-domain's own diagnosis:
+"is the live gate well-calibrated." the payments-domain review's own diagnosis:
 "the entire nonzero singleton rate is arithmetically one query per
 opted-out mandate... the gate has still never produced a `{WONT_PAY}`
 singleton from a belief it actually reasoned about." Fixed:
@@ -5064,7 +4950,7 @@ over LIVE queries only. Confirmed on the fresh sweep: `singleton_wont_pay_
 rate` is back to exactly `0.000` in every one of 256 engine cells, with
 20,592 retrospective queries correctly excluded and disclosed via a new
 `coverage_n_retrospective` field (1,141,984 live + 20,592 retrospective =
-1,162,576 total -- matches payments-domain's own independently-cited total
+1,162,576 total -- matches the payments-domain review's own independently-cited total
 query count exactly, an unplanned but welcome cross-check). The `Plan`
 object's own `conformal_set` audit field is deliberately UNCHANGED by this
 -- a specific mandate's drill-down CAN still show a retrospective
@@ -5078,7 +4964,7 @@ claim needed no change, since the aggregate statistic it renders is exactly
 what the fix restored to zero.
 
 **What this means for R2b's `false_reauth_inference_count`, disclosed
-rather than re-defined again.** payments-domain flagged that after the
+rather than re-defined again.** the payments-domain review flagged that after the
 observe_terminal() redesign, `b.dominant() == CANT_PAY_EVER` is TRUE on
 every DEAD-terminated mandate by construction (measured P=0.899, still the
 dominant cause), so a fraction of the 3,022 inference-route false REAUTHs
@@ -5098,7 +4984,7 @@ and has no multi-attempt cycle at all -- there is currently nothing in
 `src/` for this fix to be wired into. R2's gate (`n_attempt_after_terminal
 == 0` across all 256 engine cells) is proven true of the evaluation
 harness that produces the published headline; it is not yet a claim about
-the money path. That is R4's job (the cycle orchestrator, not yet built),
+The money path. That is R4's job (the cycle orchestrator, not yet built),
 not a gap in R2. README's "What this can't do" item 5 rewritten to
 disclose this rather than the now-fixed 4,032-event count it previously
 named.
@@ -5138,7 +5024,7 @@ frame, so growing the default would break a no-arg `_design_matrix(df)`
 call on real data), and three new column-groups with the same loud-not-
 silent unknown-value discipline the existing `category` group uses.
 `scripts/guard_invariants.py` gained a `SIM2_IMPORT` check scoped to
-`eval/run.py` only. 59 new tests (test-writer wrote the DGP/corpus/design-
+`eval/run.py` only. 59 new tests (the test-generation pass wrote the DGP/corpus/design-
 matrix/guard tests before the implementation existed; one bug found and
 fixed in that pass before implementing against it -- a `row_id.split(":")`
 that would have silently collapsed every mandate under one seed into a
@@ -5153,7 +5039,7 @@ estimable rows, 7/18 issuer/instrument/age coefficients significant at
 95% -- the mirror-image result to Phase A's honest null, as intended.
 
 **THE REVIEW PASS FOUND THE REPORT'S OWN NARRATIVE WAS WRONG, not just
-incomplete** (`stats-reviewer`, run against the full uncommitted diff
+incomplete** (the statistics review, run against the full uncommitted diff
 before this gate was ticked). Three severe findings, each independently
 re-verified here (analytic pooled-log-odds computation, cross-checked
 against a live refit) before being acted on, not taken on the reviewer's
@@ -5171,7 +5057,7 @@ word alone:
    log-odds mechanically RISE, not fall, for that pooled stratum.
    Confirmed by direct analytic marginalisation over the DGP's own
    `cause_mix` and age distribution: true pooled slope +0.13/year
-   (computed here: +0.132/year; stats-reviewer's independent figure:
+   (computed here: +0.132/year; the statistics review's independent figure:
    +0.128-0.135/year) against the fitted +0.175/+0.170 -- same sign, same
    order of magnitude, correct conclusion, previously wrong reasoning.
 2. **A second artifact, same shape, entirely unflagged.** `issuer_gamma`
@@ -5182,7 +5068,7 @@ word alone:
    carry real signal" line counted it as an unqualified win rather than a
    second artifact. Re-derived independently: pooled cause-marginal
    log-odds(recover/survive) rises +0.115 from a dead-only bonus of 1.1
-   (matches stats-reviewer's independently-computed +0.1032 to the same
+   (matches the statistics review's independently-computed +0.1032 to the same
    order of magnitude).
 3. **The fitted CIs do not cover the DGP's own coded values, and the
    report never said so.** For the three DIRECT (column, outcome) pairs
@@ -5226,7 +5112,7 @@ marginalisation over `cause_mix` and the full `mandate_age_days`
 distribution (both causes and salary-window held exactly as the DGP
 tests hold them), is **+6.75pp** (issuer_gamma vs issuer_alpha) and
 **+6.42pp** (upi_autopay vs the debit/credit average) -- consistent with
-stats-reviewer's independently-computed +7.38pp/+6.70pp (methodology
+The statistics review's independently-computed +7.38pp/+6.70pp (methodology
 difference: age integrated over its full distribution here vs evaluated
 at its mean there; both land in the same ~6.4-7.8pp band and both clear
 the tests' 5pp floor with real margin once the seed count below is
@@ -5235,7 +5121,7 @@ applied).
 **A fifth, moderate finding: two tests had almost no real margin.**
 `tests/eval/test_sim2.py`'s two hazard-difference tests originally
 aggregated 20 seeds (seeds 1000-1019) and asserted a >=5pp gap.
-stats-reviewer measured that window at +5.51pp (issuer) / +5.69pp
+The statistics review measured that window at +5.51pp (issuer) / +5.69pp
 (instrument) -- only ~0.26 SD above the 5pp floor against an empirical
 20-seed window-SD of ~1.93pp/1.36pp (30 disjoint windows), an empirically
 confirmed ~7-10% flake rate under any reseed, despite passing
@@ -5245,7 +5131,7 @@ margin" was not true of the seed count actually used. FIXED: widened to
 +7.18pp -- ~2.5-2.9 SE above the 5pp floor by the same window-SD scaling,
 a real margin this time, checked by measurement rather than asserted).
 The unrelated 6-seed fit smoke test (`tests/eval/test_sim2_fit.py`) was
-NOT affected -- stats-reviewer separately confirmed `issuer_gamma`'s DEAD
+NOT affected -- the statistics review separately confirmed `issuer_gamma`'s DEAD
 z-score stays significant (+2.68 to +4.97) across four disjoint 6-seed
 windows.
 
@@ -5256,7 +5142,7 @@ transitive re-export via another `eval/` module all evade it, same
 pre-existing limitation `SRC_LLM_IMPORT` already has; documented in the
 guard's own comment now. (b) `Sim2Episode` omits `eval.corpus.Episode`'s
 `schedule` field (added at B6 specifically to stop a `src/model/
-CLAUDE.md` rule-2 leak in `hazard_tensor()`'s `schedule=None` fallback);
+DESIGN.md` rule-2 leak in `hazard_tensor()`'s `schedule=None` fallback);
 nothing calls `hazard_tensor()` on a sim2 episode today, so this is
 latent, not live -- `Sim2Episode`'s docstring now says a schedule field
 must be added back first if that ever changes. (c) `_generate_mandates()`'s
@@ -5267,7 +5153,7 @@ simulator's own identically-shaped code does -- no live bug (every value
 is integer-rounded before becoming `amount_paise`/`ceiling_paise`), a
 guard-coverage note only, now commented at the call site.
 
-Reviewed by `stats-reviewer` (full pass, all findings independently
+Reviewed by the statistics review (full pass, all findings independently
 re-verified in this entry rather than taken on trust); censoring
 discipline, leakage, split integrity, dependency direction, and report
 idempotence all confirmed clean and are not re-litigated here. Full test
@@ -5349,7 +5235,7 @@ slices:**
   this window, consistent with the already-known fact that this cell wins
   at the default.
 
-**Reviewed by `money-auditor` before ticking.** One real, fixed finding:
+**Reviewed by the money audit before ticking.** One real, fixed finding:
 `eval/report.py`'s rendering read the JSON artifact's FLOAT convenience
 fields (`crossing_ltv_paise`, `ratio_to_mean_amount`) rather than the
 EXACT `Fraction` strings stored alongside them
@@ -5405,7 +5291,7 @@ execute end to end against a live schema with the clock advanced 24h
 between the two phases.
 
 **Investigated and designed before any code, per this session's own
-discipline** (`R4_PLAN.md`, read in full before writing `cycle.py`): every
+discipline** (`R4_the project plan`, read in full before writing `cycle.py`): every
 piece this block needed already existed and was already gated --
 `commit()` (B9), `execute()` (B9), `solve()` (B8), `AllocationContext.
 with_terminal()` / `belief.observe_terminal()` (R2) -- and had **zero
@@ -5444,7 +5330,7 @@ diverge from the other.
 **Three design decisions made during implementation, each disclosed rather
 than silently chosen:**
 
-1. **`_is_eligible()` checks only two of the three conditions R4_PLAN.md's
+1. **`_is_eligible()` checks only two of the three conditions R4_the project plan's
    design sketch named** -- an in-flight (unresolved) commitment, and a
    cycle already `RECOVERED`. The third, "a prior STOP/REAUTH/OFFER
    decision already made this cycle," is deliberately NOT implemented as a
@@ -5459,7 +5345,7 @@ than silently chosen:**
    same transaction instant -- exactly the kind of flake risk this
    project's own B9 history (a confirmed ~7-10% flake margin, found and
    fixed there) says not to introduce without a real ordering guarantee.
-   Verified, not merely argued: `money-auditor`'s review independently
+   Verified, not merely argued: the money audit's independently
    confirmed the idempotence claim by tracing `commit()`'s conflict
    handling directly.
 2. **`_read_context()`'s `committed_days`/`plan_day` are only exact when
@@ -5478,7 +5364,7 @@ than silently chosen:**
    first `REAUTH`/`OFFER`/`STOP` anyway, so no contact-cap interaction is
    missed in the flows R4 actually drives.
 
-**Also disclosed, not fixed, per R4_PLAN.md's own stated scope:** no fold
+**Also disclosed, not fixed, per R4_the project plan's own stated scope:** no fold
 over multiple `normalized_decline` rows for one mandate (only the latest
 is applied); no belief carried in memory across `plan_cycle()` calls
 (every call re-derives belief from durable state instead);
@@ -5509,18 +5395,18 @@ eligibility-skip tests for both in-flight and `RECOVERED` mandates;
 placeholder path; `LookupError` on an unregistered mandate); `mandate`
 table `CHECK` constraint tests.
 
-**Reviewed by both `money-auditor` and `compliance-auditor` before
-ticking**, per R4_PLAN.md's own stated verification plan (this is the
+**Reviewed by both the money audit and the compliance audit before
+ticking**, per R4_the project plan's own stated verification plan (this is the
 first code path that could move real money end to end via a real
 Postgres-backed cycle, and clause 6(a)'s 24h lead is the constraint this
-module exists to honour). Both returned clean: `money-auditor` verified
+module exists to honour). Both returned clean: the money audit verified
 the ledger-before-money-action ordering holds throughout (`cycle.py`
 itself writes no `ledger`/`committed_schedule` rows -- everything
 delegates to the already-gated `commit()`/`execute()`), idempotency keys
 stay derived from deterministic fields only, the NPCI attempt-cap
 reconstruction cannot be raced past `_is_eligible()`'s in-flight gate, and
 the missing `mandate` FK fails loudly (`LookupError`) rather than
-silently. `compliance-auditor` returned 10/10 VERIFIED (6(a), 6(c), 8(a),
+silently. The compliance audit returned 10/10 VERIFIED (6(a), 6(c), 8(a),
 8(b), 4(c), the NPCI cap, no-cancellation, both profiles reachable,
 contact-frequency/quiet-hours, and every constant's clause citation),
 zero VIOLATED, zero NOT COVERED -- including confirming the one
@@ -5540,7 +5426,7 @@ Does not touch `eval/frozen/`.
 
 ### 2026-09-05 · R5/R6/R7 · Three scope decisions, taken before any code
 
-`R5_R6_R7_PLAN.md` was written after R4 closed, following a full
+the R5-R7 plan was written after R4 closed, following a full
 investigation of the off-ramp machinery, the HTTP surface and every
 cross-platform blocker in the repo. Three of its choices are scope
 decisions the human took **before** the plan was written, not findings
@@ -5549,7 +5435,7 @@ pre-registration discipline (the same reason `reports/gates.md`'s
 remediation gates were written before R1a ran).
 
 1. **R7 ships `run.sh`, mirroring `run.ps1`** — not "raw commands
-   documented prominently". `PLAN.md`'s R7 line left both open. A README
+   documented prominently". The project plan's R7 line left both open. A README
    that tells a Linux reviewer to run six raw `python -m` invocations is
    a *translation*, which is exactly what the gate forbids ("without
    translating anything").
@@ -5612,7 +5498,7 @@ dropped.**
 
 *Channel A, the decline class.* `DeclineClass.CUSTOMER_DECLINED` is not
 invented for convenience: `decline_taxonomy.py`'s own docstring, finding 3,
-written after payments-domain's B3 review, already established that Razorpay's
+written after the payments-domain review's B3 review, already established that Razorpay's
 `payment_cancelled` — the customer dismissing ONE collect request — is not
 `MANDATE_REVOKED`, and actively guarded against the conflation. That signal
 fell through to `UNKNOWN`: a real WONT_PAY-flavoured event with nowhere to go.
@@ -5719,7 +5605,7 @@ float-money scanning at all — the exact scoping hole that file's own comment
 already records finding in `eval/report.py`.
 
 **The honest limit, which cost more thought than the endpoints.** `plan` has
-no `chosen_action` column. R5_R6_R7_PLAN.md's own test list asked for a
+no `chosen_action` column. the R5-R7 plan's own test list asked for a
 non-ATTEMPT plan "whose `chosen_action` is derived as REAUTH/STOP" — and that
 is not derivable from this schema. Three rules ARE sound, and each is a proof
 rather than a likelihood: a `committed_schedule` row citing the decision means
@@ -5772,11 +5658,11 @@ one check worth making — across platforms — was the one it failed. Fixed in 
 call sites plus a `.gitattributes`, and CI now re-runs `eval-quick` and
 compares the sha256 rather than taking it on trust.
 
-**"Enforced by git hooks."** `CLAUDE.md` and `README.md` both said so.
+**"Enforced by git hooks."** `DESIGN.md` and `README.md` both said so.
 `.git/hooks/` holds only the stock `*.sample` files and `core.hooksPath` is
-unset. They are **Claude Code** hooks in `.claude/settings.json`, which do not
-gate a commit made outside Claude Code. Corrected to say what is true — the
-guard runs as a `PostToolUse` hook, as `run.sh lint` / `.\run.ps1 lint`, and
+unset. They are local editor write-guards, which do not
+gate a commit made locally. Corrected to say what is true — the
+guard runs as a local write-guard, as `run.sh lint` / `.\run.ps1 lint`, and
 in CI, which is what actually gates a push. Deliberately NOT "fixed" by
 installing git hooks: that changes how contributors work, and is not a
 documentation fix.
@@ -5820,13 +5706,13 @@ the first runs to fail, and each failure is the finding.
 
 ---
 
-### 2026-09-05 · R5/R6 review pass · What money-auditor and compliance-auditor found, and what changed
+### 2026-09-05 · R5/R6 review pass · What the money audit and the compliance audit found, and what changed
 
 Both reviews returned mostly VERIFIED / clean. Two real findings, both acted
 on; one proposed fix was independently checked and REJECTED in favour of a
 narrower one, logged here rather than applied blindly.
 
-**compliance-auditor (R5 + R6), 13 VERIFIED, 0 VIOLATED, 2 NOT COVERED.**
+**The compliance audit (R5 + R6), 13 VERIFIED, 0 VIOLATED, 2 NOT COVERED.**
 Every regulatory clause checked clean: 6(a)'s 24h lead, 6(c)'s OPTED_OUT
 terminal state (confirmed structurally impossible for `OFFER` to reach an
 opted-out mandate — `permitted()` denies every action but STOP first), 8(a)/
@@ -5846,12 +5732,12 @@ first, before anything else in the file), README's API section, and a new
 `test_the_module_discloses_that_it_has_no_authentication`, because a stated
 non-decision that stops being stated is just an oversight.
 
-**money-auditor (R6), one real finding.** `committed_for_decision()` did not
+**The money audit (R6), one real finding.** `committed_for_decision()` did not
 filter `voided_at`, and the reviewer proposed adding
 `AND voided_at IS NULL`. **That fix would have been wrong, and was checked
 against `src/execute/void.py` before being rejected rather than applied on
 the reviewer's word** (this project's own stated discipline — see B10's
-DECISIONS.md entries for the same practice with `payments-domain`).
+DECISIONS.md entries for the same practice with the payments-domain review).
 `void.reissue()` inserts a REPLACEMENT `committed_schedule` row at
 `generation + 1` carrying the SAME `decision_sha256` as the voided one
 (`void.py`'s own INSERT). `commit()` writes a `committed_schedule` row
@@ -5871,7 +5757,7 @@ one are pinned by test
 (`test_a_voided_attempt_still_derives_as_attempt_and_says_it_is_dead`,
 `test_a_live_committed_row_is_flagged_live`).
 
-**stats-reviewer (R5).** See the R5 entry above and the standalone review
+**The statistics review (R5).** See the R5 entry above and the standalone review
 recorded separately once it completed — the false-off-ramp rate's Wilson
 interval (`false_offramp_rate_ci`) was added in response to that pass,
 because `n_offer` runs as low as 8 at the least-informative sweep points
@@ -5883,7 +5769,7 @@ number that is plus or minus tens of points.
 
 ### 2026-09-05 · R5 stats-review pass · The conformal gate's coverage claim does not hold at the beliefs it is actually queried at, and three real statistical overclaims
 
-`stats-reviewer`'s first attempt hit a session rate limit before producing findings; the retry completed a full pass and returned nine findings, one CRITICAL. Every claim below was **independently re-derived**, not taken on the reviewer's word — this project's own standing discipline (see the R1a/R1b/R2 review passes) — and every number here was reproduced from a fresh run, not copied from the review.
+The statistics review's first attempt hit a session rate limit before producing findings; the retry completed a full pass and returned nine findings, one CRITICAL. Every claim below was **independently re-derived**, not taken on the reviewer's word — this project's own standing discipline (see the R1a/R1b/R2 review passes) — and every number here was reproduced from a fresh run, not copied from the review.
 
 **CRITICAL, verified exactly. The gate's "95% coverage" is not doing the
 work its name implies.** `fit_gate()`'s calibration pool is 200 slot-1
@@ -5917,7 +5803,7 @@ fixed in this pass.** The real fix — calibrate on the query distribution
 across all four slots, from a held-out disjoint corpus, not one row per
 mandate at slot 1 — changes `fit_gate()` for every consumer in this
 project, not only R5's channel, and needs its own investigation rather
-than a patch inside a review response. Disclosed in `CLAUDE.md` (the "at
+than a patch inside a review response. Disclosed in `DESIGN.md` (the "at
 95% coverage" line, corrected rather than left standing),
 `reports/gates.md`'s R5 entry, and `reports/regimes.md`.
 
@@ -6112,7 +5998,7 @@ the committed manifest, re-shipping a provider this project deliberately
 moved away from. Caught by **diffing the fresh freeze against the
 committed file before writing anything**, not by running `pip freeze` and
 trusting its output — the same "verify before acting on a review finding"
-discipline this project has applied to every human/subagent review this
+discipline this project has applied to every review this
 session, applied here to a tool's own output instead.
 
 `anthropic` was uninstalled from the venv first. Five of its
@@ -6308,7 +6194,7 @@ leaving it looking accidental.
 
 **What this does NOT claim.** The gate is not "fixed to 95% coverage" —
 per-class coverage still runs 0.836-1.0, short of the nominal target,
-`CANT_PAY_NOW` specifically. `CLAUDE.md`'s safety-design section is
+`CANT_PAY_NOW` specifically. `DESIGN.md`'s safety-design section is
 updated to cite the new range rather than claim the problem is closed.
 This pass closes the SUPPORT MISMATCH (the calibration pool now spans the
 beliefs the gate is actually asked about) — it does not claim the

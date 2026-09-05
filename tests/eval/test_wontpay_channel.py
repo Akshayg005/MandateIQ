@@ -79,7 +79,7 @@ def test_channel_rejects_out_of_range_rates():
             WontPayChannel(kind="decline", tpr=tpr, fpr=fpr, rng=random.Random(0))
 
 
-# --- R5 review pass, 2026-09-05: within-mandate dependence (stats-reviewer,
+# --- R5 review pass, 2026-09-05: within-mandate dependence (the statistics review,
 # HIGH). The main QUALITY_GRID holds correlation fixed at exactly zero --
 # `habitual_fraction` is the separate dimension that varies it, WITHOUT
 # perturbing anything the default (1.0) already produced.

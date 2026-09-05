@@ -1,6 +1,6 @@
 """Posterior distribution over the three latent causes (CANT_PAY_NOW,
 CANT_PAY_EVER, WONT_PAY), updated by Bayes' rule as decline observations
-arrive. This is the belief half of the state PLAN_DETAIL.md section 4's
+arrive. This is the belief half of the state the build spec section 4's
 backward induction searches over: `(b, r, ctx)`.
 
 The likelihood P(decline | cause) does not exist anywhere in this codebase
@@ -23,7 +23,7 @@ in this module's suite.
 
 cause_map.py's docstring previously read "nothing downstream of B5 should
 still be reading this file" -- written about the OUTCOME HAZARDS cause_map
-was superseded by, and it now contradicts PLAN_DETAIL.md section 4:999,
+was superseded by, and it now contradicts the build spec section 4:999,
 which names cause_map.prior() as exactly this update's likelihood source.
 Narrowed, not deleted: see cause_map.py's current docstring and
 DECISIONS.md, 2026-08-29, B7. The prior() read in likelihood() below is the
@@ -43,7 +43,7 @@ gap and bringing it back as a finding is the discipline this project has
 applied at B5 (the stopping-threshold scalar) and is applying again here.
 
 Belief is frozen and hashable -- B8 memoises backward induction on
-`(quantised(b, 1e-6), r, ctx.signature())` (PLAN_DETAIL.md:1022), so this
+`(quantised(b, 1e-6), r, ctx.signature())` (the build spec), so this
 module must produce a stable, hashable key from a Belief. Zero I/O in this
 file. Probabilities are plain float, not integer paise -- a probability is
 not money (the same reasoning cause_map.py's docstring already gives).
@@ -92,7 +92,7 @@ class Belief:
     source_version identifying which classifier (deterministic taxonomy or
     LLM normaliser, and which version of it) produced the DeclineClass
     observation, as `;source=<source_version>` -- what makes a belief
-    written to plan.belief_json traceable, per PLAN_DETAIL.md section 8.1's
+    written to plan.belief_json traceable, per the build spec section 8.1's
     B11 gate: "a belief that cannot be traced to a specific normaliser
     version is not auditable". init() never has an observation to trace,
     so its provenance omits the source field entirely."""
@@ -131,7 +131,7 @@ def _validate_source_version(source_version: str) -> None:
         raise BeliefError(
             "source_version is required and must be non-empty -- a Belief "
             "updated from an observation whose classifier cannot be named is "
-            "not auditable (PLAN_DETAIL.md B11 gate, clause 3). Pass "
+            "not auditable (the build spec B11 gate, clause 3). Pass "
             "decline_taxonomy.TAXONOMY_VERSION for the deterministic path, or "
             "a NormalizedDecline.normalizer_version read back from the "
             "ledger's normalized_decline row for the LLM path."
@@ -185,11 +185,11 @@ def update(b: Belief, obs: DeclineClass, *, source_version: str) -> Belief:
     and one updated from the deterministic taxonomy produced byte-identical
     provenance -- exactly the gap this Belief's own docstring already named
     as unacceptable ("a belief that cannot be traced to a specific
-    normaliser version is not auditable", PLAN_DETAIL.md B11 gate). Required
+    normaliser version is not auditable", the build spec B11 gate). Required
     rather than defaulted so that gap cannot silently reopen: a caller
     cannot construct a belief without stating where its evidence came from.
 
-    What this DOES NOT prove (payments-domain review, 2026-08-31): that the
+    What this DOES NOT prove (the payments-domain review, 2026-08-31): that the
     string is honest. `update(b, nd.value, source_version=nd.normalizer_version)`
     on an in-memory NormalizedDecline that was never actually written to
     `normalized_decline` satisfies this signature while defeating the whole
@@ -260,7 +260,7 @@ def update_from_likelihood_ratio(
 
     source_version is REQUIRED and keyword-only, the same discipline
     update() and observe_terminal() apply, for the same reason: a belief
-    whose evidence channel cannot be named is not auditable (PLAN_DETAIL.md
+    whose evidence channel cannot be named is not auditable (the build spec
     B11 gate). Pass the channel's own version string -- never a taxonomy
     version, since no taxonomy ran.
     """
@@ -311,7 +311,7 @@ def observe_terminal(cause_probs: Mapping[Cause, float], *, source_version: str)
     (`_best_action`'s `elif b.dominant() == Cause.CANT_PAY_EVER`) was never
     entered and ATTEMPT kept winning by default.
 
-    CORRECTED same day (stats-reviewer / payments-domain review, before this
+    CORRECTED same day (the statistics review / the payments-domain review, before this
     gate was ticked): the first version of this function took a single
     `cause` and returned a DEGENERATE (1.0/0/0) posterior, on the reasoning
     that "an observed DEAD outcome means CANT_PAY_EVER ... that is what the
@@ -374,7 +374,7 @@ def quantised(b: Belief, step: float) -> tuple[int, int, int]:
     """b's three probabilities, each rounded to the nearest multiple of
     `step` and expressed as an integer count of steps -- a stable, hashable
     key that collapses near-identical beliefs together. This is what B8's
-    backward-induction memoisation keys on (PLAN_DETAIL.md:1022):
+    backward-induction memoisation keys on (the build spec):
     `(quantised(b, 1e-6), r, ctx.signature())`."""
     return tuple(round(p / step) for p in b.probs)
 

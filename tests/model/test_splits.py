@@ -6,7 +6,7 @@ mandates never straddle splits, and disjointness of mandate_id sets is enforced
 by the implementation (raised, not asserted). This is the only split ever applied
 to the training corpus; the frozen evaluation batch is never split. FOUR frames,
 not three: calib_iso (fits isotonic) and calib_conf (supplies the conformal
-quantile) are disjoint mandate sets, per stats-reviewer's B4 finding that a
+quantile) are disjoint mandate sets, per the statistics review's B4 finding that a
 shared calib set breaks conformal exchangeability and silently narrows every
 prediction set below its stated coverage. Proportions are 70/10/10/10.
 """
@@ -453,7 +453,7 @@ def test_split_group_key_matches_default_bit_identical_on_synthetic_frame():
 
     split() with that group_key must be bit-identical to split() with none
     -- proving the household-aware grouping change never touches any
-    already-reported nominal-arm number (root CLAUDE.md invariant 4 on
+    already-reported nominal-arm number (root DESIGN.md invariant 4 on
     eval/frozen/ immutability is why this must be provable, not just
     plausible).
 

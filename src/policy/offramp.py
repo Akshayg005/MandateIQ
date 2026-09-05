@@ -9,7 +9,7 @@ itself call a cancellation endpoint. There is no Razorpay client import
 here at all; that would be a stronger guarantee of invariant 6 than a text
 guard could ever be, and this module has no need of one.
 
-Design spec (PLAN_DETAIL.md section 4): Q(b, OFFER) = offer_value(b, ctx),
+Design spec (the build spec section 4): Q(b, OFFER) = offer_value(b, ctx),
 "deferred revenue, not lost: pause/downgrade retain LTV" -- constructing an
 offer is not a concession of lost revenue, it is this project's thesis in
 one sentence: a customer kept at a lower commitment is worth more than a

@@ -373,7 +373,7 @@ def test_household_balance_never_goes_negative():
 
 
 def test_coupled_arm_never_recovers_more_than_the_household_ever_had():
-    """Regression test for a real bug caught by payments-domain review
+    """Regression test for a real bug caught by the payments-domain review
     before the freeze commit was finalized: the first implementation gave a
     below-balance attempt a probabilistic chance to succeed anyway, crediting
     the FULL mandate amount while only debiting the household to zero --

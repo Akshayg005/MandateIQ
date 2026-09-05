@@ -1,4 +1,4 @@
-"""Add the model-input feature columns PLAN_DETAIL.md section 2's
+"""Add the model-input feature columns the build spec section 2's
 "Features" table specifies, on top of a frame src/model/person_period.py's
 build() has already produced and validated. See that module's docstring
 for the exact column split -- this file owns everything in section 2's
@@ -9,7 +9,7 @@ Every column featurize() adds is knowable >=24h before the slot it
 describes (RBI clause 6(a)) by construction: each is either a static
 mandate/category attribute, or derived only from attempts at strictly
 earlier slots within the same (mandate_id, cycle_id) group. See
-src/model/CLAUDE.md rule 2 -- this is the file that rule is about.
+src/model/DESIGN.md rule 2 -- this is the file that rule is about.
 
 Not every column section 2 specifies has a source in the frozen simulator.
 UNSOURCED below lists each one with why, and is asserted (by
@@ -25,7 +25,7 @@ import pandas as pd
 
 from src.core.types import CensorReason, Outcome, Profile
 
-# The full column-name vocabulary PLAN_DETAIL.md section 2's "Features"
+# The full column-name vocabulary the build spec section 2's "Features"
 # table specifies, verbatim.
 SPEC_COLUMNS: frozenset[str] = frozenset({
     "amount_paise", "ceiling_paise", "afa_limit_paise",
@@ -55,7 +55,7 @@ UNSOURCED: dict[str, str] = {
         "model at all -- clause 8(a)/8(b) routes it to Action.REAUTH "
         "before any retry-timing decision. B8's allocator must apply this "
         "SAME afa_free_limit_paise() filter before consulting the model, "
-        "not just this corpus (DECISIONS.md, 2026-08-28, B4 stats-reviewer "
+        "not just this corpus (DECISIONS.md, 2026-08-28, B4 the statistics review "
         "finding 4)"
     ),
     "above_afa_cliff": (
@@ -103,7 +103,7 @@ def featurize(df: pd.DataFrame, *, profile: Profile = Profile.strict) -> pd.Data
     call, not derived from anything in `df` -- the two RBI compliance
     interpretations are evaluated as separate runs (protocol.md, "both
     profiles produce numbers"), never mixed within one frame. This is a
-    small, additive extension of PLAN_DETAIL.md's stated
+    small, additive extension of the build spec's stated
     `featurize(df) -> pd.DataFrame` signature (a keyword-only parameter
     with a default), not a divergence from it -- see DECISIONS.md,
     2026-08-27, B4. Note for B5: being constant within any one call makes

@@ -157,7 +157,7 @@ def test_no_forbidden_columns_survive_featurize():
 
 
 def test_estimable_present_in_build_absent_in_featurize():
-    """estimable (the slot-1 structural-zero flag, added per stats-reviewer's
+    """estimable (the slot-1 structural-zero flag, added per the statistics review's
     B4 finding) must survive in build()'s output -- it is not in FORBIDDEN,
     since it is not outcome-derived, but featurize() still drops it: B5
     must consult it via build()'s own frame, the same mechanism already
