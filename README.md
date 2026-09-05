@@ -500,8 +500,9 @@ Indian payments or the statistics.
 | `run.ps1` | Task runner (replaces make) |
 | `PLAN.md` | 12-day execution plan |
 | `OPUS_PROMPT.md` | Master spec prompt for Claude Code |
-| `DECISIONS.md` | Where a model was used, where one deliberately wasn't |
-| `POSTMORTEM.md` | What broke during the build |
+| **`WHAT_BROKE.md`** | **Start here for the failures.** The readable digest of the two files below — the bugs that taught something and the review findings that changed a published number, in ~180 lines |
+| `DECISIONS.md` | Where a model was used, where one deliberately wasn't (~6,300 lines, the full record) |
+| `POSTMORTEM.md` | What broke during the build — all 12 incidents, in full |
 | `.claude/` | 8 subagents, 5 skills, 4 hooks |
 | `scripts/guard_*.py` | Invariants enforced mechanically, not by prose |
 | `eval/frozen/` | Pre-registered, immutable |
