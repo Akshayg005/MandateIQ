@@ -122,6 +122,88 @@ def test_gate_calibration_is_disjoint_from_every_reported_seed():
     assert not (calib_ids & reported)
 
 
+# === R8, 2026-09-05: fit_gate()'s calibration pool spans slots 1-4 =========
+#
+# CRITICAL finding (R5 stats-review pass, DECISIONS.md, 2026-09-05): the
+# calibration pool was one row per mandate, at slot 1 only -- 200 rows, 2-3
+# distinct nonconformity values per class, maximum calibration confidence
+# well below what a real multi-decline trajectory reaches. The fix grinds
+# every calibration mandate through its own slot 2/3 (see
+# eval/run.py's _calibration_rows), producing more rows and a wider score
+# range without depending on the gate it is fitting.
+
+
+def test_calibration_pool_now_spans_more_than_one_row_per_mandate():
+    """200 calibration mandates; if every one contributed only its slot-1
+    row, n_calib would be exactly 200 -- the CRITICAL finding's own
+    description of the bug. Some mandates now survive to contribute a
+    slot-3 and/or slot-4 row too, so n_calib must be strictly more."""
+    _, kind, diag = run_mod.fit_gate(load_config())
+    assert kind == "conformal"
+    assert diag["n_calib"] > 200, (
+        f"n_calib={diag['n_calib']} -- calibration pool did not grow beyond "
+        "one row per mandate; the slot 2/3 grind is not contributing rows"
+    )
+
+
+def test_calibration_score_range_widens_toward_a_multi_decline_confidence():
+    """The support-mismatch half of the CRITICAL finding: the OLD pool's
+    per-class scores topped out around 0.90 (p_true <= ~0.10 in the worst
+    case), while a real multi-decline trajectory reaches p_true > 0.99 (see
+    tests/eval/test_wontpay_channel.py). At least one class's calibration
+    pool must now contain a score low enough to prove the pool has actually
+    seen a belief that confident, not merely grown in row count."""
+    import numpy as np
+
+    gate, kind, _ = run_mod.fit_gate(load_config())
+    assert kind == "conformal"
+    pred = gate.predictor
+    assert pred.calib_scores.min() < 0.10, (
+        f"minimum calibration score across all classes is "
+        f"{pred.calib_scores.min()} -- no class's pool reached a "
+        "multi-decline-level confidence (score < 0.10, i.e. p_true > 0.90)"
+    )
+
+
+def test_calibration_pool_still_meets_the_mondrian_floor_per_class():
+    """The grind must not thin out any one class below what Mondrian
+    conformal needs (ceil(1/alpha) - 1 = 19 at alpha=0.05) -- fit_gate()
+    already raises ConformalUnderpowered if it does, so reaching a
+    'conformal' kind here proves the ROW floor holds; the per-class counts
+    are checked directly anyway, the same discipline the channel
+    diagnostics already use."""
+    import numpy as np
+
+    gate, kind, _ = run_mod.fit_gate(load_config())
+    assert kind == "conformal"
+    pred = gate.predictor
+    for c_idx, cause in enumerate(run_mod.CAUSE_ORDER):
+        n_c = int(np.sum(pred.calib_labels == c_idx))
+        assert n_c >= 19, f"{cause}: only {n_c} calibration rows, below the floor of 19"
+
+
+def test_the_row_floor_is_not_hiding_too_few_independent_mandates():
+    """R8 stats-review pass, 2026-09-05: calibrate()'s floor counts ROWS, and
+    _calibration_rows can contribute up to 3 per mandate -- so 19 rows could,
+    in principle, come from as few as 7 independent mandates, which is a much
+    weaker claim than the floor's own derivation (ceil(1/alpha) - 1
+    independent calibration points) assumes. calib_units_per_class counts
+    DISTINCT mandate ids instead, so this is checkable rather than assumed.
+    Today's margins are wide (measured: CANT_PAY_NOW 105, CANT_PAY_EVER 48,
+    WONT_PAY 47 distinct mandates) -- this test pins that the diagnostic
+    exists and stays well above the row floor, so a future regression that
+    quietly thins the independent-mandate count would be caught even while
+    the row count still clears calibrate()'s own check."""
+    _, kind, diag = run_mod.fit_gate(load_config())
+    assert kind == "conformal"
+    units = diag["calib_units_per_class"]
+    for cause, n_units in units.items():
+        assert n_units >= 19, (
+            f"{cause}: only {n_units} DISTINCT calibration mandates -- the "
+            "row floor may be clearing on too few independent units"
+        )
+
+
 # --- scoring a mandate the engine never attempted ----------------------------
 
 

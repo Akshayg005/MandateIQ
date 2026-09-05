@@ -17,8 +17,10 @@ question nobody asked; the acquirer view gets its breadth from the aggregate
 artifact instead.
 
 SEED 0, NOT THE PUBLISHED MEAN. results.json's headline figures are means
-over the 8 seeds in its `seeds` field -- preserved 142/200 is 141.875 rounded,
-and THIS artifact's seed-0 batch has 135. Both are correct and they are not
+over the 8 seeds in its `seeds` field -- preserved 140/200 is 140.125 rounded
+(R8, 2026-09-05: was 142/200, 141.875, before the conformal gate's
+calibration fix changed how often OFFER fires), and THIS artifact's seed-0
+batch has 139 (was 135). Both are correct and they are not
 the same number. Anything rendering the two together must say which is which;
 scripts/dashboard_data.py therefore stages this file for the reviewer
 dashboard and withholds it from the landing page, whose counters are means.

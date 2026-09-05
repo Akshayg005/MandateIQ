@@ -67,7 +67,16 @@ def test_both_channels_are_swept():
 
 @pytest.fixture(scope="module")
 def tiny_sweep():
-    return oc.sweep(grid=((1.00, 0.00), (0.30, 0.30)), kinds=("decline",),
+    # (0.0, 1.0) added alongside the original two points (R8, 2026-09-05,
+    # following the fit_gate() calibration fix below): a channel that fires
+    # on EVERY non-WONT_PAY mandate is the sharpest possible contrast with
+    # the oracle, and is needed for
+    # test_a_worse_channel_costs_more_false_off_ramps_per_offer to stay
+    # reliable at n=1 seed now that the gate is better calibrated -- see
+    # that test's own docstring for why (0.30, 0.30) stopped being enough.
+    # (0.30, 0.30) stays for test_the_reported_roc_is_realised_not_the_
+    # configured_parameter, which specifically needs a STOCHASTIC point.
+    return oc.sweep(grid=((1.00, 0.00), (0.30, 0.30), (0.0, 1.0)), kinds=("decline",),
                     seeds=(0,), verbose=False)
 
 
@@ -139,9 +148,23 @@ def test_the_offramp_actually_fires_under_a_good_channel(tiny_sweep):
 def test_a_worse_channel_costs_more_false_off_ramps_per_offer(tiny_sweep):
     """The point of sweeping quality at all. Not a claim about magnitudes
     -- only that degradation is VISIBLE rather than hidden behind a single
-    flattering operating point."""
+    flattering operating point.
+
+    Compares the oracle against (0.0, 1.0) -- fires on every non-WONT_PAY
+    mandate -- rather than the original (0.30, 0.30). R8, 2026-09-05: after
+    fixing fit_gate()'s calibration (it now spans slots 1-4 of a mandate's
+    trajectory instead of only slot 1, closing the CRITICAL support-mismatch
+    finding in DECISIONS.md), the gate is more accurate and (0.30, 0.30)
+    produces too few offers at n=1 seed for the comparison to be reliable
+    (observed: n_offer=1 for the noisy point, 0 false either side -- a tie,
+    not a finding). (0.0, 1.0) is the sharpest possible contrast with the
+    oracle and reliably shows the same degradation this test has always
+    asserted, at the same seed count. The full 8-seed QUALITY_GRID (this
+    module's real, published sweep) still spans the original quality axis
+    end to end; only this one small regression fixture needed a
+    better-powered comparison point."""
     by_tpr = {p["tpr"]: p for p in tiny_sweep["points"]}
-    assert by_tpr[0.30]["false_offramp_rate"] > by_tpr[1.00]["false_offramp_rate"]
+    assert by_tpr[0.0]["false_offramp_rate"] > by_tpr[1.00]["false_offramp_rate"]
 
 
 def test_the_gate_is_refit_at_every_point(tiny_sweep):

@@ -120,13 +120,20 @@ Therefore:
 - Split conformal prediction gates the off-ramp. Offer only when the
   conformal prediction set is the **singleton `{WONT_PAY}`**. Everything
   else stays in the retry lane. (This line said "at 95% coverage" until a
-  2026-09-05 review — the calibration pool has only 2-3 distinct
-  nonconformity values per class, so the fitted threshold is nearly
-  insensitive to `alpha` across an 8x range, and its own maximum score sits
-  below beliefs the gate is actually queried at after two or more
-  observations. Measured class-conditional coverage runs 0.795-0.986, not a
-  validated 0.95. Corrected rather than left standing: see `reports/gates.md`'s
-  R5 entry for the full finding and what would actually fix it.)
+  2026-09-05 review — the calibration pool had only 2-3 distinct
+  nonconformity values per class, so the fitted threshold was nearly
+  insensitive to `alpha` across an 8x range, and its own maximum score sat
+  below beliefs the gate was actually queried at after two or more
+  observations — a SUPPORT MISMATCH, corrected at R8 the same day:
+  `fit_gate()` now calibrates across each mandate's own slot 2/3 trajectory,
+  not slot 1 alone, which is why measured class-conditional coverage moved
+  from 0.795-0.986 to **0.836-1.0** (marginal 0.883-0.985). Still not a
+  validated 0.95 — `CANT_PAY_NOW` specifically remains under-covered — so
+  this line still does not claim one. See `reports/gates.md`'s R5 entry for
+  the original finding and DECISIONS.md's "R8" entry for the fix, its
+  measured effect on the published report, OFFER 1292 -> 300 and the
+  false-off-ramp rate 15.5% -> 1.3% chief among them, and a follow-on
+  review's own disclosed caveats on the fix itself.)
 - The system offers; the customer decides.
 - Report **both** error costs: missed recovery, and false off-ramp.
 

@@ -6145,3 +6145,172 @@ re-read. The gate's own design (measure, don't assert) is what surfaced a
 real, previously-invisible bug on the very first real exercise of a path
 ("reviewer runs `pip install -r requirements.txt`") this project had
 never actually walked before. That is the entire argument for R7 existing.
+
+---
+
+## 2026-09-05 · R8 · The conformal gate's CRITICAL calibration bug, fixed — and what fixing it actually changed
+
+**The finding this closes.** The R5 stats-review pass (above, "R5 stats-
+review pass") found `fit_gate()`'s calibration pool was one row per
+mandate, at slot 1 only — 200 rows, 2-3 distinct LAC nonconformity values
+per class, maximum calibration confidence far below what a real
+multi-attempt trajectory reaches (three `CUSTOMER_DECLINED` observations
+push belief past p=0.997; the old pool's most extreme score was ~0.90,
+i.e. p_true <= ~0.10-0.30 depending on class). A SUPPORT MISMATCH, not a
+small-sample problem: the gate was scored on beliefs its own calibration
+had never seen anything resembling. Not fixed at R5 — flagged as needing
+"its own investigation rather than a patch inside a review response."
+
+**The fix.** `eval/run.py`'s new `_calibration_rows()`: each of the 200
+calibration mandates (drawn from the existing disjoint `CALIB_SEED`
+simulator, unchanged) still starts with its slot-1 `initial_belief()`, then
+is GROUND through its own slot 2 and slot 3 via `sim.attempt()` — mirroring
+`_run_engine_mandate`'s own belief-update sequence exactly
+(`channel_decline_class()`, `belief_mod.update()`, `apply_intent_channel()`)
+— recording the belief before each of the (at most three) LIVE decision
+points the real loop can query the gate at, and stopping the grind at the
+first terminal outcome (a terminal outcome ends live queries in the real
+loop too). Slot 4 is never itself attempted: there is no solve() call after
+its own outcome, so no belief downstream of it would ever be a live query.
+The grind is UNCONDITIONAL (as if ATTEMPT were chosen at every slot) rather
+than replaying the allocator's actual choices, specifically to avoid
+circularity — fitting the gate cannot depend on the gate being fit.
+
+**Measured, before any report was re-run.** `n_calib` 200 -> 333.
+Per-class LAC score range (main operating point, decline channel tpr=0.60/
+fpr=0.15): `CANT_PAY_NOW` min 0.0039 (was ~0.20), max 0.85; `CANT_PAY_EVER`
+min 0.25, max 0.9926 (was ~0.90); `WONT_PAY` min 0.0256 (was ~0.30), max
+0.998 (was ~0.90). Mondrian floor (19 rows/class at alpha=0.05) still
+comfortably met — 47-105 DISTINCT MANDATES per class (72-167 rows), a
+distinction that matters more now than before R8 (see the stats-review
+findings below).
+
+**What changed in the published report, all directly re-measured, none
+carried over from the old numbers.**
+
+| | before R8 | after R8 |
+|---|---|---|
+| `OFFER` across all engine cells | 1292 | **300** |
+| false-off-ramp count / rate | 200/1292 = 15.5% | **4/300 = 1.3%** |
+| conformal marginal coverage | 0.876-0.925 (an earlier, separately-flawed measurement) / 0.795-0.986 (the R5 stats-review's corrected one) | **0.883-0.985** |
+| per-class coverage floor | as low as 0.795 | **as low as 0.836** (`CANT_PAY_NOW`) |
+| engine recovered (baseline/nominal) | ₹7,73,700.01 (29.0%) | ₹7,72,975.40 (29.0%, effectively unchanged) |
+| engine attempts/recovery | 3.11 | **3.20** |
+| engine mandates preserved | 142/200 (mean, rounds from 141.875) | **140/200** |
+| REAUTH total / genuine-inference / issuer_outage falsification | 16800 / 2420 / 8230 | 16830 / 2452 / 8262 |
+| sign test vs ladder (recovers more) | 44/256 | 46/256 |
+| sign test vs one_shot (preserves more / spends fewer attempts) | 38/256 / 26/256 | 26/256 / 20/256 |
+
+The `OFFER`/false-off-ramp change is the headline: most of what used to
+register as a confident `{WONT_PAY}` singleton was an artifact of a
+calibration pool too sparse and too narrow to say otherwise, not a real
+signal the (still-synthetic) channel was providing. The three-bar money/
+attempts/preserved numbers moved only slightly and only because fewer
+mandates now take the OFFER exit — those mandates continue in the retry/
+REAUTH lane instead, which is why `preserved` dropped by 2/200 on this
+slice even though recovered money barely moved (some now recover, a
+similar number now exhaust the budget or get REAUTH'd without recovering).
+REAUTH/ATTEMPT logic is untouched by this fix; the REAUTH-count and
+`issuer_outage` numbers moved only through this same second-order effect
+(fewer OFFER exits -> more mandates reach a later decision point -> a few
+more REAUTHs happen than before), not because anything about belief
+inference changed. The six regimes where the engine loses money against
+the ladder are unchanged in identity (`baseline`, `delayed_salary`,
+`festival_season`, `issuer_outage`, `retry_storm`, `stacking_spike`).
+
+**Verification before this was called done.** 4 new tests
+(`tests/eval/test_run_regimes.py`) pin `n_calib > 200`, the widened score
+range (`min < 0.10` for at least one class), and the Mondrian floor met on
+both rows and distinct mandates. One existing test
+(`test_a_worse_channel_costs_more_false_off_ramps_per_offer`,
+`tests/eval/test_offramp_channel.py`) needed its comparison point changed
+from (tpr=0.30, fpr=0.30) to (tpr=0.0, fpr=1.0): at n=1 seed the old noisy
+point now produces too few offers (n_offer=1) for the comparison to be
+reliable — a consequence of the gate being MORE accurate, not less. The
+full 8-seed `eval/offramp_channel.py` QUALITY_GRID sweep confirms the
+pre-registered quality-degradation pattern still holds at real sample
+sizes (AUC~0.5 points: 20-25% false-off-ramp rate; the main operating
+point: 0.0% in that slice; moderate-high-quality points: 4-8%).
+`.\run.ps1 test-fast`: 1210 passed (was 1206), 1 skipped, guards clean on
+145 files. `eval/frozen/` untouched (`FREEZE_HASH` diff empty).
+
+**R8 stats-review pass — four real findings, none reversing the fix, all
+disclosed rather than silently patched or silently ignored.** Independently
+re-derived, not taken on the reviewer's word (this project's standing
+discipline).
+
+1. CONFIRMED, medium-high. The original docstring claimed grinding
+   unconditionally "can only WIDEN the calibration pool... it cannot narrow
+   it or invent an unreachable one." FALSE. "Simulator-reachable" and
+   "reachable as a live gate query" are different sets — the real loop
+   exits a mandate (REAUTH/STOP/OFFER) before some grind rows would ever be
+   produced live. Measured: 11.4% of the shipped pool (38/333 rows) is
+   unreachable as a live query this way, concentrated in `CANT_PAY_EVER`
+   (19 of 38 — 26% of that class's own 72-row pool — from mandates the
+   allocator would REAUTH out at slot 2). Refit on reachable-only rows and
+   the WONT_PAY singleton boundary moves from p=0.9697 (shipped) to
+   p=0.9167 — the shipped gate is MORE conservative than a policy-matched
+   calibration would be, which is the safe direction under this project's
+   own asymmetry (a false-narrow set is the harm, not a false-wide one),
+   but is a real, measured bias, not a null effect. Fixed: the docstring
+   now states the measured bias and its direction instead of the false
+   "can only widen" claim; the code is unchanged, since correcting the
+   bias by filtering to allocator-reachable rows would reintroduce the
+   exact circularity grinding unconditionally exists to avoid.
+2. CONFIRMED, medium. Slots 2/3 are drawn via `Simulator._draw_outcome`,
+   which branches on the arm's link function and the regime's hazards —
+   unlike the pre-fix pool (bit-identical across nominal/misspecified/
+   coupled, since it never called `attempt()`), this pool's composition is
+   now arm/regime-DEPENDENT. `fit_gate()` is still called ONCE, on nominal
+   + the base config, and reused for every arm/regime/seed exactly as
+   before R8 — this dependence is latent, not exercised by anything
+   currently shipped — but "one gate, calibrated once, safe for every
+   regime" is a materially stronger claim after this fix than before it.
+   Measured range if a different arm/regime WERE used to calibrate:
+   `WONT_PAY` q95 spans 0.917-0.985 depending on which. Disclosed in the
+   function's own docstring; not fixed in this pass (the correct fix —
+   calibrating per (regime, arm) — needs its own re-run of the published
+   sweep and is real future-scoped work, not a patch).
+3. CONFIRMED, medium. Up to 3 rows now share one mandate (measured: 109
+   mandates contribute 1 row, 49 contribute 2, 42 contribute 3) — a
+   genuine, mild departure from the i.i.d. draws split conformal's
+   finite-sample guarantee assumes (intra-mandate ICC 0.714, design effect
+   1.47, effective n approx 226 of the nominal 333 — still above the
+   pre-fix 200, and still spanning the right support). The concrete code
+   consequence: `calibrate()`'s Mondrian floor (ceil(1/alpha)-1 = 19) now
+   counts ROWS, not independent mandates, so "the floor holds" was a
+   weaker proof than it read. Fixed: `fit_gate()`'s `diag` now carries
+   `calib_units_per_class` (distinct mandate ids per class), and a new
+   test (`test_the_row_floor_is_not_hiding_too_few_independent_mandates`)
+   pins today's wide margin (47-105 distinct mandates per class) so a
+   future regression that thins the independent-mandate count would be
+   caught even while the row count still clears `calibrate()`'s own check.
+4. CONFIRMED, low. The docstring claimed the slot-1 row was "unchanged
+   from before." False whenever a decline channel is live: the channel's
+   own draws now interleave between mandates during the slot 2/3 grind,
+   shifting which stream position each mandate's slot-1 fire-check lands
+   on. Not a validity bug — `WontPayChannel`'s dedicated
+   `_CALIB_CHANNEL_OFFSET` stream has exactly one consumer, so this
+   changes WHICH draw a mandate gets, never the distribution it is drawn
+   from — but a documentation inaccuracy in a file otherwise unusually
+   careful about exactly this. Fixed: docstring corrected.
+
+Two things checked and found to hold, not defects: the exact order of
+`channel_decline_class()` relative to the terminal-outcome check (mirrored
+from `_run_engine_mandate` for diagnostic consistency, verified NOT
+load-bearing for calibration validity — getting it wrong would change
+which draw lands where, never the joint distribution); and the grind's
+fixed `day=2,3` cadence, which reproduces the allocator's REAL committed
+days exactly (measured on seeds 0-1: 100% of committed attempts land on
+the earliest legal day) — safe by the allocator's current revealed
+preference, not by construction, so a comment now says so rather than
+leaving it looking accidental.
+
+**What this does NOT claim.** The gate is not "fixed to 95% coverage" —
+per-class coverage still runs 0.836-1.0, short of the nominal target,
+`CANT_PAY_NOW` specifically. `CLAUDE.md`'s safety-design section is
+updated to cite the new range rather than claim the problem is closed.
+This pass closes the SUPPORT MISMATCH (the calibration pool now spans the
+beliefs the gate is actually asked about) — it does not claim the
+resulting quantile is exactly calibrated, and the four findings above are
+exactly the reasons it might not be.

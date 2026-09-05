@@ -1424,6 +1424,26 @@ exists" is not a gate here either.
            corrected to remove the unsupported guarantee rather than left
            standing next to this finding.
 
+           FIXED, R8, 2026-09-05 (DECISIONS.md, "R8 · The conformal gate's
+           CRITICAL calibration bug, fixed"). fit_gate() now grinds each
+           calibration mandate through its own slot 2/3 too (n_calib
+           200 -> 333), closing the support mismatch above -- the pool now
+           spans the confidence range a real multi-decline trajectory
+           reaches instead of stopping at slot 1. Measured effect on the
+           published sweep: OFFER 1292 -> 300, false-off-ramp rate
+           15.5% -> 1.3%, per-class coverage 0.795-0.986 -> 0.836-1.0
+           (marginal 0.883-0.985) -- still short of the 0.95 target,
+           CANT_PAY_NOW specifically, so this closes the SUPPORT MISMATCH,
+           not the under-coverage finding in full. A follow-on stats-review
+           pass found the fix's own "can only widen the pool" claim false
+           (11.4% of the shipped pool is unreachable as a live query,
+           biasing the singleton boundary toward MORE conservative -- the
+           safe direction, but a real, measured bias) plus two disclosed-
+           not-fixed sensitivities (the pool is now arm/regime-dependent
+           though only ever fit once, on nominal; up to 3 rows share one
+           mandate, a mild departure from i.i.d. calibration). Full
+           numbers, both reviews, in DECISIONS.md.
+
            TWO GAPS THE GATE TEXT DID NOT NAME, BOTH CLOSED.
            (1) construct_offer() had NO CALLER anywhere in src/ -- a chosen
            OFFER had never produced an Offer object, while offramp.py's own

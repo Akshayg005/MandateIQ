@@ -8,6 +8,36 @@
 
 ---
 
+## What this is, in plain terms
+
+*(Skip ahead to [The problem](#the-problem) if you already know what a UPI AutoPay mandate is. This section assumes nothing.)*
+
+In India, when you subscribe to something — Netflix, a gym, an insurance premium, a SIP — you usually set up a **UPI AutoPay mandate**: standing permission for that company to auto-debit your bank account every billing cycle, without asking you each time. Sometimes that auto-debit fails. There are really only three reasons it ever fails:
+
+1. **You're temporarily short on cash.** Payday just hasn't come yet.
+2. **Your payment method is dead.** Card expired, account closed, mandate revoked.
+3. **You want out.** You're not going to say so out loud — you're just going to let the debit fail and hope it goes away.
+
+Every retry system on the market — including what Razorpay does today — treats all three the same way: **retry blindly on a fixed schedule** (a few days apart), and after 4 total tries (the maximum India's payments network, NPCI, allows), give up. This project calls that the **ladder**, and it's the industry standard this whole build is measured against.
+
+**The ladder's problem isn't the schedule, it's that one response fits nobody.** A quick example — say three different customers all miss a payment on the same day:
+
+| Customer | What's actually going on | What the ladder does | What actually helps |
+|---|---|---|---|
+| Priya | Payday is in 4 days | Retries randomly over the next 3 days — often *before* she's paid | Wait, then retry once she's likely to have money |
+| Raj | His card expired last month | Gets retried 3 more times against a dead card | Ask him to add a new card — retrying is pointless |
+| Meera | She meant to cancel weeks ago | Gets retried 3 more times and re-notified each time | Offer her an easy pause/downgrade/cancel instead of chasing her |
+
+Retrying Raj wastes all 4 of his mandate's lifetime attempts on a card that will never work. Retrying Meera is worse than pointless — under India's rules a customer must be re-notified before every retry attempt, so grinding her with retries she's already trying to escape is the kind of "subscription trap" India's consumer-protection regulator has flagged as a banned practice.
+
+**This project tries to tell Priya, Raj, and Meera apart — using only the kind of information a payments company already has (how the failure looked, when it happened, how large the payment is) — and then do the matching thing for each, instead of one blind retry schedule for everyone.** The three "reasons" above are what the code calls `CANT_PAY_NOW`, `CANT_PAY_EVER`, and `WONT_PAY` — see [The problem](#the-problem) below for the full table.
+
+**The honest trade this makes:** correctly identifying Raj and Meera means *not* spending retry attempts trying to collect from them — which means this system recovers **less money in the short term** than blindly retrying everyone would. The bet is that it keeps more customers as customers in the long run (a business that can't ever be measured in this evaluation — see [What this can't do](#what-this-cant-do)), because a customer offered a pause is more likely to come back than one hounded into cancelling. The [Results](#results) section shows exactly how much money that trade costs, seed by seed, not as an average that could hide it.
+
+**Why this can't just copy what US companies (like Stripe) do:** India's payment rules make the problem structurally different. A retry can't react to what just happened — every attempt has to be scheduled at least 24 hours in advance, by law. And there's a hard, ever cap of 4 attempts total, not "keep trying whenever." Both of those are explained fully in the next section.
+
+*(For every domain-specific word from here on — "belief," "conformal gate," "paise," and so on — see the [Glossary](#glossary) at the very end.)*
+
 ## The problem
 
 A recurring debit fails. Nobody chose that — not the customer, not the
@@ -79,8 +109,8 @@ less money this cycle to protect lifetime value. That is the thesis, and the
 | | recovered | attempts/recovery | **mandates preserved** |
 |---|---|---|---|
 | Fixed ladder (the incumbent) | ₹12,09,844.52 | 3.53 | **110/200** |
-| This engine (strict) | ₹7,73,700.01 | 3.11 | **142/200** |
-| This engine (permissive) | ₹7,73,700.01 | 3.11 | **142/200** |
+| This engine (strict) | ₹7,72,975.40 | 3.2 | **140/200** |
+| This engine (permissive) | ₹7,72,975.40 | 3.2 | **140/200** |
 | *Reference:* one attempt, no model | ₹7,24,405.47 | 3.45 | **149/200** |
 | *Reference:* never attempt | ₹0.00 | — | **200/200** |
 
@@ -88,17 +118,19 @@ less money this cycle to protect lifetime value. That is the thesis, and the
 
 | comparison | preserves more | recovers more | spends FEWER attempts |
 |---|---|---|---|
-| engine vs **ladder** | 256 / 256 | 44 / 256 | 256 / 256 |
-| engine vs **one_shot** | 38 / 256 | 154 / 256 | 26 / 256 |
+| engine vs **ladder** | 256 / 256 | 46 / 256 | 256 / 256 |
+| engine vs **one_shot** | 26 / 256 | 154 / 256 | 20 / 256 |
 
 **Against the incumbent, the trade holds and is stable** — more mandates preserved and fewer attempts spent in every comparison, at the cost of money. Deliberately recovering less this cycle to protect lifetime value is the thesis, not a bug.
 
-**Against `one_shot` it does not.** One attempt on day 2 with no model, no belief and no gate preserves more mandates than the engine in 210 of 256 comparisons, and the engine spends MORE attempts in 224 of 256. The engine's only edge over it is money, and a thin one: 154 of 256. On two of the three bars, a policy with no model in it beats this one. That is in the README because it is true, and because a reader who discovers it themselves should not have to wonder what else was left out.
+**Against `one_shot` it does not.** One attempt on day 2 with no model, no belief and no gate preserves more mandates than the engine in 222 of 256 comparisons, and the engine spends MORE attempts in 230 of 256. The engine's only edge over it is money, and a thin one: 154 of 256. On two of the three bars, a policy with no model in it beats this one. That is in the README because it is true, and because a reader who discovers it themselves should not have to wonder what else was left out.
 
-**The off-ramp fires, on a SYNTHETIC channel that reads privileged ground truth** (`OFFER` = 1292 across every cell; 200 of 1292 scored went to a mandate that would have paid — a 15.5% false-off-ramp rate (95% CI 13%–18% on the distinct sample)). The channel is configured at tpr 0.60 / fpr 0.15 and is disclosed as fabricated everywhere it appears; `reports/regimes.md` publishes its full quality curve (including a within-mandate-correlation sensitivity check the headline grid holds fixed at zero), and deliberately worthless channels at AUC 0.5, where the false rate is several times worse. This buys a tested-and-imperfect off-ramp in place of an untested-and-central one, not a good result. Separately, 8230 of 16800 REAUTHs went to mandates whose true cause is not `CANT_PAY_EVER` — but 6784 of those are the above-AFA-cliff compliance route (clause 8(a)/8(b), legally mandatory regardless of belief), so only 2420 were ever a genuine belief-inference error — see `reports/regimes.md` finding 6 for the full split (R2b).
+**The off-ramp fires, on a SYNTHETIC channel that reads privileged ground truth** (`OFFER` = 300 across every cell; 4 of 300 scored went to a mandate that would have paid — a 1.3% false-off-ramp rate (95% CI 0%–5% on the distinct sample)). The channel is configured at tpr 0.60 / fpr 0.15 and is disclosed as fabricated everywhere it appears; `reports/regimes.md` publishes its full quality curve (including a within-mandate-correlation sensitivity check the headline grid holds fixed at zero), and deliberately worthless channels at AUC 0.5, where the false rate is several times worse. This buys a tested-and-imperfect off-ramp in place of an untested-and-central one, not a good result. Separately, 8262 of 16830 REAUTHs went to mandates whose true cause is not `CANT_PAY_EVER` — but 6784 of those are the above-AFA-cliff compliance route (clause 8(a)/8(b), legally mandatory regardless of belief), so only 2452 were ever a genuine belief-inference error — see `reports/regimes.md` finding 6 for the full split (R2b).
 
 **Where we lose:** `baseline`, `delayed_salary`, `festival_season`, `issuer_outage`, `retry_storm`, `stacking_spike` — the engine recovers less money than the ladder in these regimes. The report's "Where we lose" section gives the reason for each.
 <!-- RESULTS:END -->
+
+**Why the off-ramp numbers above moved so much.** `OFFER` was 1292 (false-off-ramp rate 15.5%) before R8 (2026-09-05); it is 300 (1.3%) now. That drop is not the channel changing — it is a CRITICAL calibration bug getting fixed. The conformal gate used to calibrate on only each mandate's slot-1 belief (200 rows, 2–3 distinct confidence values per class), then get queried against beliefs updated after 2–3 further declines that its own calibration pool had never seen anything like — a support mismatch, not a small-sample one (full derivation: `DECISIONS.md`, "R5 stats-review pass"). `fit_gate()` now grinds each calibration mandate through its own slot 2/3 trajectory too (333 rows spanning a much wider confidence range), and most of what used to register as a confident `{WONT_PAY}` singleton turns out to have been an artifact of that gap, not a real signal. Per-class coverage improved to 0.836–1.0 (marginal 0.883–0.985) — still short of the 0.95 target, `CANT_PAY_NOW` specifically — so this is a real fix, not a claim that the gate is now correct.
 
 ## Architecture
 
@@ -285,32 +317,51 @@ about what it does not have. Every claim below is reproducible from
    mandate's true latent cause**, which the policy itself must never see,
    and feeds a fabricated observation into the decision path. It is a
    materially stronger privileged read than the score-only one
-   `false_reauth_count` already makes. So `OFFER` = **1292** and the
-   false-off-ramp rate is **15.5%** (200 of 1292), but neither number is
-   evidence that a real `payment_cancelled` feed carries this much signal.
+   `false_reauth_count` already makes. `OFFER` = **300** and the
+   false-off-ramp rate is **1.3%** (4 of 300) — down from 1292/15.5% until
+   R8 (2026-09-05) fixed a CRITICAL calibration bug in the conformal gate
+   itself (the gate used to be calibrated on only 200 slot-1 beliefs, never
+   seeing anything resembling the confidence a real multi-decline
+   trajectory reaches — see "Why the off-ramp numbers above moved so much"
+   under Results). Neither number is evidence that a real `payment_cancelled`
+   feed carries this much signal — that claim is unchanged by the fix.
    What changed is that the lane is now **tested-and-imperfect** instead of
    **untested-and-central**; `reports/regimes.md` publishes the whole
    quality curve, including deliberately worthless channels at AUC 0.5
-   where the false rate is 38-75%. It is still the most important line in
+   where the false rate is 20-25%. It is still the most important line in
    this file.
 2. **The evaluation is synthetic.** It measures whether encoding real
    constraints beats ignoring them. It is not a lift number that transfers
    to production traffic.
 3. **A model-free policy beats the engine on two of three bars.** Against
-   `one attempt, no model`, the engine preserves fewer mandates in 210 of
-   256 paired comparisons and spends more attempts in 224 of 256. Its only
+   `one attempt, no model`, the engine preserves fewer mandates in 222 of
+   256 paired comparisons and spends more attempts in 230 of 256. Its only
    edge is money, 154 of 256. More seeds made this finding stronger, not
-   weaker. (These moved by a few counts at R5, when the off-ramp became
-   reachable and started spending decisions that were previously attempts;
-   the finding itself did not change direction.)
-4. **8,230 of 16,800 re-auth requests went to a mandate whose true cause is
+   weaker. (These moved at R5, when the off-ramp became reachable and
+   started spending decisions that were previously attempts, and again at
+   R8 when fixing the gate's calibration made the off-ramp fire far less
+   often; the finding itself did not change direction either time.)
+4. **8,262 of 16,830 re-auth requests went to a mandate whose true cause is
    not CANT_PAY_EVER** - the issuer_outage regime's own pre-registered
    falsification criterion, unchanged in meaning since Day 1. But 6,784 of
    those are the above-AFA-cliff compliance route (clause 8(a)/8(b)): legally
    mandatory regardless of what the model believes, not a model failure. Only
-   **2,420** were ever a genuine belief-inference error - well under a third
+   **2,452** were ever a genuine belief-inference error - well under a third
    of the headline number, and the split (R2b) exists because the two were
-   never separated before that session.
+   never separated before that session. Investigated at R8 for whether
+   either half is a fixable model bug (the user asked directly): it is not.
+   Most of this is either the AFA-cliff route above, or Bayesian updating
+   behaving correctly under evidence the `issuer_outage` regime was
+   pre-registered specifically to make ambiguous — reducing it further would
+   mean either inventing an unmeasured cost constant (rejected; this project
+   has declined hand-picked constants three times before, see
+   `src/policy/allocator.py`) or reopening the frozen simulator. Same
+   session, same conclusion for "no timing discrimination" below (item 8):
+   traced to `eval/allocator_sweep.py`'s `hazard_from_fit`, which already
+   collapses every day outside the salary window to one bucket, and to a
+   design-matrix choice (excluding `days_since_last_attempt`/
+   `committed_day_of_month`) that an earlier session already measured as
+   genuinely uninformative in this design, not overlooked.
 5. **The off-ramp is reachable in evaluation and NOT wired into the live
    decision path.** `src/policy/offramp.py::construct_offer()` now has a
    real caller (R5: an `OFFER` plan carries the actual pause/downgrade/cancel
@@ -369,8 +420,8 @@ about what it does not have. Every claim below is reproducible from
 ### Reading the numbers correctly
 
 `reports/results.json` publishes **means over 8 seeds** (mandates preserved
-142/200 is 141.875 rounded). `reports/mandates.json` is the **seed-0 batch
-only**, which preserves 135. Both are correct and they are not the same
+140/200 is 140.125 rounded). `reports/mandates.json` is the **seed-0 batch
+only**, which preserves 139. Both are correct and they are not the same
 number. The landing page renders the means; the reviewer dashboard renders
 seed 0. Do not compare a figure from one against a figure from the other.
 
@@ -382,6 +433,61 @@ limit: 1 original + 3 retries. CCPA *Guidelines for Prevention and
 Regulation of Dark Patterns, 2023* — "subscription trap".
 
 Every constant is cited at its definition in `src/policy/constraints.py`.
+
+## Glossary
+
+Plain-language definitions for every term used above, in the order a
+first-time reader is likely to meet them. Skip this if you already know
+Indian payments or the statistics.
+
+**Payments / regulatory terms**
+
+| Term | Meaning |
+|---|---|
+| **Mandate** (UPI AutoPay mandate) | A standing customer permission letting a merchant auto-debit their bank account every billing cycle, without asking each time — like a US "recurring card on file," but bank-account-level and government-regulated. |
+| **NPCI** | National Payments Corporation of India — runs the UPI network and sets the hard rule this project builds around: **4 attempts total** per failed payment (1 original + 3 retries), ever. |
+| **RBI** | Reserve Bank of India — India's central bank. The source of the e-mandate rules (clauses 6(a), 6(c), 8(a), 8(b), etc.) this project cites at every constant. |
+| **AFA** (Additional Factor Authentication) | The extra verification step (like an OTP) Indian rules require above a certain payment amount — ₹15,000 for most subscriptions, ₹1,00,000 for insurance/mutual funds/credit cards. Above that line, the rules require asking the customer to re-authorise rather than silently retrying. |
+| **The ladder** | This project's name for the industry-standard incumbent: retry on a fixed schedule (T+1, T+2, T+3), then stop. What every number in this repo is measured against. |
+| **Dark pattern** | A UI/process design that manipulates or exhausts a user into an outcome they wouldn't choose freely — here, retrying and re-notifying a customer who already wants to leave until they're forced into an awkward manual cancellation. Explicitly against India's 2023 consumer-protection guidelines. |
+| **Off-ramp** | This project's name for offering an exit — pause, then downgrade, then cancel — instead of retrying someone who wants out. The system only ever *offers* this; it never cancels a mandate on its own. |
+| **Paise** | 1/100th of a rupee — India's equivalent of a cent. Every money value in this codebase is stored as a whole-number count of paise, never a rupee float, so rounding errors can't quietly appear in a real charge. |
+
+**The three "reasons a payment fails" and how the system acts**
+
+| Term | Meaning |
+|---|---|
+| **Latent cause** | The *real*, never-directly-observable reason a payment failed. The system never gets to see this — it can only guess from indirect evidence (the decline reason, timing, amount). |
+| `CANT_PAY_NOW` | Latent cause: temporary cash shortfall. Action: retry, timed to when the customer likely gets paid. |
+| `CANT_PAY_EVER` | Latent cause: the payment method itself is dead (expired card, closed account, revoked mandate). Action: stop retrying, ask the customer to re-authorise with a new method. |
+| `WONT_PAY` | Latent cause: the customer wants out and is passively letting payments fail rather than actively cancelling. Action: offer the off-ramp. |
+| **Belief** | The system's current best guess at the latent cause, expressed as three probabilities (e.g. "70% cash shortfall, 20% dead card, 10% wants out") that update every time a new payment failure comes in. |
+| **Decline class** | The specific reason a bank gave for the failure (e.g. "insufficient funds," "card expired") — the raw evidence a belief update is based on. |
+| **Slot** | One of the (at most 4) attempt opportunities in a billing cycle. Slot 1 is the original attempt; slots 2-4 are the three retries NPCI allows. |
+
+**The statistics**
+
+| Term | Meaning |
+|---|---|
+| **Hazard model / competing-risks model** | The statistical model predicting, for a given attempt, the probability of each possible outcome (still pending, recovered, dead, opted out) — "competing risks" because several different bad outcomes are competing to happen first, not just one. |
+| **Backward induction** | The decision-making method: work backwards from the last possible attempt, figuring out the best choice at each point given what the best choice would be at every point after it. This is what lets the system pick, exactly, whether to retry now, wait, or stop — no guessing, no shortcuts. |
+| **Conformal gate / conformal prediction** | The safety check gating the off-ramp. Instead of asking the model for one guess, it asks for the full *set* of plausible causes, and only offers an exit when that set has narrowed to exactly `{WONT_PAY}` and nothing else — a built-in defense against confidently cancelling a customer who was actually just short on cash. |
+| **Coverage** | How often the conformal gate's answer set actually contains the true cause, measured against a target (95% here). If coverage is below target, the gate is more confident than its evidence actually supports. |
+| **LTV** (lifetime value) | The estimated total future value of keeping a customer, used to weigh "recover this payment now" against "risk losing this customer forever" in the same units (rupees), so the system can make that trade-off honestly instead of by gut feel. |
+| **Sign test** | A statistics method that counts, across many repeated simulation runs ("seeds"), how many times one approach beats another — used here instead of a single average, because an average can hide the fact that a result flips between runs. |
+| **AUC, log loss, Brier score** | Standard ways of scoring how good a prediction is. Lower log loss/Brier and higher AUC (up to a max of 1.0) mean a better-calibrated model; all three are reported so a reader can check the model's quality rather than take "it works" on faith. |
+| **CI** (confidence interval) | A range meant to contain the true value most of the time — reported alongside a measured rate (like the false-off-ramp rate) so a reader can tell a solid result from a shaky one based on a handful of cases. |
+
+**The evaluation setup**
+
+| Term | Meaning |
+|---|---|
+| **Regime** | One simulated "what if" scenario stress-testing the system (e.g. `festival_season`, `issuer_outage`, `delayed_salary`) — used to check the system under conditions that aren't the easy average case. |
+| **Arm** | One variant of the underlying simulation math (`nominal`, `misspecified`, `coupled`) — used to check the model isn't just curve-fitted to its own assumptions. |
+| **Profile** (`strict` / `permissive`) | Two different, both-plausible readings of an ambiguous point in the RBI rules about whether a retry needs its own fresh customer notification. The system supports both rather than guessing which is legally correct. |
+| **Seed** | One full run of the simulation with one specific random-number starting point. Results are reported across 8 seeds, not just one, so a lucky or unlucky single run can't be mistaken for a real finding. |
+| **Frozen (`eval/frozen/`)** | The evaluation setup and simulated customer population, locked before any decision-making code was written, so the system couldn't be tuned to flatter its own test. |
+| **Idempotency key / ledger** | Engineering safeguards ensuring a payment is never accidentally charged twice, even if the system crashes and restarts mid-attempt — the ledger is a permanent, append-only record of every money-related action taken. |
 
 ## Repo map
 

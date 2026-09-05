@@ -683,15 +683,135 @@ def make_channel(spec, seed: int, *, offset: int = _CHANNEL_OFFSET):
                           rng=random.Random(seed + offset))
 
 
+def _calibration_rows(
+    sim: Simulator, base_cfg: dict, rng: random.Random, channel,
+) -> tuple[list[list[float]], list[int], list[str]]:
+    """One row per LIVE decision point a full grind through every calibration
+    mandate's slot 2/3/4 produces -- not just its slot-1 starting belief.
+
+    R5 stats-review (2026-09-05, CRITICAL, DECISIONS.md): fit_gate()'s
+    calibration pool was one row per mandate, at slot 1 only -- at most 2-3
+    distinct nonconformity values per class, with a maximum calibration
+    confidence (p_true <= ~0.70-0.90 depending on class) well below what a
+    real multi-attempt trajectory reaches (three CUSTOMER_DECLINED
+    observations already push belief past 0.997 -- see
+    tests/eval/test_wontpay_channel.py). A calibration pool this sparse and
+    this narrow makes the fitted p-value a coarse step function: test scores
+    far outside the observed range all land in the same bucket, so the
+    singleton boundary barely moves across an 8x range of alpha and the
+    measured per-class coverage (0.795-0.986) does not track the nominal
+    target. This is a SUPPORT MISMATCH between the calibration distribution
+    and the query distribution, not a small-sample problem alone.
+
+    The fix grinds every calibration mandate through its own slot 2 and slot
+    3 (sim.attempt(), exactly as _run_engine_mandate advances belief),
+    recording the belief before each LIVE decision point the real loop can
+    query the gate at: before slot 2 (the initial, slot-1-decline belief),
+    before slot 3 (after one more decline, if slot 2 was STILL_PENDING), and
+    before slot 4 (after two more, if slot 3 was STILL_PENDING too). There is
+    no query after slot 4's own outcome -- MAX_ATTEMPTS solve() calls end
+    there in the real loop -- so slot 4 is never itself attempted here. A
+    terminal outcome at slot 2 or 3 stops the grind for that mandate: a
+    terminal outcome ends live queries in the real loop too, routing to the
+    retrospective post-terminal re-solve instead, which
+    _score_recorded_queries already excludes from live coverage. With a
+    "decline" channel live, the slot-1 row is drawn from the same law as
+    before but is NOT byte-identical to the pre-fix pool -- the channel's own
+    draws now interleave between mandates during the slot 2/3 grind, shifting
+    which stream position each mandate's slot-1 fire-check lands on. Verified
+    harmless: WontPayChannel's own dedicated _CALIB_CHANNEL_OFFSET stream has
+    exactly one consumer, so this changes which draw a mandate gets, never
+    the distribution it is drawn from (stats-reviewer, R8 review pass).
+
+    Grinds UNCONDITIONALLY (as if ATTEMPT were the allocator's own choice at
+    every slot) rather than replaying the allocator's actual decisions:
+    fitting the gate cannot depend on the gate it is fitting without
+    circularity. This does NOT mean the pool can only widen toward reachable
+    beliefs, as an earlier version of this docstring claimed -- stats-review
+    (R8, 2026-09-05) found that claim false and measured the actual effect:
+    "simulator-reachable" and "reachable as a live gate query" are different
+    sets, because the real loop exits a mandate (REAUTH/STOP/OFFER) before
+    some grind rows are ever produced. 11.4% of the shipped pool (38/333
+    rows) is unreachable as a live query this way -- concentrated in
+    CANT_PAY_EVER (19 of 38, 26% of that class's own pool, from mandates the
+    allocator would have REAUTH'd out at slot 2). Refit on reachable-only
+    rows and the WONT_PAY singleton boundary moves from p=0.9697 (shipped) to
+    p=0.9167 -- i.e. the shipped gate is MORE conservative (requires MORE
+    confidence to open the off-ramp) than a policy-matched calibration would
+    be, which is the safe direction under this project's own asymmetry
+    (a false-narrow set, not a false-wide one, is the harm), but is a real,
+    measured bias, not a null effect. Left uncorrected rather than patched in
+    this pass, for the same reason grinding avoids the allocator in the first
+    place: correcting it by filtering to allocator-reachable rows would
+    reintroduce the exact circularity (fitting the gate from the gate's own
+    decisions) this design exists to avoid. `diag` does not yet carry this
+    number; a future pass could add it without changing what ships.
+
+    ALSO DISCLOSED, not fixed (R8 stats-review): (1) slots 2/3 are drawn via
+    Simulator._draw_outcome, which branches on the arm's link function and
+    the regime's hazards -- so unlike the pre-fix pool (bit-identical across
+    nominal/misspecified/coupled, since it never called attempt()), this
+    pool's composition is now arm/regime-dependent. fit_gate() is still
+    called ONCE, on nominal + the base (unregimed) config, and reused for
+    every arm/regime/seed exactly as before R8 -- this dependence is latent,
+    not exercised by anything currently shipped -- but "one gate calibrated
+    once, safe for every regime" is a materially stronger claim after this
+    fix than before it. Measured range if a different arm/regime WERE used
+    to calibrate: WONT_PAY q95 spans 0.917-0.985 depending on which. (2) Up
+    to 3 rows share one mandate (measured: 109 mandates contribute 1 row, 49
+    contribute 2, 42 contribute 3), which is a genuine, if mild, departure
+    from the i.i.d. draws split conformal's finite-sample guarantee assumes
+    -- intra-mandate ICC 0.714, design effect 1.47, effective n approx 226
+    (of the nominal 333, still above the pre-fix 200 and still spanning the
+    right support). The Mondrian floor check (calibrate()'s own
+    ceil(1/alpha)-1 = 19) now counts ROWS, not independent mandates; today's
+    margins (47-105 mandates per class) comfortably clear it either way, but
+    a future regression could clear the row floor on fewer independent
+    mandates than the floor's own derivation assumes. Full numbers for both:
+    DECISIONS.md, 2026-09-05, "R8 stats-review pass".
+    """
+    scores, y, ids = [], [], []
+    for m in sim.mandates:
+        if channel is not None:
+            channel.for_mandate(m.mandate_id)
+        b = initial_belief(m.initial_cause, base_cfg, rng, channel=channel)
+        y_idx = CAUSE_ORDER.index(m.initial_cause)
+        group_id = _calib_group_id(m.mandate_id)
+        scores.append(list(b.probs))
+        y.append(y_idx)
+        ids.append(group_id)
+
+        day = 1
+        for slot in (2, 3):
+            day += 1
+            result = sim.attempt(m.mandate_id, slot=slot, on_day=day)
+            dc = channel_decline_class(result.outcome, cause=m.initial_cause, channel=channel)
+            if result.outcome != Outcome.STILL_PENDING:
+                break
+            if dc is not None:
+                source = (
+                    WONTPAY_CHANNEL_SOURCE_VERSION
+                    if dc == DeclineClass.CUSTOMER_DECLINED
+                    else PROXY_SOURCE_VERSION
+                )
+                b = belief_mod.update(b, dc, source_version=source)
+            b = apply_intent_channel(b, m.initial_cause, channel)
+            scores.append(list(b.probs))
+            y.append(y_idx)
+            ids.append(group_id)
+    return scores, y, ids
+
+
 def fit_gate(base_cfg: dict, *, alpha: float = 0.05, channel_spec=None):
     """Calibrate the off-ramp gate ONCE, on the baseline regime, from its own
     simulator draw. Returns (gate, kind, diagnostics).
 
     The predictor is over CAUSES, not terminal Outcomes: the off-ramp asks
     why the mandate is failing, and allocator.py fires only on the singleton
-    {WONT_PAY}. Scores are LAC over the belief the system actually holds
-    after the slot-1 decline -- i.e. the gate is calibrated on exactly the
-    object it will be asked about in production, not on a proxy.
+    {WONT_PAY}. Scores are LAC over beliefs spanning the same slot 1-4
+    trajectory the system actually holds in production (see
+    _calibration_rows) -- i.e. the gate is calibrated on the object it will
+    be asked about, not on a proxy or on only its first slot.
 
     Falls back to FullSetGate (never offers) if calibration is underpowered,
     and says so. That is the safe direction and B8's documented default.
@@ -705,14 +825,7 @@ def fit_gate(base_cfg: dict, *, alpha: float = 0.05, channel_spec=None):
     # Its own stream (_CALIB_CHANNEL_OFFSET), disjoint from every reported
     # seed's, for the same reason the slot-1 stream already is.
     channel = make_channel(channel_spec, CALIB_SEED, offset=_CALIB_CHANNEL_OFFSET)
-    scores, y, ids = [], [], []
-    for m in sim.mandates:
-        if channel is not None:
-            channel.for_mandate(m.mandate_id)
-        b = initial_belief(m.initial_cause, base_cfg, rng, channel=channel)
-        scores.append(list(b.probs))
-        y.append(CAUSE_ORDER.index(m.initial_cause))
-        ids.append(_calib_group_id(m.mandate_id))
+    scores, y, ids = _calibration_rows(sim, base_cfg, rng, channel)
 
     score_rows = conformal.lac_scores(np.asarray(scores, dtype=float))
     try:
@@ -727,11 +840,26 @@ def fit_gate(base_cfg: dict, *, alpha: float = 0.05, channel_spec=None):
     except conformal.ConformalUnderpowered as exc:
         return FullSetGate(), "full_set", {"reason": f"underpowered: {exc}"}
 
-    diag = {"alpha": alpha, "n_calib": len(y), "calib_seed": CALIB_SEED}
+    # R8, 2026-09-05 (stats-reviewer): calib_per_class counts ROWS, and since
+    # _calibration_rows can contribute up to 3 per mandate, "the floor holds"
+    # (ceil(1/alpha)-1 = 19 rows) is a weaker proof than it was pre-R8, when
+    # one mandate was one row. calib_units_per_class counts DISTINCT mandate
+    # ids per class instead, so a caller can tell the two apart rather than
+    # read a row-count floor as an independent-sample one.
+    per_class_ids: dict[str, set[str]] = {c.value: set() for c in CAUSE_ORDER}
+    for yy, gid in zip(y, ids):
+        per_class_ids[CAUSE_ORDER[yy].value].add(gid)
+
+    diag = {
+        "alpha": alpha,
+        "n_calib": len(y),
+        "calib_seed": CALIB_SEED,
+        "calib_units_per_class": {c: len(ids_) for c, ids_ in per_class_ids.items()},
+    }
     if channel is not None:
         # The Mondrian floor is ceil(1/alpha) - 1 per class (19 at
         # alpha=0.05); calibrate() raises ConformalUnderpowered above if any
-        # class is below it, so reaching here proves the floor holds. The
+        # class is below it, so reaching here proves the ROW floor holds. The
         # per-class counts are recorded anyway: "it did not raise" is a
         # weaker artifact than the numbers themselves, and R5 has to
         # re-report calibration after changing the belief distribution.
