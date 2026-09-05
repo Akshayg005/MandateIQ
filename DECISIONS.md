@@ -6130,9 +6130,13 @@ gone, the six real `google-genai` transitive dependencies it was missing
 added. The exact CI install command re-run against the corrected file in
 a fresh `python:3.13` container: exit 0. Full local test suite re-run
 after the `anthropic` uninstall, to confirm nothing in the codebase
-depended on it despite the clean grep: green, no change. This entry
-records what was found and fixed; a second CI run against the fix is the
-next check, and this entry does not claim that result in advance.
+depended on it despite the clean grep: green, no change.
+
+**The second CI run confirmed it**: commit `ac1cee3`,
+https://github.com/Akshayg005/MandateIQ/actions/runs/33940629559,
+`conclusion: success` — install, lint, the full suite against the
+postgres service, `eval-quick`, `report`, and the byte-identity check all
+passed. R7's gate now has real evidence, not a pending promise.
 
 **What this says about the gate, not just the bug.** `reports/gates.md`'s
 R7 entry was ticked "CLOSED IN CODE, EVIDENCE PENDING A FIRST CI RUN" with

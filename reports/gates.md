@@ -1616,8 +1616,17 @@ exists" is not a gate here either.
            EXACT install command re-run in a fresh `python:3.13` container
            against the corrected file: exit 0. Full local suite re-run
            after the `anthropic` uninstall to confirm nothing depended on
-           it: green. A second CI run against this fix is the next check;
-           this entry does not claim that result in advance.
+           it: green.
+
+           SECOND CI RUN, CONFIRMED GREEN. Commit `ac1cee3`:
+           https://github.com/Akshayg005/MandateIQ/actions/runs/33940629559
+           -- `conclusion: success`, all steps completed (install, lint,
+           the full suite against the postgres service, eval-quick,
+           report, the byte-identity check). This is R7's own
+           pre-registered evidence, now real rather than pending: a
+           reviewer on Linux can install, test, run the eval and read the
+           report using the commands this README prints, and a machine
+           re-proves it on every push.
 
            SHIPPED. `run.sh`, mirroring run.ps1 (scope decision 1: a README
            telling a reviewer to translate six PowerShell lines IS the
