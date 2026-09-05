@@ -48,7 +48,7 @@ Two passes, both run on every call:
 
 The slot stays consumed throughout every step here, including
 UNRESOLVED_FINAL: this project's constant refrain (root DESIGN.md;
-the build spec section 1) is that a double-charge is worse than ten missed
+The build spec section 1) is that a double-charge is worse than ten missed
 recoveries, and refunding an unconfirmed slot to the NPCI budget before it
 is CONFIRMED clear is exactly the risk that refrain forbids -- as the
 reverted NEVER_SENT fast path above demonstrated by breaking it.

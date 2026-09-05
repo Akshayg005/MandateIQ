@@ -487,7 +487,7 @@ un.ps1 verify passes 5/5 including the postgres check that had
            so the report cannot drift from the run. Verified by DELETING
            regimes.json, regimes.md and all three figures and re-running from
            empty -- identical numbers. Checked, not assumed: eval/frozen/ is
-           untouched (git status clean; FREEZE_HASH still 4daf9ec56db2), the
+           untouched (git status clean; FREEZE_HASH still 481ec0bbed2f), the
            regimes are config OVERLAYS on the frozen sim_config.yaml and an
            overlay key the base config lacks is refused rather than ignored.
 
@@ -751,7 +751,7 @@ un.ps1 verify passes 5/5 including the postgres check that had
            could have caught it -- the strict-pass and no-context cases were
            both tested, the case between them was not. Found by the human in
            one screenshot after four green automated runs.
-           Fixed in fe10ad2: the probe is tiered (strict, then looser terms
+           Fixed in e79bb52: the probe is tiered (strict, then looser terms
            with a renderer-string check, and only a software rasteriser
            reaches the fallback), and Scene.tsx's Canvas gl config follows
            the tier rather than re-failing independently. The degraded path
@@ -1582,7 +1582,7 @@ exists" is not a gate here either.
       read the report using commands printed in the README, without
       translating anything
       <!-- 2026-09-05, CLOSED, RE-READ AGAINST THE FIRST CI RESULT AS
-           PROMISED. The first run (commit 4771298) FAILED, exactly as the
+           PROMISED. The first run (commit fc0d298) FAILED, exactly as the
            plan pre-registered ("expect the first runs to fail; each
            failure is the finding"), and the failure was real: step 5
            (`pip install -r requirements.txt`) failed on ubuntu-latest,
@@ -1638,7 +1638,7 @@ exists" is not a gate here either.
            after the `anthropic` uninstall to confirm nothing depended on
            it: green.
 
-           SECOND CI RUN, CONFIRMED GREEN. Commit `ac1cee3`:
+           SECOND CI RUN, CONFIRMED GREEN. Commit `19289ad`:
            https://github.com/Akshayg005/MandateIQ/actions/runs/33940629559
            -- `conclusion: success`, all steps completed (install, lint,
            the full suite against the postgres service, eval-quick,

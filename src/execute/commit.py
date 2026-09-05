@@ -35,7 +35,7 @@ This module does NOT special-case that away by silently pushing the date
 out: doing so would be the allocator's decision to make (a different
 `on_day`), not this layer's to invent, and it would be exactly the kind of
 late read that ACTS rather than stops -- forbidden by the same asymmetry
-the build spec section 1's late-read principle states for the executor.
+The build spec section 1's late-read principle states for the executor.
 Instead: the INSERT is attempted as computed, and `committed_schedule`'s
 own CHECK constraint is the enforcement. A violation is caught narrowly and
 re-raised as CommitError -- a clear, typed signal that this specific Plan

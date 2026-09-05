@@ -2,7 +2,7 @@
 one row for each slot the mandate was actually at risk for, never a row for
 a slot it was not attempted, never a row after a terminal outcome. Schema,
 censoring semantics, and both worked examples are normative at
-the build spec section 2; this module implements that section exactly,
+The build spec section 2; this module implements that section exactly,
 against the corpus eval/corpus.py generates.
 
 Column ownership, so this file and src/model/features.py never duplicate
@@ -11,7 +11,7 @@ or silently drop a column between them: this module emits IDENTITY
 event_code, at_risk, censored, censor_reason, is_terminal, estimable)
 columns, plus the raw substrate features.featurize() needs (amount_paise,
 ceiling_paise, category, on_day) -- `on_day` is intentionally NOT part of
-the build spec section 2's schema and must not survive into featurize()'s
+The build spec section 2's schema and must not survive into featurize()'s
 output; it exists only so featurize() can derive in_salary_window,
 days_since_last_attempt, and committed_day_of_month without recomputing
 anything from the source episodes. Every other column in section 2's

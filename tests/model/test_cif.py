@@ -432,7 +432,7 @@ def test_cif_not_1_km_multislot_case():
 
     # The naive approach OVERSTATES both causes' CIF relative to the
     # correct competing-risks recursion -- this is the real divergence
-    # the build spec forbids silently reintroducing.
+    # The build spec forbids silently reintroducing.
     assert cif_result[0, 0, 2] < cif_recovered_1km_slot3, (
         f"correct CIF_RECOVERED(3)={cif_result[0, 0, 2]} should be strictly "
         f"less than the naive 1-KM value {cif_recovered_1km_slot3} -- if "

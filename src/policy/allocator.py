@@ -4,7 +4,7 @@ Plan.
 
 === The cause-conditioned hazard gap, and how this file resolves it ========
 
-the build spec section 4's Q(b, ATTEMPT(d,m)) sums Sigma_c b[c] * h_c(...)
+The build spec section 4's Q(b, ATTEMPT(d,m)) sums Sigma_c b[c] * h_c(...)
 -- hazards conditioned on a specific latent cause c. B5 shipped hazards
 MARGINAL over cause instead (Cause is latent with no production label,
 ever -- DECISIONS.md, 2026-08-28), and src/policy/hazards.py's
@@ -55,7 +55,7 @@ no honest model of how it would move.
 
 === CIF vs SlotHazard =======================================================
 
-the build spec section 2 says "allocator.py takes a CIF object, not a
+The build spec section 2 says "allocator.py takes a CIF object, not a
 HazardModel." There is no CIF *object* in this codebase -- src/model/cif.py
 exposes free functions over (n, 3, 4) numpy arrays, and CIF is the
 recursion's cumulative OUTPUT, not a per-node input; backward induction
@@ -83,7 +83,7 @@ answer prepared for that review, not a claim it will not be checked.
 
 === Plan.committed's type ===================================================
 
-the build spec's file table types this `list[CommittedAttempt]`; this
+The build spec's file table types this `list[CommittedAttempt]`; this
 module uses `tuple[CommittedAttempt, ...]` instead, matching this
 codebase's own convention (every dataclass in src/model/ and src/policy/ is
 frozen; test_profiles.py states the pattern explicitly). A Plan that could

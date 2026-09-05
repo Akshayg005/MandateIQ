@@ -1,7 +1,7 @@
 """Void-and-reissue for a committed_schedule row overtaken by events.
 
 THE SENT-ROW RULE, a deliberate reinterpretation of the letter of
-the build spec's B9 file table -- logged in DECISIONS.md, 2026-08-30, B9.
+The build spec's B9 file table -- logged in DECISIONS.md, 2026-08-30, B9.
 The file table's own words are "must not void a key that already has an
 INTENT row"; read literally, that is impossible to satisfy at the same
 time as section 3's write-ordering protocol, whose step 2a is the late

@@ -6,7 +6,7 @@ idempotency key") is sent twice on Order.create, does Razorpay (a) dedupe
 and hand back the original order, (b) reject the second call outright, or
 (c) -- the dangerous case -- silently create two distinct orders?
 
-the build spec's B9 section already names `find_by_receipt`, not "trust
+The build spec's B9 section already names `find_by_receipt`, not "trust
 the key", as the future razorpay_client.py's recovery interface. This
 script is what that decision is grounded on -- run for real, not cited
 from docs alone. See B3 in reports/gates.md and DECISIONS.md for how the

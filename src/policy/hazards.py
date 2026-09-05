@@ -1,7 +1,7 @@
 """Protocol for a cause-conditioned hazard: the four Outcome probabilities
 for one (cause, slot, day, amount) combination.
 
-the build spec section 4's Q(b, ATTEMPT(d,m)) sums over causes using
+The build spec section 4's Q(b, ATTEMPT(d,m)) sums over causes using
 exactly this shape -- h_rec(c,d,m,ctx), h_opt(c,d,m,ctx), h_dead(c,d,m,ctx),
 each conditioned on a specific cause c. But B5 (the model-fit phase)
 shipped hazards MARGINAL over cause: competing_risks.hazards() fits and

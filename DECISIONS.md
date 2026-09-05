@@ -349,7 +349,7 @@ float-money / hard-cancel checks) was raised but not implemented here —
 `src/policy/` and `src/model/` are still empty, so there is nothing to test
 the guard against yet. Add it when B7/B8 land.
 
-`reports/FREEZE_HASH` now points to `d634346` (was `8321406`). The original
+`reports/FREEZE_HASH` now points to `a0a32ff` (was `674013a`). The original
 commit is not rewritten — git history shows the freeze was corrected, which
 is more honest than hiding that it happened.
 
@@ -368,7 +368,7 @@ ratio (~9%) could be raised until `coupled` starts discriminating on money
 recovered too, but that is tuning the evaluation until our policy can win —
 the exact failure mode the freeze exists to prevent, and it would not read
 as anything else to a reviewer. `eval/frozen/` stays as re-frozen at
-`d634346` (the entry above); this decision does not touch it.
+`a0a32ff` (the entry above); this decision does not touch it.
 
 *What `coupled` was actually built to show, restated.* Independence, not
 scheduling skill, is what `coupled` varies. A per-mandate allocator that
@@ -707,11 +707,11 @@ above were pasted into `eval/frozen/protocol.md` by hand, outside the normal wri
 (one paste-seam bug — a missing line break between the last
 existing bullet and the first new one, which would have silently merged
 into the preceding paragraph rather than rendering as its own bullet — was
-caught in review before commit and fixed), then committed as `4daf9ec`
+caught in review before commit and fixed), then committed as `481ec0b`
 (`FREEZE (corrected): document coupled's arm-by-metric split and fixed
 contention order in protocol.md`).
 
-`reports/FREEZE_HASH` now points to `4daf9ec` (was `d634346`). No
+`reports/FREEZE_HASH` now points to `481ec0b` (was `a0a32ff`). No
 simulator or scoring behaviour changed — this correction is disclosure
 only, so unlike the 2026-08-26 correction (an actual money-fabrication
 bug), no `POSTMORTEM.md` incident is logged for it.
@@ -2015,7 +2015,7 @@ comes, is a comparison against a known baseline rather than a surprise.
 
 ### 2026-08-29 · B7 · Cause-conditioned hazard gap named as a Protocol, not closed
 
-the build spec section 4's `Q(b, ATTEMPT(d,m))` sums over causes using
+The build spec section 4's `Q(b, ATTEMPT(d,m))` sums over causes using
 `h_rec(c,d,m,ctx)`, `h_opt(c,d,m,ctx)`, `h_dead(c,d,m,ctx)` — hazards
 conditioned on a *specific* cause `c`. B5 shipped hazards marginal over
 cause instead (`competing_risks.hazards()`'s signature has no cause
@@ -2070,7 +2070,7 @@ assumed:**
    session ran it directly. Left for a separate decision — this entry fixes
    `ci`'s content, not whether to wire a hook that runs it automatically.
 2. **It was never "since B4."** `git log -p -- run.ps1` shows both `ci` and
-   `eval-quick` were introduced in the scaffold commit itself (`d1acbe4`,
+   `eval-quick` were introduced in the scaffold commit itself (`184b649`,
    2026-08-25) — before B0 closed. `eval.run` has never existed at any point
    in this repository's history. The condition is four days and seven
    blocks (B0–B7) older than believed.
@@ -3123,7 +3123,7 @@ before implementation rather than settled unilaterally in code.
 **1 — no commit path existed.** The gate requires a test that "commits an
 attempt, then delivers a late opt-out." Nothing in the repo wrote `plan` or
 `committed_schedule`: B8's `solve()` returns a `Plan` object and stops.
-the build spec's B9 file table lists six files and none of them is a writer.
+The build spec's B9 file table lists six files and none of them is a writer.
 Resolution: `src/execute/commit.py`, a seventh file, as production code
 rather than a test fixture — `schema.sql`'s own comment requires
 `committed_at` to come from `src/core/clock.now()` and not Postgres's wall
@@ -3817,7 +3817,7 @@ strongest evidence in the table and is not presented as such.
 
 ### 2026-08-31 · B12 · Shadow mode compares decisions, and produces no money delta
 
-the build spec specifies "decide without executing; log delta vs ladder".
+The build spec specifies "decide without executing; log delta vs ladder".
 Taken literally that forbids the number a reader most wants — "we would have
 recovered ₹X more" — because computing it requires executing both policies
 and observing outcomes.
@@ -5426,7 +5426,7 @@ Does not touch `eval/frozen/`.
 
 ### 2026-09-05 · R5/R6/R7 · Three scope decisions, taken before any code
 
-the R5-R7 plan was written after R4 closed, following a full
+The R5-R7 plan was written after R4 closed, following a full
 investigation of the off-ramp machinery, the HTTP surface and every
 cross-platform blocker in the repo. Three of its choices are scope
 decisions the human took **before** the plan was written, not findings
@@ -5955,7 +5955,7 @@ and agreement with the main grid's own operating-point row
 
 ### 2026-09-05 · R7 · The first CI run failed, exactly as pre-registered, and the failure was real
 
-Commit `4771298` pushed R7's work, including a `.github/workflows/ci.yml`
+Commit `fc0d298` pushed R7's work, including a `.github/workflows/ci.yml`
 that had never run before. Its first run failed at step 5
 (`pip install -r requirements.txt`, ubuntu-latest, python 3.13) — R7's own
 plan pre-registered this exact outcome ("expect the first runs to fail;
@@ -6018,7 +6018,7 @@ a fresh `python:3.13` container: exit 0. Full local test suite re-run
 after the `anthropic` uninstall, to confirm nothing in the codebase
 depended on it despite the clean grep: green, no change.
 
-**The second CI run confirmed it**: commit `ac1cee3`,
+**The second CI run confirmed it**: commit `19289ad`,
 https://github.com/Akshayg005/MandateIQ/actions/runs/33940629559,
 `conclusion: success` — install, lint, the full suite against the
 postgres service, `eval-quick`, `report`, and the byte-identity check all

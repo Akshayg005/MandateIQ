@@ -165,7 +165,7 @@ need(counters, "NPCI", "counters");
 need(results, "Razorpay", "results");
 
 // --- the placeholders must NOT ----------------------------------------------
-// the project plan's storyboard numbers, written months before B13 produced a result.
+// The project plan's storyboard numbers, written months before B13 produced a result.
 // If any of these reappears, someone has typed a number into a component.
 for (const [label, html] of [
   ["counters", counters],

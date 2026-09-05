@@ -10,7 +10,7 @@ Use the `/log-incident` skill. Format:
 
 ## Incident 1 — coupled arm fabricated money in the B2 freeze
 
-**When:** Block B2, 2026-08-26, minutes after the freeze commit (`8321406`).
+**When:** Block B2, 2026-08-26, minutes after the freeze commit (`674013a`).
 
 **Symptom:** the payments-domain review — dispatched as B2's required gate review,
 same session, before any file under `src/policy/` existed — reported that a
@@ -40,8 +40,8 @@ the harness structurally prevented me from testing.
 **Fix:** removed the probabilistic branch entirely. A household debit now
 either succeeds in full (`balance >= amount`, deducted exactly) or fails
 outright (iatrogenic `STILL_PENDING`, balance unchanged) — commit
-`d634346`, which supersedes the original freeze commit `8321406`.
-`reports/FREEZE_HASH` updated to `d634346`. Verified post-fix on a real
+`a0a32ff`, which supersedes the original freeze commit `674013a`.
+`reports/FREEZE_HASH` updated to `a0a32ff`. Verified post-fix on a real
 batch run: `coupled` recovers ₹52,556.67, which is `<=` the ₹2,30,731.71
 total household balance. The corrected numbers are a *more* dramatic,
 and now mathematically defensible, demonstration of the storm effect:
@@ -674,7 +674,7 @@ were the ones that did not.
 **Why it survived this long:** it never produced a red line. Every session
 that ran the suite with Docker down saw green, and the skip count sat in a
 summary line that reads as noise. The pass/skip counts were even copied into
-the status notes at each checkpoint — "781 passed, 132 skipped" — where they were
+The status notes at each checkpoint — "781 passed, 132 skipped" — where they were
 recorded faithfully and read by nobody as a problem, including by me.
 
 This is the same defect class as the `Invoke-Step` bug found in the B13
